@@ -1,13 +1,14 @@
 linters:
   disable-all: true
   enable:
-  - gocyclo
   - gosec
   - govet
   - ineffassign
   - misspell
   - errcheck
   - unused
+  - gocognit
+
   # https://github.com/golangci/golangci-lint/pull/2438
   # Disable linter that does not work with go1.18
   #- staticcheck
@@ -19,7 +20,18 @@ linters-settings:
   gosec:
     excludes:
     - G404 # G404: Use of weak random number generator (math/rand instead of crypto/rand)
+  govet:
+    # We want to enable all govet analyzers.
+    enable-all: true
+    disable:
+    # If fieldalignment is enabled, we have many errors because all of our structs are not sorted to minimize memory.
+    - fieldalignment
+    # We shadow variables in a lot of places. Enabling this will generate many errors.
+    - shadow
 
 run:
   go: "1.19"
   timeout: 5m
+
+issues:
+  max-issues-per-linter: 0

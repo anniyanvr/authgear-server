@@ -1,6 +1,7 @@
 package nodes
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/authgear/authgear-server/pkg/api"
@@ -22,7 +23,7 @@ type EdgeCreateAuthenticatorBegin struct {
 	AuthenticatorType *model.AuthenticatorType
 }
 
-func (e *EdgeCreateAuthenticatorBegin) Instantiate(ctx *interaction.Context, graph *interaction.Graph, input interface{}) (interaction.Node, error) {
+func (e *EdgeCreateAuthenticatorBegin) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, input interface{}) (interaction.Node, error) {
 	skipMFASetup := false
 	var skipMFASetupInput interface{ SkipMFASetup() bool }
 	if interaction.Input(input, &skipMFASetupInput) {
@@ -58,8 +59,8 @@ type NodeCreateAuthenticatorBegin struct {
 	Authenticators       []*authenticator.Info        `json:"-"`
 }
 
-func (n *NodeCreateAuthenticatorBegin) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
-	ais, err := ctx.Authenticators.List(graph.MustGetUserID())
+func (n *NodeCreateAuthenticatorBegin) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
+	ais, err := ctx.Authenticators.List(goCtx, graph.MustGetUserID())
 	if err != nil {
 		return err
 	}
@@ -76,11 +77,11 @@ func (n *NodeCreateAuthenticatorBegin) Prepare(ctx *interaction.Context, graph *
 	return nil
 }
 
-func (n *NodeCreateAuthenticatorBegin) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeCreateAuthenticatorBegin) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return nil, nil
 }
 
-func (n *NodeCreateAuthenticatorBegin) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
+func (n *NodeCreateAuthenticatorBegin) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
 	return n.deriveEdges()
 }
 
@@ -177,6 +178,7 @@ func (n *NodeCreateAuthenticatorBegin) derivePrimaryWithType(typ model.Authentic
 	return edges, nil
 }
 
+// nolint:gocognit
 func (n *NodeCreateAuthenticatorBegin) derivePrimary() ([]interaction.Edge, error) {
 	// Determine whether we need to create primary authenticator.
 
@@ -229,7 +231,7 @@ func (n *NodeCreateAuthenticatorBegin) derivePrimary() ([]interaction.Edge, erro
 			// check if identity login id type match oob type
 			if n.Identity.LoginID != nil {
 				if n.Identity.LoginID.LoginIDType == model.LoginIDKeyTypePhone {
-					if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.IsWhatsappEnabled() {
+					if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.Deprecated_IsWhatsappEnabled() {
 						edges = append(edges, &EdgeCreateAuthenticatorWhatsappOTPSetup{
 							NewAuthenticatorID: n.NewAuthenticatorID,
 							Stage:              n.Stage,
@@ -237,7 +239,7 @@ func (n *NodeCreateAuthenticatorBegin) derivePrimary() ([]interaction.Edge, erro
 						})
 					}
 
-					if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.IsSMSEnabled() {
+					if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.Deprecated_IsSMSEnabled() {
 						edges = append(edges, &EdgeCreateAuthenticatorOOBSetup{
 							NewAuthenticatorID:   n.NewAuthenticatorID,
 							Stage:                n.Stage,
@@ -298,7 +300,7 @@ func (n *NodeCreateAuthenticatorBegin) derivePrimary() ([]interaction.Edge, erro
 	return edges, nil
 }
 
-// nolint: gocyclo
+// nolint: gocognit
 func (n *NodeCreateAuthenticatorBegin) deriveSecondary() (edges []interaction.Edge) {
 	// Determine whether we need to create secondary authenticator.
 
@@ -410,7 +412,7 @@ func (n *NodeCreateAuthenticatorBegin) deriveSecondary() (edges []interaction.Ed
 		case model.AuthenticatorTypeOOBSMS:
 			// Condition B and C.
 			if oobSMSCount < *n.AuthenticatorConfig.OOB.SMS.Maximum {
-				if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.IsWhatsappEnabled() {
+				if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.Deprecated_IsWhatsappEnabled() {
 					edges = append(edges, &EdgeCreateAuthenticatorWhatsappOTPSetup{
 						NewAuthenticatorID: n.NewAuthenticatorID,
 						Stage:              n.Stage,
@@ -418,7 +420,7 @@ func (n *NodeCreateAuthenticatorBegin) deriveSecondary() (edges []interaction.Ed
 					})
 				}
 
-				if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.IsSMSEnabled() {
+				if n.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.Deprecated_IsSMSEnabled() {
 					edges = append(edges, &EdgeCreateAuthenticatorOOBSetup{
 						NewAuthenticatorID:   n.NewAuthenticatorID,
 						Stage:                n.Stage,

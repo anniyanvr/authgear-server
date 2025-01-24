@@ -1,9 +1,11 @@
 package webapp
 
 import (
+	"context"
 	"fmt"
 	htmltemplate "html/template"
 	"net/http"
+
 	"net/url"
 	"time"
 
@@ -21,7 +23,7 @@ import (
 
 var TemplateWebSetupTOTPHTML = template.RegisterHTML(
 	"web/setup_totp.html",
-	components...,
+	Components...,
 )
 
 var SetupTOTPSchema = validation.NewSimpleSchema(`
@@ -54,7 +56,7 @@ type SetupTOTPNode interface {
 }
 
 type SetupTOTPEndpointsProvider interface {
-	BaseURL() *url.URL
+	Origin() *url.URL
 }
 type SetupTOTPHandler struct {
 	ControllerFactory         ControllerFactory
@@ -73,9 +75,12 @@ func (h *SetupTOTPHandler) MakeViewModel(session *webapp.Session, graph *interac
 
 	a := node.GetTOTPAuthenticator()
 	secret := a.TOTP.Secret
-	totp := secretcode.NewTOTPFromSecret(secret)
+	totp, err := secretcode.NewTOTPFromSecret(secret)
+	if err != nil {
+		return nil, err
+	}
 
-	issuer := h.Endpoints.BaseURL().String()
+	issuer := h.Endpoints.Origin().String()
 	// FIXME(mfa): decide a proper account name.
 	// We cannot use graph.MustGetUserLastIdentity because
 	// In settings, the interaction may not have identity.
@@ -131,15 +136,15 @@ func (h *SetupTOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -153,8 +158,8 @@ func (h *SetupTOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			err = SetupTOTPSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

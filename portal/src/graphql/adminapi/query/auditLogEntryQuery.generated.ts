@@ -6,11 +6,11 @@ const defaultOptions = {} as const;
 export type AuditLogEntryFragment = { __typename?: 'AuditLog', id: string, createdAt: any, activityType: Types.AuditLogActivityType, ipAddress?: string | null, userAgent?: string | null, clientID?: string | null, data?: any | null, user?: { __typename?: 'User', id: string } | null };
 
 export type AuditLogEntryQueryQueryVariables = Types.Exact<{
-  logID: Types.Scalars['ID'];
+  logID: Types.Scalars['ID']['input'];
 }>;
 
 
-export type AuditLogEntryQueryQuery = { __typename?: 'Query', node?: { __typename: 'AuditLog', id: string, createdAt: any, activityType: Types.AuditLogActivityType, ipAddress?: string | null, userAgent?: string | null, clientID?: string | null, data?: any | null, user?: { __typename?: 'User', id: string } | null } | { __typename: 'Authenticator' } | { __typename: 'Authorization' } | { __typename: 'Identity' } | { __typename: 'Session' } | { __typename: 'User' } | null };
+export type AuditLogEntryQueryQuery = { __typename?: 'Query', node?: { __typename: 'AuditLog', id: string, createdAt: any, activityType: Types.AuditLogActivityType, ipAddress?: string | null, userAgent?: string | null, clientID?: string | null, data?: any | null, user?: { __typename?: 'User', id: string } | null } | { __typename: 'Authenticator' } | { __typename: 'Authorization' } | { __typename: 'Group' } | { __typename: 'Identity' } | { __typename: 'Role' } | { __typename: 'Session' } | { __typename: 'User' } | null };
 
 export const AuditLogEntryFragmentDoc = gql`
     fragment AuditLogEntry on AuditLog {
@@ -59,6 +59,11 @@ export function useAuditLogEntryQueryLazyQuery(baseOptions?: Apollo.LazyQueryHoo
           const options = {...defaultOptions, ...baseOptions}
           return Apollo.useLazyQuery<AuditLogEntryQueryQuery, AuditLogEntryQueryQueryVariables>(AuditLogEntryQueryDocument, options);
         }
+export function useAuditLogEntryQuerySuspenseQuery(baseOptions?: Apollo.SuspenseQueryHookOptions<AuditLogEntryQueryQuery, AuditLogEntryQueryQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<AuditLogEntryQueryQuery, AuditLogEntryQueryQueryVariables>(AuditLogEntryQueryDocument, options);
+        }
 export type AuditLogEntryQueryQueryHookResult = ReturnType<typeof useAuditLogEntryQueryQuery>;
 export type AuditLogEntryQueryLazyQueryHookResult = ReturnType<typeof useAuditLogEntryQueryLazyQuery>;
+export type AuditLogEntryQuerySuspenseQueryHookResult = ReturnType<typeof useAuditLogEntryQuerySuspenseQuery>;
 export type AuditLogEntryQueryQueryResult = Apollo.QueryResult<AuditLogEntryQueryQuery, AuditLogEntryQueryQueryVariables>;

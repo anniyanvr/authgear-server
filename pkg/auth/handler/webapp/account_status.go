@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -13,7 +14,7 @@ import (
 
 var TemplateWebAccountStatusHTML = template.RegisterHTML(
 	"web/account_status.html",
-	components...,
+	Components...,
 )
 
 func ConfigureAccountStatusRoute(route httproute.Route) httproute.Route {
@@ -44,10 +45,10 @@ func (h *AccountStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		graph, err := ctrl.InteractionGet()
+	ctrl.Get(func(ctx context.Context) error {
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -57,11 +58,11 @@ func (h *AccountStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 
-		webSession := webapp.GetSession(r.Context())
+		webSession := webapp.GetSession(ctx)
 		if webSession != nil {
 			// complete the interaction when user login with account
 			// which has been disabled / deactivated / scheduled deletion
-			err := ctrl.DeleteSession(webSession.ID)
+			err := ctrl.DeleteSession(ctx, webSession.ID)
 			if err != nil {
 				return err
 			}

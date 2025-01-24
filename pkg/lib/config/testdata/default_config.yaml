@@ -252,25 +252,16 @@ ui:
       - "ZW"
   forgot_password:
     phone:
-    - channel: sms
-      otp_form: code
+      - channel: sms
+        otp_form: code
     email:
-    - channel: email
-      otp_form: link
+      - channel: email
+        otp_form: link
+  authentication_flow: {}
 localization:
   fallback_language: en
   supported_languages: ["en"]
 messaging:
-  sms:
-    ratelimit:
-      per_phone:
-        enabled: false
-      per_ip:
-        enabled: false
-      resend_cooldown_seconds: 60
-  email:
-    ratelimit:
-      resend_cooldown_seconds: 60
   whatsapp:
     api_type: on-premises
   rate_limits:
@@ -292,6 +283,7 @@ messaging:
       enabled: true
       period: 24h
       burst: 50
+search: {}
 authentication:
   identities:
     - oauth
@@ -301,6 +293,7 @@ authentication:
   secondary_authenticators:
     - totp
   secondary_authentication_mode: if_exists
+  secondary_authentication_grace_period: {}
   device_token:
     expire_in_days: 30
   recovery_code:
@@ -374,7 +367,12 @@ session:
   idle_timeout_enabled: true
   idle_timeout_seconds: 2592000
 oauth: {}
+saml:
+  signing:
+    signature_method: http://www.w3.org/2001/04/xmldsig-more#rsa-sha256
+
 identity:
+  ldap: {}
   login_id:
     types:
       email:
@@ -393,12 +391,15 @@ identity:
       - key: email
         type: email
         max_length: 320
-        modify_disabled: false
+        create_disabled: false
+        update_disabled: false
+        delete_disabled: false
   oauth:
     providers:
       - type: google
         alias: google
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -406,7 +407,8 @@ identity:
         client_id: a
       - type: facebook
         alias: facebook
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -414,7 +416,8 @@ identity:
         client_id: a
       - type: linkedin
         alias: linkedin
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -422,7 +425,8 @@ identity:
         client_id: a
       - type: azureadv2
         alias: azureadv2
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -431,7 +435,8 @@ identity:
         tenant: a
       - type: azureadb2c
         alias: azureadb2c
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -441,7 +446,8 @@ identity:
         policy: a
       - type: adfs
         alias: adfs
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -450,7 +456,8 @@ identity:
         discovery_document_endpoint: http://test
       - type: apple
         alias: apple
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -460,7 +467,8 @@ identity:
         team_id: a
       - type: wechat
         alias: wechat
-        modify_disabled: false
+        create_disabled: false
+        delete_disabled: false
         claims:
           email:
             assume_verified: true
@@ -477,21 +485,24 @@ authenticator:
     force_change: true
     policy:
       min_length: 8
-    ratelimit:
-      failed_attempt:
-        size: 10
-        reset_period: 1m
+    expiry:
+      force_change:
+        enabled: false
   totp:
     maximum: 99
   oob_otp:
     sms:
       maximum: 99
       phone_otp_mode: "whatsapp_sms"
-      code_valid_period: 1h
+      valid_periods:
+        code: 300s
+        link: 20m
     email:
       maximum: 99
       email_otp_mode: "code"
-      code_valid_period: 1h
+      valid_periods:
+        code: 300s
+        link: 20m
 user_profile:
   custom_attributes: {}
   standard_attributes:
@@ -603,8 +614,6 @@ forgot_password:
         enabled: true
         period: 1m
         burst: 60
-welcome_message:
-  destination: first
 verification:
   claims:
     email:
@@ -614,8 +623,7 @@ verification:
       enabled: true
       required: true
   criteria: any
-  code_valid_period: 1h0m0s
-  code_expiry_seconds: 3600
+  code_valid_period: 5m0s
   rate_limits:
     email:
       trigger_per_ip: {}
@@ -633,10 +641,6 @@ verification:
         enabled: true
         period: 1m
         burst: 60
-otp:
-  ratelimit:
-    failed_attempt:
-      enabled: false
 web3:
   siwe: {}
   nft: {}
@@ -645,6 +649,7 @@ account_migration:
   hook:
     timeout: 5
 captcha: {}
+bot_protection: {}
 test_mode:
   oob_otp:
     enabled: false
@@ -654,4 +659,10 @@ test_mode:
     enabled: false
   email:
     enabled: false
-authentication_flow: {}
+account_linking: {}
+authentication_flow:
+  rate_limits:
+    per_ip:
+      enabled: true
+      period: 1m
+      burst: 1200

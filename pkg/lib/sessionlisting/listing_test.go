@@ -1,8 +1,12 @@
 package sessionlisting_test
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	gomock "github.com/golang/mock/gomock"
+	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/oauth"
@@ -10,8 +14,6 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/session/access"
 	"github.com/authgear/authgear-server/pkg/lib/session/idpsession"
 	"github.com/authgear/authgear-server/pkg/lib/sessionlisting"
-	gomock "github.com/golang/mock/gomock"
-	. "github.com/smartystreets/goconvey/convey"
 )
 
 func makeDeviceInfo(deviceName string, deviceModel string) map[string]interface{} {
@@ -29,10 +31,10 @@ func makeDeviceInfo(deviceName string, deviceModel string) map[string]interface{
 
 func makeOfflineGrant(id string, lastAccessAt time.Time, deviceInfo map[string]interface{}, idpSessionID string, clientID string, ssoEnabled bool) *oauth.OfflineGrant {
 	return &oauth.OfflineGrant{
-		ID:           id,
-		ClientID:     clientID,
-		CreatedAt:    lastAccessAt,
-		IDPSessionID: idpSessionID,
+		ID:              id,
+		InitialClientID: clientID,
+		CreatedAt:       lastAccessAt,
+		IDPSessionID:    idpSessionID,
 		AccessInfo: access.Info{
 			InitialAccess: access.Event{
 				Timestamp: lastAccessAt,
@@ -97,7 +99,8 @@ func TestSessionListingService(t *testing.T) {
 			idpSessions.EXPECT().CheckSessionExpired(any).Times(2).Return(false)
 			offlineGrants.EXPECT().CheckSessionExpired(any).Times(1).Return(false, time.Time{}, nil)
 
-			session, err := svc.FilterForDisplay([]session.Session{
+			ctx := context.Background()
+			session, err := svc.FilterForDisplay(ctx, []session.ListableSession{
 				offlineGrant2,
 				idpSession,
 				offlineGrant,
@@ -121,7 +124,8 @@ func TestSessionListingService(t *testing.T) {
 			idpSessions.EXPECT().CheckSessionExpired(any).Times(2).Return(false)
 			offlineGrants.EXPECT().CheckSessionExpired(any).Times(2).Return(false, time.Time{}, nil)
 
-			session, err := svc.FilterForDisplay([]session.Session{
+			ctx := context.Background()
+			session, err := svc.FilterForDisplay(ctx, []session.ListableSession{
 				offlineGrant2,
 				idpSession,
 				offlineGrant,
@@ -148,7 +152,8 @@ func TestSessionListingService(t *testing.T) {
 			offlineGrants.EXPECT().CheckSessionExpired(offlineGrant).Return(true, time.Time{}, nil)
 			offlineGrants.EXPECT().CheckSessionExpired(offlineGrant2).Return(false, time.Time{}, nil)
 
-			session, err := svc.FilterForDisplay([]session.Session{
+			ctx := context.Background()
+			session, err := svc.FilterForDisplay(ctx, []session.ListableSession{
 				offlineGrant2,
 				idpSession,
 				offlineGrant,
@@ -179,7 +184,8 @@ func TestSessionListingService(t *testing.T) {
 			updatedIDPSessionModel.DisplayName = offlineGrant3SessionModel.DisplayName
 
 			Convey("should show idp sessions only in the same SSO group", func() {
-				session, err := svc.FilterForDisplay([]session.Session{
+				ctx := context.Background()
+				session, err := svc.FilterForDisplay(ctx, []session.ListableSession{
 					offlineGrant2,
 					idpSession,
 					offlineGrant,
@@ -195,7 +201,8 @@ func TestSessionListingService(t *testing.T) {
 			})
 
 			Convey("should show session IsCurrent for idp session", func() {
-				session, err := svc.FilterForDisplay([]session.Session{
+				ctx := context.Background()
+				session, err := svc.FilterForDisplay(ctx, []session.ListableSession{
 					offlineGrant2,
 					idpSession,
 					offlineGrant,
@@ -211,13 +218,15 @@ func TestSessionListingService(t *testing.T) {
 			})
 
 			Convey("should show session IsCurrent for offline grant in same sso group", func() {
-				session, err := svc.FilterForDisplay([]session.Session{
+				offlineGrantSession, _ := offlineGrant2.ToSession("")
+				ctx := context.Background()
+				session, err := svc.FilterForDisplay(ctx, []session.ListableSession{
 					offlineGrant2,
 					idpSession,
 					offlineGrant,
 					idpSession2,
 					offlineGrant3,
-				}, offlineGrant2)
+				}, offlineGrantSession)
 				So(err, ShouldBeNil)
 				So(session, ShouldResemble, []*sessionlisting.Session{
 					{Session: updatedIDPSessionModel, IsDevice: true, IsCurrent: true},
@@ -227,13 +236,15 @@ func TestSessionListingService(t *testing.T) {
 			})
 
 			Convey("should show session IsCurrent for sso disabled offline grant", func() {
-				session, err := svc.FilterForDisplay([]session.Session{
+				offlineGrantSession, _ := offlineGrant.ToSession("")
+				ctx := context.Background()
+				session, err := svc.FilterForDisplay(ctx, []session.ListableSession{
 					offlineGrant2,
 					idpSession,
 					offlineGrant,
 					idpSession2,
 					offlineGrant3,
-				}, offlineGrant)
+				}, offlineGrantSession)
 				So(err, ShouldBeNil)
 				So(session, ShouldResemble, []*sessionlisting.Session{
 					{Session: updatedIDPSessionModel, IsDevice: true},

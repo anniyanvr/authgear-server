@@ -1,0 +1,22 @@
+{
+  "extends": ["./node_modules/@oursky/stylelint-oursky/config/oursky.mjs"],
+  "rules": {
+    "plugin/no-unsupported-browser-features": [
+      true,
+      {
+        "ignorePartialSupport": true,
+        "ignore": ["css-cascade-layers", "css-nesting", "css3-cursors"]
+      }
+    ],
+    "no-duplicate-selectors": null,
+    "font-family-no-missing-generic-family-keyword": null,
+    "media-query-no-invalid": null,
+    "at-rule-no-unknown": [
+      true,
+      {
+        "ignoreAtRules": ["mixin", "include", "tailwind", "layer"]
+      }
+    ],
+    "length-zero-no-unit": null
+  }
+}

@@ -1,156 +1,65 @@
 import React, { useCallback, useContext, useMemo, useState } from "react";
-import { Dialog, DialogFooter, ICommandBarItemProps } from "@fluentui/react";
+import { Dialog, DialogFooter, Spinner, SpinnerSize } from "@fluentui/react";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 import { useSystemConfig } from "./context/SystemConfigContext";
-import NavigationBlockerDialog from "./NavigationBlockerDialog";
-import CommandBarContainer from "./CommandBarContainer";
-import { FormProvider } from "./form";
-import { ErrorParseRule } from "./error/parse";
 import { FormErrorMessageBar } from "./FormErrorMessageBar";
-import { onRenderCommandBarPrimaryButton } from "./CommandBarPrimaryButton";
 import PrimaryButton from "./PrimaryButton";
 import DefaultButton from "./DefaultButton";
-import { useConsumeError } from "./hook/error";
-
-export interface FormModel {
-  updateError: unknown;
-  isDirty: boolean;
-  isUpdating: boolean;
-  canSave?: boolean;
-  reset: () => void;
-  save: () => Promise<void>;
-}
+import DefaultLayout from "./DefaultLayout";
+import {
+  FormContainerBase,
+  FormContainerBaseProps,
+  useFormContainerBaseContext,
+} from "./FormContainerBase";
+import ActionButton from "./ActionButton";
+import styles from "./FormContainer.module.css";
 
 export interface SaveButtonProps {
   labelId: string;
-  iconName: string;
+  iconProps?: {
+    iconName?: string;
+  };
 }
 
-export interface FormContainerProps {
-  form: FormModel;
-  canSave?: boolean;
+export interface FormContainerProps extends FormContainerBaseProps {
+  className?: string;
   saveButtonProps?: SaveButtonProps;
-  localError?: unknown;
-  errorRules?: ErrorParseRule[];
+  stickyFooterComponent?: boolean;
   fallbackErrorMessageID?: string;
   messageBar?: React.ReactNode;
-  primaryItems?: ICommandBarItemProps[];
-  secondaryItems?: ICommandBarItemProps[];
-  beforeSave?: () => Promise<void>;
-  afterSave?: () => void;
-  children?: React.ReactNode;
-  hideCommandBar?: boolean;
-  renderHeaderContent?: (
-    defaultHeaderContent: React.ReactNode
-  ) => React.ReactNode;
+  showDiscardButton?: boolean;
+  hideFooterComponent?: boolean;
 }
 
-const FormContainer: React.VFC<FormContainerProps> = function FormContainer(
+const FormContainer_: React.VFC<FormContainerProps> = function FormContainer_(
   props
 ) {
   const {
-    updateError,
-    isDirty,
-    isUpdating,
-    reset,
-    save,
-    canSave: formCanSave,
-  } = props.form;
-  const {
-    canSave = true,
-    saveButtonProps = { labelId: "save", iconName: "Save" },
-    localError,
-    errorRules,
-    fallbackErrorMessageID,
-    primaryItems,
-    secondaryItems,
+    saveButtonProps = { labelId: "save" },
     messageBar,
-    beforeSave = async () => Promise.resolve(),
-    afterSave,
-    hideCommandBar,
-    renderHeaderContent,
+    hideFooterComponent,
+    showDiscardButton = false,
+    stickyFooterComponent = false,
   } = props;
 
-  const contextError = useConsumeError();
+  const { canSave, isUpdating, canReset, onReset, onSave, onSubmit } =
+    useFormContainerBaseContext();
   const { themes } = useSystemConfig();
   const { renderToString } = useContext(Context);
 
-  const callSave = useCallback(() => {
-    beforeSave().then(
-      () => {
-        save().then(
-          () => afterSave?.(),
-          () => {}
-        );
-      },
-      () => {}
-    );
-  }, [beforeSave, save, afterSave]);
-
-  const onFormSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      callSave();
-    },
-    [callSave]
-  );
-
   const [isResetDialogVisible, setIsResetDialogVisible] = useState(false);
+  const onDisplayResetDialog = useCallback(() => {
+    setIsResetDialogVisible(true);
+  }, []);
   const onDismissResetDialog = useCallback(() => {
     setIsResetDialogVisible(false);
   }, []);
   const doReset = useCallback(() => {
-    reset();
+    onReset();
     // If the form contains a CodeEditor, dialog dismiss animation does not play.
     // Defer the dismissal to ensure dismiss animation.
     setTimeout(() => setIsResetDialogVisible(false), 0);
-  }, [reset]);
-
-  const allowSave = formCanSave !== undefined ? formCanSave : isDirty;
-  const disabled = isUpdating || !allowSave;
-
-  const items: ICommandBarItemProps[] = useMemo(() => {
-    let items: ICommandBarItemProps[] = [
-      {
-        key: "save",
-        text: renderToString(saveButtonProps.labelId),
-        iconProps: { iconName: saveButtonProps.iconName },
-        disabled: disabled || !canSave,
-        onClick: () => {
-          callSave();
-        },
-        onRender: onRenderCommandBarPrimaryButton,
-      },
-    ];
-    if (primaryItems != null) {
-      items = [...items, ...primaryItems];
-    }
-    return items;
-  }, [
-    canSave,
-    disabled,
-    callSave,
-    saveButtonProps,
-    renderToString,
-    primaryItems,
-  ]);
-
-  const farItems: ICommandBarItemProps[] = useMemo(() => {
-    let farItems: ICommandBarItemProps[] = [
-      {
-        key: "reset",
-        text: renderToString("discard-changes"),
-        iconProps: { iconName: "Refresh" },
-        disabled,
-        theme: disabled ? themes.main : themes.destructive,
-        onClick: () => setIsResetDialogVisible(true),
-      },
-    ];
-    if (secondaryItems != null) {
-      farItems = [...farItems, ...secondaryItems];
-    }
-    return farItems;
-  }, [disabled, renderToString, themes, secondaryItems]);
+  }, [onReset]);
 
   const resetDialogContentProps = useMemo(() => {
     return {
@@ -159,27 +68,46 @@ const FormContainer: React.VFC<FormContainerProps> = function FormContainer(
     };
   }, [renderToString]);
 
-  const onConfirmNavigation = useCallback(() => {
-    reset();
-  }, [reset]);
-
   return (
-    <FormProvider
-      loading={isUpdating}
-      error={contextError ?? updateError ?? localError}
-      rules={errorRules}
-      fallbackErrorMessageID={fallbackErrorMessageID}
-    >
-      <CommandBarContainer
-        renderHeaderContent={renderHeaderContent}
-        hideCommandBar={hideCommandBar}
-        isLoading={isUpdating}
-        primaryItems={items}
-        secondaryItems={farItems}
+    <>
+      <DefaultLayout
+        footerPosition={stickyFooterComponent ? "sticky" : "end"}
+        footer={
+          hideFooterComponent ? null : (
+            <>
+              <PrimaryButton
+                text={
+                  <div className={styles.saveButton}>
+                    {isUpdating ? (
+                      <Spinner size={SpinnerSize.xSmall} ariaLive="assertive" />
+                    ) : null}
+                    <span>
+                      <FormattedMessage id={saveButtonProps.labelId} />
+                    </span>
+                  </div>
+                }
+                iconProps={saveButtonProps.iconProps}
+                disabled={!canSave}
+                onClick={onSave}
+              />
+              {showDiscardButton ? (
+                <ActionButton
+                  text={renderToString("discard-changes")}
+                  iconProps={{ iconName: "Refresh" }}
+                  disabled={!canReset}
+                  theme={!canReset ? themes.main : themes.destructive}
+                  onClick={onDisplayResetDialog}
+                />
+              ) : null}
+            </>
+          )
+        }
         messageBar={<FormErrorMessageBar>{messageBar}</FormErrorMessageBar>}
       >
-        <form onSubmit={onFormSubmit}>{props.children}</form>
-      </CommandBarContainer>
+        <form className={props.className} onSubmit={onSubmit}>
+          {props.children}
+        </form>
+      </DefaultLayout>
       <Dialog
         hidden={!isResetDialogVisible}
         dialogContentProps={resetDialogContentProps}
@@ -197,11 +125,17 @@ const FormContainer: React.VFC<FormContainerProps> = function FormContainer(
           />
         </DialogFooter>
       </Dialog>
-      <NavigationBlockerDialog
-        blockNavigation={isDirty}
-        onConfirmNavigation={onConfirmNavigation}
-      />
-    </FormProvider>
+    </>
+  );
+};
+
+const FormContainer: React.VFC<FormContainerProps> = function FormContainer(
+  props
+) {
+  return (
+    <FormContainerBase {...props}>
+      <FormContainer_ {...props} />
+    </FormContainerBase>
   );
 };
 

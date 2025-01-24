@@ -1,0 +1,142 @@
+part: BotProtectionConfig
+name: valid-cloudflare
+error: null
+value:
+  enabled: true
+  provider:
+    type: cloudflare
+    site_key: asdkjhfjaksdhjkfsdhadsk
+---
+part: BotProtectionConfig
+name: valid-recaptchav2
+error: null
+value:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: asdkjhfjaksdhjkfsdhadsk
+---
+part: BotProtectionConfig
+name: missing-enabled-and-provider
+error: |-
+  invalid value:
+  /some_invalid_key: 
+value:
+  some_invalid_key: blahblah
+---
+part: BotProtectionConfig
+name: invalid-provider-type
+error: |-
+  invalid value:
+  /provider/type: enum
+    map[actual:hcaptcha expected:[cloudflare recaptchav2]]
+value:
+  enabled: true
+  provider:
+    type: hcaptcha # not supported yet
+---
+part: BotProtectionConfig
+name: missing-site-key-for-cloudflare
+error: |-
+  invalid value:
+  /provider: required
+    map[actual:[type] expected:[site_key] missing:[site_key]]
+value:
+  enabled: true
+  provider:
+    type: cloudflare
+    # "site_key" is not set
+---
+part: BotProtectionConfig
+name: missing-site-key-for-recaptcha-v2
+error: |-
+  invalid value:
+  /provider: required
+    map[actual:[type] expected:[site_key] missing:[site_key]]
+value:
+  enabled: true
+  provider:
+    type: recaptchav2
+    # "site_key" is not set
+---
+part: BotProtectionConfig
+name: enabled-false
+error: null
+value:
+  enabled: false
+---
+part: BotProtectionConfig
+name: bot-protection-requirements-all-fields
+error: null
+value:
+  enabled: true
+  provider:
+    type: cloudflare
+    site_key: dummy
+  requirements:
+    signup_or_login:
+      mode: never
+    account_recovery:
+      mode: always
+    password:
+      mode: never
+    oob_otp_email:
+      mode: always
+    oob_otp_sms:
+      mode: always
+---
+part: BotProtectionConfig
+name: bot-protection-requirements-some-fields
+error: null
+value:
+  enabled: true
+  provider:
+    type: cloudflare
+    site_key: dummy
+  requirements:
+    signup_or_login:
+      mode: always
+    password:
+      mode: never
+    oob_otp_sms:
+      mode: always
+---
+part: BotProtectionConfig
+name: bot-protection-requirements-invalid-fields
+error: |-
+  invalid value:
+  /requirements/invalid_key: 
+value:
+  enabled: true
+  provider:
+    type: cloudflare
+    site_key: dummy
+  requirements:
+    invalid_key: invalid_value
+---
+part: BotProtectionConfig
+name: bot-protection-requirements-signup-or-login-invalid-mode
+error: |-
+  invalid value:
+  /requirements/signup_or_login/mode: enum
+    map[actual:invalid_mode expected:[never always]]
+value:
+  enabled: true
+  provider:
+    type: cloudflare
+    site_key: dummy
+  requirements:
+    signup_or_login:
+      mode: invalid_mode
+---
+part: BotProtectionConfig
+name: bot-protection-site-key-cannot-be-empty-string
+error: |-
+  invalid value:
+  /provider/site_key: minLength
+    map[actual:0 expected:1]
+value:
+  enabled: true
+  provider:
+    type: cloudflare
+    site_key: ""

@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -11,14 +12,17 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/auditdb"
 	"github.com/authgear/authgear-server/pkg/util/graphqlutil"
+	"github.com/authgear/authgear-server/pkg/util/slice"
 )
 
 type QueryPageOptions struct {
-	RangeFrom     *time.Time
-	RangeTo       *time.Time
-	ActivityTypes []string
-	UserIDs       []string
-	SortDirection model.SortDirection
+	RangeFrom      *time.Time
+	RangeTo        *time.Time
+	ActivityTypes  []string
+	UserIDs        []string
+	EmailAddresses []string
+	PhoneNumbers   []string
+	SortDirection  model.SortDirection
 }
 
 func (o QueryPageOptions) Apply(q db.SelectBuilder) db.SelectBuilder {
@@ -34,8 +38,38 @@ func (o QueryPageOptions) Apply(q db.SelectBuilder) db.SelectBuilder {
 		q = q.Where("activity_type = ANY (?)", pq.Array(o.ActivityTypes))
 	}
 
-	if len(o.UserIDs) > 0 {
+	q = o.applyQueryStringFilter(q)
+	return q
+}
+
+func (o QueryPageOptions) applyQueryStringFilter(q db.SelectBuilder) db.SelectBuilder {
+	hasUserIDs := len(o.UserIDs) > 0
+	hasEmail := len(o.EmailAddresses) > 0
+	hasPhone := len(o.PhoneNumbers) > 0
+
+	mergedEmailsAndPhones := append([]string(nil), o.EmailAddresses...)
+	mergedEmailsAndPhones = append(mergedEmailsAndPhones, o.PhoneNumbers...)
+	mergedEmailsAndPhones = slice.Deduplicate(mergedEmailsAndPhones)
+
+	switch {
+	case hasUserIDs && hasEmail && hasPhone:
+		q = q.Where("(user_id = ANY (?) OR data#>>'{payload,recipient}' = ANY (?))", pq.Array(o.UserIDs), pq.Array(mergedEmailsAndPhones))
+	case hasUserIDs && hasEmail && !hasPhone:
+		q = q.Where("(user_id = ANY (?) OR data#>>'{payload,recipient}' = ANY (?))", pq.Array(o.UserIDs), pq.Array(o.EmailAddresses))
+	case hasUserIDs && !hasEmail && hasPhone:
+		q = q.Where("(user_id = ANY (?) OR data#>>'{payload,recipient}' = ANY (?))", pq.Array(o.UserIDs), pq.Array(o.PhoneNumbers))
+	case hasUserIDs && !hasEmail && !hasPhone:
 		q = q.Where("user_id = ANY (?)", pq.Array(o.UserIDs))
+	case !hasUserIDs && hasEmail && hasPhone:
+		q = q.Where("data#>>'{payload,recipient}' = ANY (?)", pq.Array(mergedEmailsAndPhones))
+	case !hasUserIDs && hasEmail && !hasPhone:
+		q = q.Where("data#>>'{payload,recipient}' = ANY (?)", pq.Array(o.EmailAddresses))
+	case !hasUserIDs && !hasEmail && hasPhone:
+		q = q.Where("data#>>'{payload,recipient}' = ANY (?)", pq.Array(o.PhoneNumbers))
+	case !hasUserIDs && !hasEmail && !hasPhone:
+		fallthrough
+	default:
+		// do nothing
 	}
 
 	return q
@@ -46,14 +80,14 @@ type ReadStore struct {
 	SQLExecutor *auditdb.ReadSQLExecutor
 }
 
-func (s *ReadStore) Count(opts QueryPageOptions) (uint64, error) {
+func (s *ReadStore) Count(ctx context.Context, opts QueryPageOptions) (uint64, error) {
 	query := s.SQLBuilder.
 		Select("count(*)").
 		From(s.SQLBuilder.TableName("_audit_log"))
 
 	query = opts.Apply(query)
 
-	scanner, err := s.SQLExecutor.QueryRowWith(query)
+	scanner, err := s.SQLExecutor.QueryRowWith(ctx, query)
 	if err != nil {
 		return 0, err
 	}
@@ -67,7 +101,7 @@ func (s *ReadStore) Count(opts QueryPageOptions) (uint64, error) {
 	return count, nil
 }
 
-func (s *ReadStore) QueryPage(opts QueryPageOptions, pageArgs graphqlutil.PageArgs) ([]*Log, uint64, error) {
+func (s *ReadStore) QueryPage(ctx context.Context, opts QueryPageOptions, pageArgs graphqlutil.PageArgs) ([]*Log, uint64, error) {
 	query := s.selectQuery()
 
 	query = opts.Apply(query)
@@ -84,7 +118,7 @@ func (s *ReadStore) QueryPage(opts QueryPageOptions, pageArgs graphqlutil.PageAr
 		return nil, 0, err
 	}
 
-	rows, err := s.SQLExecutor.QueryWith(query)
+	rows, err := s.SQLExecutor.QueryWith(ctx, query)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -102,10 +136,10 @@ func (s *ReadStore) QueryPage(opts QueryPageOptions, pageArgs graphqlutil.PageAr
 	return logs, offset, nil
 }
 
-func (s *ReadStore) GetByIDs(ids []string) ([]*Log, error) {
+func (s *ReadStore) GetByIDs(ctx context.Context, ids []string) ([]*Log, error) {
 	query := s.selectQuery().Where("id = ANY (?)", pq.Array(ids))
 
-	rows, err := s.SQLExecutor.QueryWith(query)
+	rows, err := s.SQLExecutor.QueryWith(ctx, query)
 	if err != nil {
 		return nil, err
 	}

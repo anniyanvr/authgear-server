@@ -1,0 +1,9 @@
+.widget {
+  grid-column: 1 / span 8;
+
+  @apply tablet:col-span-full;
+}
+
+.textFieldInOption {
+  @apply ml-6 my-1;
+}

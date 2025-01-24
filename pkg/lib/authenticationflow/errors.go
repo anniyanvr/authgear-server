@@ -31,6 +31,8 @@ var ErrEOF = errors.New("eof")
 
 var ErrFlowNotFound = apierrors.NotFound.WithReason("AuthenticationFlowNotFound").New("flow not found")
 
+var ErrFlowNotAllowed = apierrors.Forbidden.WithReason("AuthenticationFlowNotAllowed").New("flow not allowed")
+
 var ErrStepNotFound = apierrors.NotFound.WithReason("AuthenticationFlowStepNotFound").New("step not found")
 
 var ErrUnknownFlow = apierrors.BadRequest.WithReason("AuthenticationFlowUnknownFlow").New("unknown flow")
@@ -47,3 +49,44 @@ type ErrorSwitchFlow struct {
 func (e *ErrorSwitchFlow) Error() string {
 	return fmt.Sprintf("switch flow: %v %v", e.FlowReference.Type, e.FlowReference.Name)
 }
+
+// ErrorRewriteFlow is a special error for rewriting the flow.
+type ErrorRewriteFlow struct {
+	Intent Intent
+	Nodes  []Node
+	// SyntheticInput advance the rewritten flow at the current state.
+	SyntheticInput Input
+}
+
+func (e *ErrorRewriteFlow) Error() string {
+	return fmt.Sprintf("rewrite flow: %v", e.Intent.Kind())
+}
+
+// ErrorBotProtectionVerification is a special error for interrupting the flow in case of failed or service-unavailable
+type ErrorBotProtectionVerification struct {
+	Status ErrorBotProtectionVerificationStatus
+}
+
+func (e *ErrorBotProtectionVerification) Error() string {
+	return fmt.Sprintf("bot protection verification status: %v", e.Status)
+}
+
+type ErrorBotProtectionVerificationStatus string
+
+const (
+	ErrorBotProtectionVerificationStatusFailed             ErrorBotProtectionVerificationStatus = "failed"
+	ErrorBotProtectionVerificationStatusSuccess            ErrorBotProtectionVerificationStatus = "success"
+	ErrorBotProtectionVerificationStatusServiceUnavailable ErrorBotProtectionVerificationStatus = "service-unavailable"
+)
+
+var (
+	ErrorBotProtectionVerificationFailed *ErrorBotProtectionVerification = &ErrorBotProtectionVerification{
+		Status: ErrorBotProtectionVerificationStatusFailed,
+	}
+	ErrorBotProtectionVerificationSuccess *ErrorBotProtectionVerification = &ErrorBotProtectionVerification{
+		Status: ErrorBotProtectionVerificationStatusSuccess,
+	}
+	ErrorBotProtectionVerificationServiceUnavailable *ErrorBotProtectionVerification = &ErrorBotProtectionVerification{
+		Status: ErrorBotProtectionVerificationStatusServiceUnavailable,
+	}
+)

@@ -40,7 +40,18 @@ const (
 	// IdentityClaimSIWEChainID is a claim with an interger value.
 	IdentityClaimSIWEChainID string = "https://authgear.com/claims/siwe/chain_id"
 
-	StandardClaimEmail             string = "email"
-	StandardClaimPhoneNumber       string = "phone_number"
-	StandardClaimPreferredUsername string = "preferred_username"
+	// IdentityClaimLDAPServerName is a claim with a string value.
+	IdentityClaimLDAPServerName string = "https://authgear.com/claims/ldap/server_name"
+	// IdentityClaimLDAPLastLoginUserName is a claim with a string value.
+	IdentityClaimLDAPLastLoginUserName string = "https://authgear.com/claims/ldap/last_login_username"
+	// IdentityClaimLDAPUserIDAttributeName is a claim with a string value.
+	IdentityClaimLDAPUserIDAttributeName string = "https://authgear.com/claims/ldap/user_id_attribute_name"
+	// IdentityClaimLDAPUserIDAttributeValue is a claim with a string value.
+	IdentityClaimLDAPUserIDAttributeValue string = "https://authgear.com/claims/ldap/user_id_attribute_value"
+	// IdentityClaimLDAPRawUserIDAttributeValue is a claim with a string value.
+	IdentityClaimLDAPRawUserIDAttributeValue string = "https://authgear.com/claims/ldap/raw_user_id_attribute_value"
+	// IdentityClaimLDAPAttributes is a claim with a map value.
+	IdentityClaimLDAPAttributes string = "https://authgear.com/claims/ldap/attributes"
+	// IdentityClaimLDAPRawAttributes is a claim with a map value.
+	IdentityClaimLDAPRawAttributes string = "https://authgear.com/claims/ldap/raw_attributes"
 )

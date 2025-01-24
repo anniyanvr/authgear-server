@@ -3,6 +3,7 @@ package webapp
 import (
 	"encoding/json"
 	"net/http"
+
 	"strings"
 
 	"github.com/authgear/authgear-server/pkg/api"
@@ -12,7 +13,7 @@ import (
 
 var TemplateTurboErrorHTML = template.RegisterHTML(
 	"web/turbo_error.html",
-	components...,
+	Components...,
 )
 
 type ResponseWriter struct {

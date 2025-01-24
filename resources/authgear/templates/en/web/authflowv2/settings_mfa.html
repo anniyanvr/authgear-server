@@ -1,0 +1,206 @@
+{{ template "authflowv2/__settings_page_frame.html" . }}
+
+{{ define "page-navbar" }}
+  {{ template "authflowv2/__navbar.html"
+     (dict
+        "BackTitle" (translate "v2.component.navbar.default.item-back-button-label" nil)
+        "BackHref" (call $.MakeURL "/settings")
+        "Title" (translate "v2.page.settings-mfa.default.title" nil)
+     )
+  }}
+{{ end }}
+
+{{ define "page-content" }}
+
+{{ if $.ShowMFA }}
+<div>
+  {{ if $.ShowSecondaryTOTP }}
+    {{ if $.HasSecondaryTOTP }}
+      {{ template "__settings_mfa_item.html"
+          (dict
+            "MaterialIconName" "phone_iphone"
+            "Label" (translate "v2.page.settings-mfa.default.secondary-totp-label" nil)
+            "IsActive" $.HasSecondaryTOTP
+            "Href" (call $.MakeURL "/settings/mfa/totp")
+          )
+      }}
+    {{ else }}
+    <form action='{{ call $.MakeURLWithBackURL "/settings/mfa/totp" }}' method="post" novalidate>
+      {{ $.CSRFField }}
+      <button
+        class="w-full"
+        type="submit"
+        name="x_action"
+        value="create_totp"
+      >
+        {{ template "authflowv2/__settings_item.html"
+          (dict
+            "Label" (translate "v2.page.settings-mfa.default.secondary-totp-label" nil)
+            "WithArrow" true
+            "MaterialIconName" "phone_iphone"
+            "SupplementaryNote" (include "__settings_mfa_item_status.html"
+              (dict
+                "IsActive" $.IsActive
+              )
+            )
+          )
+        }}
+      </button>
+    </form>
+    {{ end }}
+  {{ end }}
+
+  {{ if $.ShowSecondaryOOBOTPEmail }}
+    {{ $href := (call $.MakeURLWithBackURL "/settings/mfa/create_oob_otp_email") }}
+    {{ if $.HasSecondaryOOBOTPEmail }}
+      {{ $href = (call $.MakeURL "/settings/mfa/oob_otp_email") }}
+    {{ end }}
+    {{ template "__settings_mfa_item.html"
+        (dict
+          "MaterialIconName" "mail"
+          "Label" (translate "v2.page.settings-mfa.default.secondary-oob-otp-email-label" nil)
+          "IsActive" $.HasSecondaryOOBOTPEmail
+          "Href" $href
+        )
+    }}
+  {{ end }}
+
+  {{ if $.ShowSecondaryOOBOTPSMS }}
+    {{ $href := (call $.MakeURLWithBackURL (printf "/settings/mfa/create_oob_otp_%s" $.OOBOTPSMSDefaultChannel)) }}
+    {{ if $.HasSecondaryOOBOTPSMS }}
+      {{ $href = (call $.MakeURL "/settings/mfa/oob_otp_sms") }}
+    {{ end }}
+    {{ $label := "" }}
+    {{ if eq $.PhoneOTPMode "whatsapp" }}
+      {{ $label = translate "v2.page.settings-mfa.default.secondary-oob-otp-sms-label--whatsapp" nil }}
+    {{ else if eq $.PhoneOTPMode "sms" }}
+      {{ $label = translate "v2.page.settings-mfa.default.secondary-oob-otp-sms-label--sms" nil }}
+    {{ else }}
+      {{ $label = translate "v2.page.settings-mfa.default.secondary-oob-otp-sms-label--whatsapp-or-sms" nil }}
+    {{ end }}
+    {{ template "__settings_mfa_item.html"
+        (dict
+          "MaterialIconName" "phone_iphone"
+          "Label" $label
+          "IsActive" $.HasSecondaryOOBOTPSMS
+          "Href" $href
+        )
+    }}
+  {{ end }}
+
+  {{ if $.ShowSecondaryPassword }}
+    {{ $href := (call $.MakeURLWithBackURL "/settings/mfa/create_password") }}
+    {{ if $.SecondaryPassword }}
+      {{ $href = (call $.MakeURL "/settings/mfa/password") }}
+    {{ end }}
+    {{ template "__settings_mfa_item.html"
+        (dict
+          "MaterialIconName" "lock"
+          "Label" (translate "v2.page.settings-mfa.default.additional-password-label" nil)
+          "IsActive" $.SecondaryPassword
+          "Href" $href
+        )
+    }}
+  {{ end }}
+
+  {{ if and $.ListRecoveryCodesAllowed $.HasRecoveryCodes }}
+    <a class="contents" href="{{ call $.MakeURL "/settings/mfa/view_recovery_code" }}">
+      {{ template "authflowv2/__settings_item.html"
+        (dict
+          "Label" (translate "v2.page.settings-mfa.default.recovery-code-label" nil)
+          "WithArrow" true
+          "MaterialIconName" "security"
+          "SupplementaryNote" (translate "v2.page.settings-mfa.default.recovery-code-description" nil)
+        )
+      }}
+    </a>
+  {{ end }}
+
+  {{ if $.HasMFA}}
+    {{ if gt $.NumberOfDeviceTokens 0 }}
+      {{ template "authflowv2/__settings_item.html"
+        (dict
+          "Label" (translate "v2.page.settings-mfa.default.trusted-devices-label" nil)
+          "WithArrow" false
+          "MaterialIconName" "person_check"
+          "SupplementaryNote" (translate "v2.page.settings-mfa.default.trusted-devices-has-device-tokens-message" (dict "NumberOfDeviceTokens" $.NumberOfDeviceTokens))
+          "ActionButton"  (include "__settings_trusted_device_remove_btn.html" nil)
+        )
+      }}
+
+      {{ template "authflowv2/__settings_dialog.html" (dict
+        "Ctx" .
+        "DialogID" "settings-mfa-revoke-device"
+        "Title" (translate "v2.page.settings-mfa.default.revoke-device-dialog-title" nil)
+        "Description" (translate "v2.page.settings-mfa.default.revoke-device-dialog-description" (dict
+          "NumberOfDeviceTokens" $.NumberOfDeviceTokens
+        ))
+        "FormContent" $.CSRFField
+        "Buttons" (list
+          (dict
+            "Type" "Destructive"
+            "Label" (include "v2.component.button.default.label-remove" nil)
+            "Value" "revoke_device"
+          )
+          (dict
+            "Type" "Cancel"
+            "Label" (include "v2.component.button.default.label-cancel" nil)
+          )
+        )
+      )}}
+    {{ else }}
+      {{ template "authflowv2/__settings_item.html"
+        (dict
+          "Label" (translate "v2.page.settings-mfa.default.trusted-devices-label" nil)
+          "WithArrow" false
+          "MaterialIconName" "person_check"
+          "SupplementaryNote" (translate "v2.page.settings-mfa.default.trusted-devices-no-device-tokens-message" nil)
+        )
+      }}
+    {{ end }}
+  {{ end }}
+</div>
+{{ end }}
+
+{{ end }}
+
+{{ define "__settings_mfa_item.html" }}
+  <a class="contents" href="{{$.Href}}">
+    {{ template "authflowv2/__settings_item.html"
+      (dict
+        "Label" $.Label
+        "WithArrow" true
+        "MaterialIconName" $.MaterialIconName
+        "SupplementaryNote" (include "__settings_mfa_item_status.html"
+          (dict
+            "IsActive" $.IsActive
+          )
+        )
+      )
+    }}
+  </a>
+{{ end }}
+
+{{ define "__settings_mfa_item_status.html" }}
+  {{ if $.IsActive }}
+    <span class="text-[color:var(--color-success)]">{{ translate "v2.page.settings-mfa.default.activated-label" nil}}</span>
+  {{ else }}
+    <span class="text-[color:var(--color-warning)]">{{ translate "v2.page.settings-mfa.default.inactive-label" nil}}</span>
+  {{ end }}
+{{ end }}
+
+{{ define "__settings_mfa_item_action_button.html" }}
+  <span class="settings-item__forward_arrow"></span>
+{{ end }}
+
+{{ define "__settings_trusted_device_remove_btn.html" }}
+  <button
+    type="button"
+    class="settings-link-btn--destructive"
+    data-controller="dialog"
+    data-action="click->dialog#open"
+    id="settings-mfa-revoke-device"
+  >
+    {{ translate "v2.page.settings-mfa.default.trusted-devices-remove-label" nil }}
+  </button>
+{{ end }}

@@ -20,29 +20,14 @@ import DefaultButton from "../../DefaultButton";
 import { useDeleteIdentityMutation } from "./mutations/deleteIdentityMutation";
 import { useSetVerifiedStatusMutation } from "./mutations/setVerifiedStatusMutation";
 import { formatDatetime } from "../../util/formatDatetime";
-import {
-  LoginIDKeyType,
-  NFT,
-  NFTContract,
-  NFTToken,
-  OAuthSSOProviderType,
-  Web3Claims,
-} from "../../types";
+import { LoginIDKeyType, OAuthSSOProviderType } from "../../types";
 import { UserQueryNodeFragment } from "./query/userQuery.generated";
 
 import styles from "./UserDetailsConnectedIdentities.module.css";
 import { useSystemConfig } from "../../context/SystemConfigContext";
 import { useIsLoading, useLoading } from "../../hook/loading";
 import { useProvideError } from "../../hook/error";
-import {
-  createEIP681URL,
-  explorerAddress,
-  parseEIP681,
-} from "../../util/eip681";
 import ExternalLink, { ExternalLinkProps } from "../../ExternalLink";
-import { truncateAddress } from "../../util/hex";
-import LinkButton from "../../LinkButton";
-import NFTCollectionDetailDialog from "./NFTCollectionDetailDialog";
 
 // Always disable virtualization for List component, as it wont work properly with mobile view
 const onShouldVirtualize = () => {
@@ -56,11 +41,21 @@ interface IdentityClaim extends Record<string, unknown> {
   "https://authgear.com/claims/oauth/provider_type"?: OAuthSSOProviderType;
   "https://authgear.com/claims/oauth/subject_id"?: string;
   "https://authgear.com/claims/login_id/type"?: LoginIDIdentityType;
+  "https://authgear.com/claims/ldap/last_login_username"?: string | null;
+  "https://authgear.com/claims/ldap/user_id_attribute_name"?: string;
+  "https://authgear.com/claims/ldap/user_id_attribute_value"?: string;
 }
 
 interface Identity {
   id: string;
-  type: "ANONYMOUS" | "LOGIN_ID" | "OAUTH" | "BIOMETRIC" | "PASSKEY" | "SIWE";
+  type:
+    | "ANONYMOUS"
+    | "LOGIN_ID"
+    | "OAUTH"
+    | "BIOMETRIC"
+    | "PASSKEY"
+    | "SIWE"
+    | "LDAP";
   claims: IdentityClaim;
   createdAt: string;
   updatedAt: string;
@@ -71,19 +66,25 @@ interface UserDetailsConnectedIdentitiesProps {
   identities: Identity[];
   verifiedClaims: VerifiedClaims;
   availableLoginIdIdentities: string[];
-  web3Claims: Web3Claims;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const loginIdIdentityTypes = ["email", "phone", "username"] as const;
-type LoginIDIdentityType = typeof loginIdIdentityTypes[number];
-type IdentityType = "login_id" | "oauth" | "biometric" | "anonymous" | "siwe";
+type LoginIDIdentityType = (typeof loginIdIdentityTypes)[number];
+type IdentityType =
+  | "login_id"
+  | "oauth"
+  | "biometric"
+  | "anonymous"
+  | "siwe"
+  | "ldap";
 
 type IdentityListItem =
   | OAuthIdentityListItem
   | LoginIDIdentityListItem
   | BiometricIdentityListItem
   | AnonymousIdentityListItem
-  | SIWEIdentityListItem;
+  | LDAPIdentityListItem;
 interface OAuthIdentityListItem {
   id: string;
   type: "oauth";
@@ -120,14 +121,14 @@ interface AnonymousIdentityListItem {
   connectedOn: string;
 }
 
-interface SIWEIdentityListItem {
+interface LDAPIdentityListItem {
   id: string;
-  type: "siwe";
-  address: string;
-  chainId: number;
+  type: "ldap";
   verified: undefined;
   connectedOn: string;
-  nfts: NFT[] | undefined;
+  lastLoginUserName?: string | null;
+  userIDAttributeName?: string;
+  userIDAttributeValue?: string;
 }
 
 export interface IdentityLists {
@@ -137,7 +138,7 @@ export interface IdentityLists {
   username: LoginIDIdentityListItem[];
   biometric: BiometricIdentityListItem[];
   anonymous: AnonymousIdentityListItem[];
-  siwe: SIWEIdentityListItem[];
+  ldap: LDAPIdentityListItem[];
 }
 
 interface VerifyButtonProps {
@@ -172,7 +173,7 @@ const loginIdIconMap: Record<LoginIDIdentityType, React.ReactNode> = {
 
 const biometricIcon: React.ReactNode = <Icon iconName="Fingerprint" />;
 const anonymousIcon: React.ReactNode = <Icon iconName="People" />;
-const siweIcon: React.ReactNode = <i className={cn("fab", "fa-ethereum")} />;
+const ldapIcon: React.ReactNode = <Icon iconName="Contact" />;
 
 const removeButtonTextId: Record<IdentityType, "remove" | "disconnect" | ""> = {
   oauth: "disconnect",
@@ -180,6 +181,7 @@ const removeButtonTextId: Record<IdentityType, "remove" | "disconnect" | ""> = {
   biometric: "remove",
   anonymous: "",
   siwe: "",
+  ldap: "",
 };
 
 function getIdentityName(
@@ -205,8 +207,8 @@ function getIdentityName(
       return renderToString(
         "UserDetails.connected-identities.anonymous.anonymous-user"
       );
-    case "siwe":
-      return createEIP681URL({ chainId: item.chainId, address: item.address });
+    case "ldap":
+      return item.lastLoginUserName ?? "";
     default:
       return "";
   }
@@ -261,109 +263,6 @@ const VerifyButton: React.VFC<VerifyButtonProps> = function VerifyButton(
       loading={verifying}
       labelId="make-as-verified"
     />
-  );
-};
-
-interface NFTCollectionListCellProps {
-  contract: NFTContract;
-  tokens: NFTToken[];
-  eip681String: string;
-}
-
-const NFTCollectionListCell: React.VFC<NFTCollectionListCellProps> = (
-  props
-) => {
-  const { contract, tokens, eip681String } = props;
-  const [isDetailDialogVisible, setIsDetailDialogVisible] = useState(false);
-
-  const eip681 = useMemo(() => parseEIP681(eip681String), [eip681String]);
-
-  const contractEIP681 = useMemo(
-    () =>
-      createEIP681URL({ address: contract.address, chainId: eip681.chainId }),
-    [contract.address, eip681.chainId]
-  );
-
-  const openDetailDialog = useCallback(() => {
-    setIsDetailDialogVisible(true);
-  }, []);
-
-  const onDismissDetailDialog = useCallback(() => {
-    setIsDetailDialogVisible(false);
-  }, []);
-
-  return (
-    <div className={styles.NFTListCell}>
-      <ExternalLink href={explorerAddress(contractEIP681)}>
-        <Text
-          className={cn(styles.cellName, styles.cellNameExternalLink)}
-          variant="small"
-        >
-          <FormattedMessage
-            id="UserDetails.connected-identities.siwe.nft-collections.name"
-            values={{
-              name: contract.name,
-              address: truncateAddress(contract.address),
-            }}
-          />
-        </Text>
-      </ExternalLink>
-      <LinkButton className={styles.NFTListCellBtn} onClick={openDetailDialog}>
-        <Text className={styles.NFTListCellBtnLabel} variant="small">
-          <FormattedMessage id="UserDetails.connected-identities.siwe.nft-collections.view-tokens" />
-        </Text>
-      </LinkButton>
-      <NFTCollectionDetailDialog
-        contract={contract}
-        tokens={tokens}
-        isVisible={isDetailDialogVisible}
-        onDismiss={onDismissDetailDialog}
-        eip681String={eip681String}
-      />
-    </div>
-  );
-};
-
-interface NFTCollectionListProps {
-  nfts?: NFT[];
-  eip681String: string;
-}
-
-const NFTCollectionList: React.VFC<NFTCollectionListProps> = (props) => {
-  const { nfts, eip681String } = props;
-
-  const onRenderCollectionCell = useCallback(
-    (item?: NFT, _index?: number): React.ReactNode => {
-      if (item == null) {
-        return null;
-      }
-
-      return (
-        <NFTCollectionListCell
-          contract={item.contract}
-          tokens={item.tokens}
-          eip681String={eip681String}
-        />
-      );
-    },
-    [eip681String]
-  );
-
-  if (nfts == null || nfts.length === 0) {
-    return null;
-  }
-
-  return (
-    <div>
-      <Text as="h3" className={styles.NFTListHeader}>
-        <FormattedMessage id="UserDetails.connected-identities.siwe.nft-collections.title" />
-      </Text>
-      <List
-        items={nfts}
-        onRenderCell={onRenderCollectionCell}
-        onShouldVirtualize={onShouldVirtualize}
-      />
-    </div>
   );
 };
 
@@ -785,55 +684,43 @@ const OAuthIdentityListCell: React.VFC<OAuthIdentityListCellProps> = (
   );
 };
 
-interface SIWEIdentityListCellProps extends BaseIdentityListCellProps {
-  nfts?: NFT[];
+interface LDAPIdentityListCellProps {
+  icon: React.ReactNode;
+  identityID: string;
+  identityType: IdentityType;
+  identityName: string;
+  userIDAttributeName?: string;
+  userIDAttributeValue?: string;
+  verified?: boolean;
+  connectedOn: string;
 }
 
-const SIWEIdentityListCell: React.VFC<SIWEIdentityListCellProps> = (props) => {
+const LDAPIdentityListCell: React.VFC<LDAPIdentityListCellProps> = (props) => {
   const {
     icon,
-    identityID,
-    identityType,
     identityName,
+    userIDAttributeName,
+    userIDAttributeValue,
     verified,
     connectedOn,
-    nfts,
-    setVerifiedStatus,
-    onRemoveClicked,
   } = props;
 
-  const externalLinkProps: ExternalLinkProps = useMemo(() => {
-    return {
-      href: explorerAddress(identityName),
-    };
-  }, [identityName]);
-
   return (
-    <ListCellLayout className={styles.cellContainer}>
-      <BaseIdentityListCellTitle
-        as="ExternalLink"
-        icon={icon}
-        externalLinkProps={externalLinkProps}
-      >
-        {identityName}
+    <ListCellLayout className={cn(styles.cellContainer, styles.ldap)}>
+      <BaseIdentityListCellTitle as="Text" icon={icon}>
+        {identityName ? identityName : "-"}
       </BaseIdentityListCellTitle>
+      <Text className={styles.cellLDAPInfo} variant="medium">
+        {userIDAttributeName && userIDAttributeValue
+          ? `${userIDAttributeName}=${userIDAttributeValue}`
+          : "-"}
+      </Text>
       <BaseIdentityListCellDescription verified={verified}>
-        <div>
-          <FormattedMessage
-            id="UserDetails.connected-identities.added-on"
-            values={{ datetime: connectedOn }}
-          />
-          <NFTCollectionList nfts={nfts} eip681String={identityName} />
-        </div>
+        <FormattedMessage
+          id="UserDetails.connected-identities.added-on"
+          values={{ datetime: connectedOn }}
+        />
       </BaseIdentityListCellDescription>
-      <BaseIdentityListCellButtonGroup
-        verified={verified}
-        identityID={identityID}
-        identityName={identityName}
-        identityType={identityType}
-        setVerifiedStatus={setVerifiedStatus}
-        onRemoveClicked={onRemoveClicked}
-      />
     </ListCellLayout>
   );
 };
@@ -842,12 +729,7 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
   function UserDetailsConnectedIdentities(
     props: UserDetailsConnectedIdentitiesProps
   ) {
-    const {
-      identities,
-      verifiedClaims,
-      availableLoginIdIdentities,
-      web3Claims,
-    } = props;
+    const { identities, verifiedClaims, availableLoginIdIdentities } = props;
     const { locale, renderToString } = useContext(Context);
 
     const { userID } = useParams() as { userID: string };
@@ -885,7 +767,6 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
         identityName: "",
       });
 
-    // eslint-disable-next-line complexity
     const identityLists: IdentityLists = useMemo(() => {
       const oauthIdentityList: OAuthIdentityListItem[] = [];
       const emailIdentityList: LoginIDIdentityListItem[] = [];
@@ -893,7 +774,7 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
       const usernameIdentityList: LoginIDIdentityListItem[] = [];
       const biometricIdentityList: BiometricIdentityListItem[] = [];
       const anonymousIdentityList: AnonymousIdentityListItem[] = [];
-      const siweIdentityList: SIWEIdentityListItem[] = [];
+      const ldapIdentityList: LDAPIdentityListItem[] = [];
 
       for (const identity of identities) {
         const createdAtStr = formatDatetime(locale, identity.createdAt) ?? "";
@@ -1003,25 +884,24 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
             connectedOn: createdAtStr,
           });
         }
-        if (identity.type === "SIWE") {
-          const address =
-            identity.claims["https://authgear.com/claims/siwe/address"];
-          const chainId =
-            identity.claims["https://authgear.com/claims/siwe/chain_id"];
-          const formattedAddress = typeof address === "string" ? address : "";
-          const formattedChainId = typeof chainId === "number" ? chainId : -1;
-          const nfts = web3Claims.accounts?.find(
-            (account) =>
-              account.account_identifier?.address === formattedAddress
-          )?.nfts;
-          siweIdentityList.push({
+        if (identity.type === "LDAP") {
+          ldapIdentityList.push({
             id: identity.id,
-            type: "siwe",
+            type: "ldap",
             verified: undefined,
-            address: formattedAddress,
-            chainId: formattedChainId,
             connectedOn: createdAtStr,
-            nfts: nfts,
+            lastLoginUserName:
+              identity.claims[
+                "https://authgear.com/claims/ldap/last_login_username"
+              ],
+            userIDAttributeName:
+              identity.claims[
+                "https://authgear.com/claims/ldap/user_id_attribute_name"
+              ] ?? "",
+            userIDAttributeValue:
+              identity.claims[
+                "https://authgear.com/claims/ldap/user_id_attribute_value"
+              ] ?? "",
           });
         }
       }
@@ -1032,9 +912,9 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
         username: usernameIdentityList,
         biometric: biometricIdentityList,
         anonymous: anonymousIdentityList,
-        siwe: siweIdentityList,
+        ldap: ldapIdentityList,
       };
-    }, [identities, locale, verifiedClaims, web3Claims.accounts]);
+    }, [identities, locale, verifiedClaims]);
 
     const onRemoveClicked = useCallback(
       (identityID: string, identityName: string) => {
@@ -1155,18 +1035,17 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
                 onRemoveClicked={onRemoveClicked}
               />
             );
-          case "siwe":
+          case "ldap":
             return (
-              <SIWEIdentityListCell
-                icon={siweIcon}
+              <LDAPIdentityListCell
+                icon={ldapIcon}
                 identityID={identityID}
                 identityType={identityType}
                 identityName={identityName}
+                userIDAttributeName={item.userIDAttributeName}
+                userIDAttributeValue={item.userIDAttributeValue}
                 verified={verified}
                 connectedOn={connectedOn}
-                nfts={item.nfts}
-                setVerifiedStatus={setVerifiedStatus}
-                onRemoveClicked={onRemoveClicked}
               />
             );
           default:
@@ -1244,20 +1123,18 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
           <Text as="h2" variant="medium" className={styles.header}>
             <FormattedMessage id="UserDetails.connected-identities.title" />
           </Text>
-          {identityLists.siwe.length === 0 ? (
-            <PrimaryButton
-              disabled={addIdentitiesMenuProps.items.length === 0}
-              iconProps={{ iconName: "CirclePlus" }}
-              menuProps={addIdentitiesMenuProps}
-              styles={{
-                menuIcon: { paddingLeft: "3px" },
-                icon: { paddingRight: "3px" },
-              }}
-              text={
-                <FormattedMessage id="UserDetails.connected-identities.add-identity" />
-              }
-            />
-          ) : null}
+          <PrimaryButton
+            disabled={addIdentitiesMenuProps.items.length === 0}
+            iconProps={{ iconName: "CirclePlus" }}
+            menuProps={addIdentitiesMenuProps}
+            styles={{
+              menuIcon: { paddingLeft: "3px" },
+              icon: { paddingRight: "3px" },
+            }}
+            text={
+              <FormattedMessage id="UserDetails.connected-identities.add-identity" />
+            }
+          />
         </section>
         <section className={styles.identityLists}>
           {identityLists.oauth.length > 0 ? (
@@ -1332,13 +1209,13 @@ const UserDetailsConnectedIdentities: React.VFC<UserDetailsConnectedIdentitiesPr
               />
             </div>
           ) : null}
-          {identityLists.siwe.length > 0 ? (
+          {identityLists.ldap.length > 0 ? (
             <div>
               <Text as="h3" className={styles.subHeader}>
-                <FormattedMessage id="UserDetails.connected-identities.siwe" />
+                <FormattedMessage id="UserDetails.connected-identities.ldap" />
               </Text>
               <List
-                items={identityLists.siwe}
+                items={identityLists.ldap}
                 onRenderCell={onRenderIdentityCell}
                 onShouldVirtualize={onShouldVirtualize}
               />

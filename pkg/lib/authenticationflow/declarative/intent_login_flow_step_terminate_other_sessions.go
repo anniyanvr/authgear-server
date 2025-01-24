@@ -14,9 +14,10 @@ func init() {
 }
 
 type IntentLoginFlowStepTerminateOtherSessions struct {
-	StepName    string        `json:"step_name,omitempty"`
-	JSONPointer jsonpointer.T `json:"json_pointer,omitempty"`
-	UserID      string        `json:"user_id,omitempty"`
+	FlowReference authflow.FlowReference `json:"flow_reference,omitempty"`
+	StepName      string                 `json:"step_name,omitempty"`
+	JSONPointer   jsonpointer.T          `json:"json_pointer,omitempty"`
+	UserID        string                 `json:"user_id,omitempty"`
 }
 
 var _ authflow.Intent = &IntentLoginFlowStepTerminateOtherSessions{}
@@ -39,7 +40,7 @@ func (i *IntentLoginFlowStepTerminateOtherSessions) ReactTo(ctx context.Context,
 	clientID := uiParam.ClientID
 	client, ok := deps.Config.OAuth.GetClient(clientID)
 	if ok && client.MaxConcurrentSession == 1 {
-		existingGrants, err := deps.OfflineGrants.ListClientOfflineGrants(clientID, i.UserID)
+		existingGrants, err := deps.OfflineGrants.ListClientOfflineGrants(ctx, clientID, i.UserID)
 		if err != nil {
 			return nil, err
 		}

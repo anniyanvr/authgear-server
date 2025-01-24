@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -17,7 +18,7 @@ import (
 
 var TemplateWebSettingsTOTPHTML = template.RegisterHTML(
 	"web/settings_totp.html",
-	components...,
+	Components...,
 )
 
 func ConfigureSettingsTOTPRoute(route httproute.Route) httproute.Route {
@@ -37,12 +38,12 @@ type SettingsTOTPHandler struct {
 	Authenticators    SettingsAuthenticatorService
 }
 
-func (h *SettingsTOTPHandler) GetData(r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
+func (h *SettingsTOTPHandler) GetData(ctx context.Context, r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
 	data := map[string]interface{}{}
 	baseViewModel := h.BaseViewModel.ViewModel(r, rw)
-	userID := session.GetUserID(r.Context())
+	userID := session.GetUserID(ctx)
 	viewModel := SettingsTOTPViewModel{}
-	authenticators, err := h.Authenticators.List(*userID,
+	authenticators, err := h.Authenticators.List(ctx, *userID,
 		authenticator.KeepKind(authenticator.KindSecondary),
 		authenticator.KeepType(model.AuthenticatorTypeTOTP),
 	)
@@ -63,14 +64,14 @@ func (h *SettingsTOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
 	redirectURI := httputil.HostRelative(r.URL).String()
 	authenticatorID := r.Form.Get("x_authenticator_id")
-	userID := ctrl.RequireUserID()
+	userID := ctrl.RequireUserID(r.Context())
 
-	ctrl.Get(func() error {
-		data, err := h.GetData(r, w)
+	ctrl.Get(func(ctx context.Context) error {
+		data, err := h.GetData(ctx, r, w)
 		if err != nil {
 			return err
 		}
@@ -79,13 +80,13 @@ func (h *SettingsTOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 
-	ctrl.PostAction("remove", func() error {
+	ctrl.PostAction("remove", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
 		intent := intents.NewIntentRemoveAuthenticator(userID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			input = &InputRemoveAuthenticator{
 				Type: model.AuthenticatorTypeTOTP,
 				ID:   authenticatorID,
@@ -100,7 +101,7 @@ func (h *SettingsTOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 
-	ctrl.PostAction("add", func() error {
+	ctrl.PostAction("add", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
@@ -110,7 +111,7 @@ func (h *SettingsTOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			model.AuthenticatorTypeTOTP,
 		)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			input = &InputCreateAuthenticator{}
 			return
 		})

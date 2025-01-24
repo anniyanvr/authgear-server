@@ -1,14 +1,11 @@
 import React, { useMemo, useState, useCallback, useContext } from "react";
-import { DateTime } from "luxon";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Pivot,
   PivotItem,
-  IButtonProps,
-  ICommandBarItemProps,
-  CommandButton,
   MessageBar,
   MessageBarType,
+  IStyle,
 } from "@fluentui/react";
 import { FormattedMessage, Context } from "@oursky/react-messageformat";
 import { produce } from "immer";
@@ -31,7 +28,6 @@ import UserDetailsConnectedIdentities from "./UserDetailsConnectedIdentities";
 import UserDetailsSession from "./UserDetailsSession";
 import UserDetailsAuthorization from "./UserDetailsAuthorization";
 
-import { useSystemConfig } from "../../context/SystemConfigContext";
 import { useUpdateUserMutation } from "./mutations/updateUserMutation";
 import { SimpleFormModel, useSimpleForm } from "../../hook/useSimpleForm";
 import { useUserQuery } from "./query/userQuery";
@@ -47,25 +43,38 @@ import {
   OAuthClientConfig,
 } from "../../types";
 import { jsonPointerToString, parseJSONPointer } from "../../util/jsonpointer";
-import { formatDatetime } from "../../util/formatDatetime";
+import { formatDateOnly } from "../../util/formatDateOnly";
 import { extractRawID } from "../../util/graphql";
 
 import styles from "./UserDetailsScreen.module.css";
 import { makeInvariantViolatedErrorParseRule } from "../../error/parse";
-import { IdentityType } from "./globalTypes.generated";
 import AnonymizeUserDialog from "./AnonymizeUserDialog";
+import UserDetailsScreenGroupListContainer from "../../components/roles-and-groups/list/UserDetailsScreenGroupListContainer";
+import UserDetailsScreenRoleListContainer from "../../components/roles-and-groups/list/UserDetailsScreenRoleListContainer";
+import UserDetailsAdminActions from "./UserDetailsAdminActions";
 
 interface UserDetailsProps {
   form: SimpleFormModel<FormState>;
-  data: UserQueryNodeFragment | null;
-  appConfig: PortalAPIAppConfig | null;
+  data: UserQueryNodeFragment;
+  appConfig: PortalAPIAppConfig;
+  onRemoveData: () => void;
+  onAnonymizeData: () => void;
+  handleDataStatusChange: () => void;
 }
 
 const USER_PROFILE_KEY = "user-profile";
 const ACCOUNT_SECURITY_PIVOT_KEY = "account-security";
 const CONNECTED_IDENTITIES_PIVOT_KEY = "connected-identities";
 const SESSION_PIVOT_KEY = "session";
+const ROLES_KEY = "roles";
+const GROUPS_KEY = "groups";
+const DISABLE_DELELE_KEY = "disable-delete";
 
+const pivotItemContainerStyle: IStyle = {
+  flex: "1 0 auto",
+  display: "flex",
+  flexDirection: "column",
+};
 interface FormState {
   userID: string;
   standardAttributes: StandardAttributesState;
@@ -83,7 +92,6 @@ const ERROR_RULES = [
   ),
 ];
 
-// eslint-disable-next-line complexity
 function makeStandardAttributesState(
   attrs: StandardAttributes
 ): StandardAttributesState {
@@ -170,7 +178,6 @@ function makeStandardAttributesFromState(
   });
 }
 
-// eslint-disable-next-line complexity
 function makeCustomAttributesFromState(
   state: CustomAttributesState,
   config: CustomAttributesAttributeConfig[]
@@ -218,7 +225,6 @@ function makeCustomAttributesFromState(
   return out;
 }
 
-// eslint-disable-next-line complexity
 const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
   props: UserDetailsProps
 ) {
@@ -227,26 +233,35 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
     ACCOUNT_SECURITY_PIVOT_KEY,
     CONNECTED_IDENTITIES_PIVOT_KEY,
     SESSION_PIVOT_KEY,
+    ROLES_KEY,
+    GROUPS_KEY,
+    DISABLE_DELELE_KEY,
   ]);
-  const { form, data, appConfig } = props;
+  const {
+    form,
+    data,
+    appConfig,
+    onRemoveData,
+    onAnonymizeData,
+    handleDataStatusChange,
+  } = props;
   const { state, setState } = form;
   const { renderToString } = React.useContext(Context);
 
   const availableLoginIdIdentities = useMemo(() => {
-    const authenticationIdentities =
-      appConfig?.authentication?.identities ?? [];
+    const authenticationIdentities = appConfig.authentication?.identities ?? [];
     const loginIdIdentityEnabled =
       authenticationIdentities.includes("login_id");
     if (!loginIdIdentityEnabled) {
       return [];
     }
-    const rawLoginIdKeys = appConfig?.identity?.login_id?.keys ?? [];
+    const rawLoginIdKeys = appConfig.identity?.login_id?.keys ?? [];
     return rawLoginIdKeys.map((loginIdKey) => loginIdKey.type);
   }, [appConfig]);
 
   const standardAttributeAccessControl = useMemo(() => {
     const record: Record<string, AccessControlLevelString> = {};
-    for (const item of appConfig?.user_profile?.standard_attributes
+    for (const item of appConfig.user_profile?.standard_attributes
       ?.access_control ?? []) {
       record[item.pointer] = item.access_control.portal_ui;
     }
@@ -255,11 +270,11 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
 
   const customAttributesConfig: CustomAttributesAttributeConfig[] =
     useMemo(() => {
-      return appConfig?.user_profile?.custom_attributes?.attributes ?? [];
+      return appConfig.user_profile?.custom_attributes?.attributes ?? [];
     }, [appConfig]);
 
   const oauthClientConfig: OAuthClientConfig[] = useMemo(() => {
-    return appConfig?.oauth?.clients ?? [];
+    return appConfig.oauth?.clients ?? [];
   }, [appConfig]);
 
   const onChangeStandardAttributes = useCallback(
@@ -286,32 +301,29 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
     [setState]
   );
 
-  const web3Claims = data?.web3;
-
-  const verifiedClaims = data?.verifiedClaims ?? [];
+  const verifiedClaims = data.verifiedClaims;
 
   const identities = useMemo(
     () =>
-      data?.identities?.edges?.map((edge) => edge?.node).filter(nonNullable) ??
+      data.identities?.edges?.map((edge) => edge?.node).filter(nonNullable) ??
       [],
-    [data?.identities]
+    [data.identities]
   );
 
   const authenticators = useMemo(
     () =>
-      data?.authenticators?.edges
+      data.authenticators?.edges
         ?.map((edge) => edge?.node)
         .filter(nonNullable) ?? [],
-    [data?.authenticators]
+    [data.authenticators]
   );
 
   const sessions =
-    data?.sessions?.edges?.map((edge) => edge?.node).filter(nonNullable) ?? [];
+    data.sessions?.edges?.map((edge) => edge?.node).filter(nonNullable) ?? [];
 
   const authorizations =
-    data?.authorizations?.edges
-      ?.map((edge) => edge?.node)
-      .filter(nonNullable) ?? [];
+    data.authorizations?.edges?.map((edge) => edge?.node).filter(nonNullable) ??
+    [];
 
   const profileImageEditable = useMemo(() => {
     const ptr = jsonPointerToString(["picture"]);
@@ -319,12 +331,24 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
     return level === "readwrite";
   }, [standardAttributeAccessControl]);
 
-  const isSIWEIdentity = useMemo(
-    () => identities.some((i) => i.type === IdentityType.Siwe),
-    [identities]
-  );
+  const dataStatusBadgeTextId = React.useMemo(() => {
+    let badgeTextId = null;
+    if (data.isDisabled) {
+      badgeTextId = "UserDetails.disabled.badge";
+    }
+    if (data.anonymizeAt) {
+      badgeTextId = "UserDetails.scheduled-anonymization.badge";
+    }
+    if (data.isAnonymized) {
+      badgeTextId = "UserDetails.anonymized.badge";
+    }
+    if (data.deleteAt) {
+      badgeTextId = "UserDetails.scheduled-removal.badge";
+    }
+    return badgeTextId;
+  }, [data.isDisabled, data.anonymizeAt, data.isAnonymized, data.deleteAt]);
 
-  if (data?.isAnonymized) {
+  if (data.isAnonymized) {
     return (
       <div className={styles.widget}>
         <UserDetailSummary
@@ -337,10 +361,31 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
           endUserAccountIdentifier={data.endUserAccountID ?? undefined}
           createdAtISO={data.createdAt ?? null}
           lastLoginAtISO={data.lastLoginAt ?? null}
+          badgeTextId={dataStatusBadgeTextId}
         />
         <MessageBar messageBarType={MessageBarType.info}>
           <FormattedMessage id="UserDetailsScreen.user-anonymized.message" />
         </MessageBar>
+        <Pivot
+          styles={{ itemContainer: pivotItemContainerStyle }}
+          className={styles.pivot}
+          overflowBehavior="menu"
+          selectedKey={selectedKey}
+          onLinkClick={onLinkClick}
+        >
+          <PivotItem
+            className={"flex-1 pt-8"}
+            itemKey={DISABLE_DELELE_KEY}
+            headerText={renderToString("UserDetails.disable-delete.header")}
+          >
+            <UserDetailsAdminActions
+              data={data}
+              onAnonymizeData={onAnonymizeData}
+              handleDataStatusChange={handleDataStatusChange}
+              onRemoveData={onRemoveData}
+            />
+          </PivotItem>
+        </Pivot>
       </div>
     );
   }
@@ -348,17 +393,26 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
   return (
     <div className={styles.widget}>
       <UserDetailSummary
-        isAnonymous={data?.isAnonymous ?? false}
-        isAnonymized={data?.isAnonymized ?? false}
-        profileImageURL={data?.standardAttributes.picture}
+        isAnonymous={data.isAnonymous}
+        isAnonymized={data.isAnonymized}
+        profileImageURL={data.standardAttributes.picture}
         profileImageEditable={profileImageEditable}
-        rawUserID={data?.id != null ? extractRawID(data.id) : ""}
-        formattedName={data?.formattedName ?? undefined}
-        endUserAccountIdentifier={data?.endUserAccountID ?? undefined}
-        createdAtISO={data?.createdAt ?? null}
-        lastLoginAtISO={data?.lastLoginAt ?? null}
+        rawUserID={extractRawID(data.id)}
+        formattedName={data.formattedName ?? undefined}
+        endUserAccountIdentifier={data.endUserAccountID ?? undefined}
+        createdAtISO={data.createdAt ?? null}
+        lastLoginAtISO={data.lastLoginAt ?? null}
+        badgeTextId={dataStatusBadgeTextId}
       />
       <Pivot
+        styles={{
+          itemContainer: {
+            flex: "1 0 auto",
+            display: "flex",
+            flexDirection: "column",
+          },
+        }}
+        className={styles.pivot}
         overflowBehavior="menu"
         selectedKey={selectedKey}
         onLinkClick={onLinkClick}
@@ -381,16 +435,13 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
           itemKey={ACCOUNT_SECURITY_PIVOT_KEY}
           headerText={renderToString("UserDetails.account-security.header")}
         >
-          {isSIWEIdentity ? (
-            <MessageBar className={styles.siweEnabledTabWarningMessageBar}>
-              <FormattedMessage id="UserDetailsScreen.user-account-security.siwe-enabled" />
-            </MessageBar>
-          ) : (
-            <UserDetailsAccountSecurity
-              identities={identities}
-              authenticators={authenticators}
-            />
-          )}
+          <UserDetailsAccountSecurity
+            userID={data.id}
+            authenticationConfig={appConfig.authentication}
+            authenticatorConfig={appConfig.authenticator}
+            identities={identities}
+            authenticators={authenticators}
+          />
         </PivotItem>
         <PivotItem
           itemKey={CONNECTED_IDENTITIES_PIVOT_KEY}
@@ -400,147 +451,51 @@ const UserDetails: React.VFC<UserDetailsProps> = function UserDetails(
             identities={identities}
             verifiedClaims={verifiedClaims}
             availableLoginIdIdentities={availableLoginIdIdentities}
-            web3Claims={web3Claims}
           />
         </PivotItem>
         <PivotItem
           itemKey={SESSION_PIVOT_KEY}
           headerText={renderToString("UserDetails.session.header")}
         >
-          <UserDetailsSession sessions={sessions} />
+          <UserDetailsSession
+            sessions={sessions}
+            oauthClients={oauthClientConfig}
+          />
           <UserDetailsAuthorization
             authorizations={authorizations}
             oauthClientConfig={oauthClientConfig}
+          />
+        </PivotItem>
+        <PivotItem
+          className={"flex-1 pt-8"}
+          itemKey={ROLES_KEY}
+          headerText={renderToString("UserDetails.roles.header")}
+        >
+          <UserDetailsScreenRoleListContainer user={data} />
+        </PivotItem>
+        <PivotItem
+          className={"flex-1 pt-8"}
+          itemKey={GROUPS_KEY}
+          headerText={renderToString("UserDetails.groups.header")}
+        >
+          <UserDetailsScreenGroupListContainer user={data} />
+        </PivotItem>
+        <PivotItem
+          className={"flex-1 pt-8"}
+          itemKey={DISABLE_DELELE_KEY}
+          headerText={renderToString("UserDetails.disable-delete.header")}
+        >
+          <UserDetailsAdminActions
+            data={data}
+            onAnonymizeData={onAnonymizeData}
+            handleDataStatusChange={handleDataStatusChange}
+            onRemoveData={onRemoveData}
           />
         </PivotItem>
       </Pivot>
     </div>
   );
 };
-
-function useDeleteUserCommandBarItem(
-  onClick: IButtonProps["onClick"]
-): ICommandBarItemProps {
-  const { renderToString } = useContext(Context);
-  const { themes } = useSystemConfig();
-
-  const itemProps: ICommandBarItemProps = useMemo(() => {
-    return {
-      key: "remove",
-      text: renderToString("UserDetailsScreen.remove-user"),
-      iconProps: { iconName: "Delete" },
-      onRender: (props) => {
-        return (
-          <CommandButton
-            {...props}
-            theme={themes.destructive}
-            onClick={onClick}
-            styles={{
-              root: {
-                height: "44px",
-              },
-              // https://github.com/authgear/authgear-server/issues/2348#issuecomment-1226545493
-              label: {
-                whiteSpace: "nowrap",
-              },
-            }}
-          />
-        );
-      },
-    };
-  }, [onClick, renderToString, themes.destructive]);
-
-  return itemProps;
-}
-
-function useAnonymizeUserCommandBarItem(
-  onClick: IButtonProps["onClick"]
-): ICommandBarItemProps {
-  const { renderToString } = useContext(Context);
-  const { themes } = useSystemConfig();
-
-  const itemProps: ICommandBarItemProps = useMemo(() => {
-    return {
-      key: "anonymize",
-      text: renderToString("UserDetailsScreen.anonymize-user"),
-      iconProps: { iconName: "Archive" },
-      onRender: (props) => {
-        return (
-          <CommandButton
-            {...props}
-            theme={themes.destructive}
-            onClick={onClick}
-            styles={{
-              root: {
-                height: "44px",
-              },
-              // https://github.com/authgear/authgear-server/issues/2348#issuecomment-1226545493
-              label: {
-                whiteSpace: "nowrap",
-              },
-            }}
-          />
-        );
-      },
-    };
-  }, [onClick, renderToString, themes.destructive]);
-
-  return itemProps;
-}
-
-function useSetUserDisabledCommandBarItem(
-  user: UserQueryNodeFragment,
-  onClick: IButtonProps["onClick"]
-): ICommandBarItemProps {
-  const { renderToString } = useContext(Context);
-  const itemProps: ICommandBarItemProps = useMemo(() => {
-    const text =
-      user.deleteAt != null
-        ? renderToString("UserDetailsScreen.cancel-removal")
-        : user.anonymizeAt != null
-        ? renderToString("UserDetailsScreen.cancel-anonymization")
-        : user.isDisabled
-        ? renderToString("UserDetailsScreen.reenable-user")
-        : renderToString("UserDetailsScreen.disable-user");
-    const iconName =
-      user.deleteAt != null || user.anonymizeAt != null
-        ? "Undo"
-        : user.isDisabled
-        ? "Play"
-        : "CircleStop";
-    return {
-      key: "setDisabledStatus",
-      text,
-      iconProps: {
-        iconName,
-      },
-      onRender: (props) => {
-        return (
-          <CommandButton
-            {...props}
-            onClick={onClick}
-            styles={{
-              root: {
-                height: "44px",
-              },
-              // https://github.com/authgear/authgear-server/issues/2348#issuecomment-1226545493
-              label: {
-                whiteSpace: "nowrap",
-              },
-            }}
-          />
-        );
-      },
-    };
-  }, [
-    user.deleteAt,
-    user.anonymizeAt,
-    user.isDisabled,
-    onClick,
-    renderToString,
-  ]);
-  return itemProps;
-}
 
 interface WarnScheduledDeletionProps {
   user: UserQueryNodeFragment;
@@ -558,8 +513,7 @@ function WarnScheduledDeletion(props: WarnScheduledDeletionProps) {
       <FormattedMessage
         id="UserDetailsScreen.scheduled-deletion"
         values={{
-          date:
-            formatDatetime(locale, user.deleteAt, DateTime.DATE_SHORT) ?? "",
+          date: formatDateOnly(locale, user.deleteAt) ?? "",
         }}
       />
     </MessageBar>
@@ -582,8 +536,7 @@ function WarnScheduledAnonymization(props: WarnScheduledAnonymizationProps) {
       <FormattedMessage
         id="UserDetailsScreen.scheduled-anonymization"
         values={{
-          date:
-            formatDatetime(locale, user.anonymizeAt, DateTime.DATE_SHORT) ?? "",
+          date: formatDateOnly(locale, user.anonymizeAt) ?? "",
         }}
       />
     </MessageBar>
@@ -597,7 +550,6 @@ interface UserDetailsScreenContentProps {
 }
 
 const UserDetailsScreenContent: React.VFC<UserDetailsScreenContentProps> =
-  // eslint-disable-next-line complexity
   function UserDetailsScreenContent(props: UserDetailsScreenContentProps) {
     const { user, refreshUser, effectiveAppConfig } = props;
     const navigate = useNavigate();
@@ -628,8 +580,6 @@ const UserDetailsScreenContent: React.VFC<UserDetailsScreenContentProps> =
     const onClickDeleteUser = useCallback(() => {
       setDeleteUserDialogIsHidden(false);
     }, []);
-    const deleteUserCommandBarItem =
-      useDeleteUserCommandBarItem(onClickDeleteUser);
 
     const [anonymizeUserDialogIsHidden, setAnonymizeUserDialogIsHidden] =
       useState(true);
@@ -639,8 +589,6 @@ const UserDetailsScreenContent: React.VFC<UserDetailsScreenContentProps> =
     const onClickAnonymizeUser = useCallback(() => {
       setAnonymizeUserDialogIsHidden(false);
     }, []);
-    const anonymizeUserCommandBarItem =
-      useAnonymizeUserCommandBarItem(onClickAnonymizeUser);
 
     const [setUserDisabledDialogIsHidden, setSetUserDisabledDialogIsHidden] =
       useState(true);
@@ -652,32 +600,6 @@ const UserDetailsScreenContent: React.VFC<UserDetailsScreenContentProps> =
       setSetUserDisabledDialogIsHidden(false);
       setUserIsDisabled(user.isDisabled);
     }, [user.isDisabled]);
-    const setUserDisabledCommandBarItem = useSetUserDisabledCommandBarItem(
-      user,
-      onClickSetUserDisabled
-    );
-
-    const primaryItems: ICommandBarItemProps[] = useMemo(() => {
-      if (user.isAnonymized) {
-        if (user.deleteAt) {
-          return [deleteUserCommandBarItem, setUserDisabledCommandBarItem];
-        }
-
-        return [deleteUserCommandBarItem];
-      }
-
-      return [
-        deleteUserCommandBarItem,
-        anonymizeUserCommandBarItem,
-        setUserDisabledCommandBarItem,
-      ];
-    }, [
-      deleteUserCommandBarItem,
-      anonymizeUserCommandBarItem,
-      setUserDisabledCommandBarItem,
-      user.deleteAt,
-      user.isAnonymized,
-    ]);
 
     const defaultState = useMemo(() => {
       return {
@@ -722,9 +644,10 @@ const UserDetailsScreenContent: React.VFC<UserDetailsScreenContentProps> =
 
     return (
       <FormContainer
+        className={styles.formContainer}
         errorRules={ERROR_RULES}
         form={form}
-        primaryItems={primaryItems}
+        hideFooterComponent={true}
         messageBar={
           <>
             <WarnScheduledDeletion user={user} />
@@ -732,9 +655,16 @@ const UserDetailsScreenContent: React.VFC<UserDetailsScreenContentProps> =
           </>
         }
       >
-        <ScreenContent>
+        <ScreenContent className={styles.screenContent}>
           <NavBreadcrumb className={styles.widget} items={navBreadcrumbItems} />
-          <UserDetails form={form} data={user} appConfig={effectiveAppConfig} />
+          <UserDetails
+            form={form}
+            data={user}
+            appConfig={effectiveAppConfig}
+            onRemoveData={onClickDeleteUser}
+            onAnonymizeData={onClickAnonymizeUser}
+            handleDataStatusChange={onClickSetUserDisabled}
+          />
         </ScreenContent>
         <DeleteUserDialog
           isHidden={deleteUserDialogIsHidden}

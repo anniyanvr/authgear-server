@@ -1,6 +1,8 @@
 package webapp
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -8,6 +10,7 @@ import (
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
 	"github.com/authgear/authgear-server/pkg/lib/authenticationflow/declarative"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/infra/whatsapp"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 	"github.com/authgear/authgear-server/pkg/util/template"
 	"github.com/authgear/authgear-server/pkg/util/validation"
@@ -15,7 +18,7 @@ import (
 
 var TemplateWebAuthflowForgotPasswordHTML = template.RegisterHTML(
 	"web/authflow_forgot_password.html",
-	components...,
+	Components...,
 )
 
 var AuthflowForgotPasswordSchema = validation.NewSimpleSchema(`
@@ -150,10 +153,9 @@ func (h *AuthflowForgotPasswordHandler) GetData(
 }
 
 func (h *AuthflowForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	flowName := "default"
 	var handlers AuthflowControllerHandlers
 
-	handlers.Get(func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.Get(func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 
 		var screenIdentify *webapp.AuthflowScreenWithFlowResponse
 		var screenSelectDestination *webapp.AuthflowScreenWithFlowResponse
@@ -165,7 +167,7 @@ func (h *AuthflowForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http
 		case config.AuthenticationFlowStepTypeSelectDestination:
 			screenSelectDestination = screen
 			var err error
-			screenIdentify, err = h.Controller.GetScreen(s, screen.Screen.PreviousXStep)
+			screenIdentify, err = h.Controller.GetScreen(ctx, s, screen.Screen.PreviousXStep)
 			if err != nil {
 				return err
 			}
@@ -180,7 +182,7 @@ func (h *AuthflowForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http
 		return nil
 	})
 
-	handlers.PostAction("", func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.PostAction("", func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		err := AuthflowForgotPasswordSchema.Validator().ValidateValue(FormToJSON(r.Form))
 		if err != nil {
 			return err
@@ -189,32 +191,20 @@ func (h *AuthflowForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http
 		loginID := r.Form.Get("x_login_id")
 		identification := r.Form.Get("x_login_id_type")
 
-		inputs := []map[string]interface{}{}
+		inputs := h.makeInputs(screen, identification, loginID, 0)
 
-		// screen can be identity or select_destination according to the query
-		switch config.AuthenticationFlowStepType(screen.StateTokenFlowResponse.Action.Type) {
-		case config.AuthenticationFlowStepTypeIdentify:
-			// We need data of both steps, so they must be two inputs
-			inputs = []map[string]interface{}{
-				{
-					"identification": identification,
-					"login_id":       loginID,
-				},
-				{
-					"index": 0,
-				},
+		result, err := h.Controller.AdvanceWithInputs(ctx, r, s, screen, inputs, nil)
+		if errors.Is(err, whatsapp.ErrInvalidWhatsappUser) {
+			// The code failed to send because it is not a valid whatsapp user
+			// Try again with sms if possible
+			var fallbackErr error
+			result, fallbackErr = h.fallbackToSMS(ctx, r, s, screen, identification, loginID)
+			if errors.Is(fallbackErr, ErrNoFallbackAvailable) {
+				return err
+			} else if fallbackErr != nil {
+				return fallbackErr
 			}
-		case config.AuthenticationFlowStepTypeSelectDestination:
-			inputs = []map[string]interface{}{
-				{
-					"index": 0,
-				},
-			}
-		}
-
-		result, err := h.Controller.AdvanceWithInputs(r, s, screen, inputs)
-
-		if err != nil {
+		} else if err != nil {
 			return err
 		}
 
@@ -234,8 +224,78 @@ func (h *AuthflowForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http
 		}
 	}
 
-	h.Controller.HandleStartOfFlow(w, r, webapp.SessionOptions{}, authflow.FlowReference{
-		Type: authflow.FlowTypeAccountRecovery,
-		Name: flowName,
-	}, &handlers, input)
+	h.Controller.HandleStartOfFlow(r.Context(), w, r, webapp.SessionOptions{}, authflow.FlowTypeAccountRecovery, &handlers, input)
+}
+
+func (h *AuthflowForgotPasswordHandler) fallbackToSMS(
+	ctx context.Context,
+	r *http.Request,
+	s *webapp.Session,
+	screen *webapp.AuthflowScreenWithFlowResponse,
+	identification string,
+	loginID string,
+) (*webapp.Result, error) {
+	options := []declarative.AccountRecoveryDestinationOption{}
+	switch config.AuthenticationFlowStepType(screen.StateTokenFlowResponse.Action.Type) {
+	case config.AuthenticationFlowStepTypeIdentify:
+		input := map[string]interface{}{
+			"identification": identification,
+			"login_id":       loginID,
+		}
+		output, err := h.Controller.FeedInputWithoutNavigate(ctx, screen.StateTokenFlowResponse.StateToken, input)
+		if err != nil {
+			return nil, err
+		}
+		if data, ok := output.FlowAction.Data.(declarative.IntentAccountRecoveryFlowStepSelectDestinationData); ok {
+			options = data.Options
+		}
+
+	case config.AuthenticationFlowStepTypeSelectDestination:
+		if data, ok := screen.StateTokenFlowResponse.Action.Data.(declarative.IntentAccountRecoveryFlowStepSelectDestinationData); ok {
+			options = data.Options
+		}
+	}
+
+	smsOptionIdx := -1
+	for idx, option := range options {
+		if option.Channel == declarative.AccountRecoveryChannelSMS {
+			smsOptionIdx = idx
+			break
+		}
+	}
+	if smsOptionIdx == -1 {
+		// No sms option is available, failing
+		return nil, ErrNoFallbackAvailable
+	}
+
+	inputs := h.makeInputs(screen, identification, loginID, smsOptionIdx)
+	return h.Controller.AdvanceWithInputs(ctx, r, s, screen, inputs, nil)
+}
+
+func (h *AuthflowForgotPasswordHandler) makeInputs(
+	screen *webapp.AuthflowScreenWithFlowResponse,
+	identification string,
+	loginID string,
+	optionIndex int) (inputs []map[string]interface{}) {
+	// screen can be identity or select_destination depends on the query
+	switch config.AuthenticationFlowStepType(screen.StateTokenFlowResponse.Action.Type) {
+	case config.AuthenticationFlowStepTypeIdentify:
+		// We need data of both steps, so they must be two inputs
+		inputs = []map[string]interface{}{
+			{
+				"identification": identification,
+				"login_id":       loginID,
+			},
+			{
+				"index": optionIndex,
+			},
+		}
+	case config.AuthenticationFlowStepTypeSelectDestination:
+		inputs = []map[string]interface{}{
+			{
+				"index": optionIndex,
+			},
+		}
+	}
+	return
 }

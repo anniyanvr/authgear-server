@@ -2,6 +2,8 @@ package validation
 
 import (
 	"encoding/json"
+
+	"github.com/authgear/authgear-server/pkg/util/copyutil"
 )
 
 // SchemaBuilder is just map[string]interface{} with
@@ -28,6 +30,35 @@ func (b SchemaBuilder) Type(t Type) SchemaBuilder {
 	return b
 }
 
+func (b SchemaBuilder) Types(ts ...Type) SchemaBuilder {
+	b["type"] = ts
+	return b
+}
+
+func (b SchemaBuilder) AddTypeNull() SchemaBuilder {
+	bType, ok := b["type"]
+	if !ok {
+		b.Type(TypeNull)
+		return b
+	}
+
+	originals, ok := bType.([]Type)
+	if ok {
+		newTypes := append(originals, TypeNull)
+		b.Types(newTypes...)
+		return b
+	}
+
+	original, ok := bType.(Type)
+	if ok {
+		newTypes := []Type{original, TypeNull}
+		b.Types(newTypes...)
+		return b
+	}
+
+	panic("unexpected: schema builder has invalid type")
+}
+
 func (b SchemaBuilder) Properties() SchemaBuilder {
 	bb, ok := b["properties"].(SchemaBuilder)
 	if !ok {
@@ -49,6 +80,17 @@ func (b SchemaBuilder) Contains(builder SchemaBuilder) SchemaBuilder {
 
 func (b SchemaBuilder) Required(keys ...string) SchemaBuilder {
 	b["required"] = keys
+	return b
+}
+
+func (b SchemaBuilder) AddRequired(keys ...string) SchemaBuilder {
+	originals, ok := b["required"].([]string)
+	if ok {
+		newRequired := append(originals, keys...)
+		b["required"] = newRequired
+	} else {
+		b["required"] = keys
+	}
 	return b
 }
 
@@ -89,6 +131,11 @@ func (b SchemaBuilder) MinimumFloat64(minimum float64) SchemaBuilder {
 
 func (b SchemaBuilder) MaximumFloat64(maximum float64) SchemaBuilder {
 	b["maximum"] = maximum
+	return b
+}
+
+func (b SchemaBuilder) MinItems(n int) SchemaBuilder {
+	b["minItems"] = n
 	return b
 }
 
@@ -133,4 +180,14 @@ func (b SchemaBuilder) ToSimpleSchema() *SimpleSchema {
 		panic(err)
 	}
 	return NewSimpleSchema(string(bytes))
+}
+
+// This function allow copying the schema builder to a reference
+// Expected usage is to avoid mutating original schema builder
+func (b SchemaBuilder) Clone() SchemaBuilder {
+	newB, err := copyutil.Clone(b)
+	if err != nil {
+		panic(err)
+	}
+	return newB.(SchemaBuilder)
 }

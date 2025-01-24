@@ -1,4 +1,94 @@
 """"""
+input AddGroupToRolesInput {
+  """The key of the group."""
+  groupKey: String!
+
+  """The list of role keys."""
+  roleKeys: [String!]!
+}
+
+""""""
+type AddGroupToRolesPayload {
+  """"""
+  group: Group!
+}
+
+""""""
+input AddGroupToUsersInput {
+  """The key of the group."""
+  groupKey: String!
+
+  """The list of user ids."""
+  userIDs: [ID!]
+}
+
+""""""
+type AddGroupToUsersPayload {
+  """"""
+  group: Group!
+}
+
+""""""
+input AddRoleToGroupsInput {
+  """The list of group keys."""
+  groupKeys: [String!]!
+
+  """The key of the role."""
+  roleKey: String!
+}
+
+""""""
+type AddRoleToGroupsPayload {
+  """"""
+  role: Role!
+}
+
+""""""
+input AddRoleToUsersInput {
+  """The key of the role."""
+  roleKey: String!
+
+  """The list of user ids."""
+  userIDs: [ID!]
+}
+
+""""""
+type AddRoleToUsersPayload {
+  """"""
+  role: Role!
+}
+
+""""""
+input AddUserToGroupsInput {
+  """The list of group keys."""
+  groupKeys: [String!]
+
+  """The ID of the user."""
+  userID: ID!
+}
+
+""""""
+type AddUserToGroupsPayload {
+  """"""
+  user: User!
+}
+
+""""""
+input AddUserToRolesInput {
+  """The list of role keys."""
+  roleKeys: [String!]
+
+  """The id of the user."""
+  userID: ID!
+}
+
+""""""
+type AddUserToRolesPayload {
+  """"""
+  user: User!
+}
+
+""""""
 input AnonymizeUserInput {
   """Target user ID."""
   userID: ID!
@@ -40,10 +130,37 @@ type AuditLog implements Node {
 """"""
 enum AuditLogActivityType {
   """"""
+  ADMIN_API_MUTATION_ADD_GROUP_TO_ROLES_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_ADD_GROUP_TO_USERS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_ADD_ROLE_TO_GROUPS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_ADD_ROLE_TO_USERS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_ADD_USER_TO_GROUPS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_ADD_USER_TO_ROLES_EXECUTED
+
+  """"""
   ADMIN_API_MUTATION_ANONYMIZE_USER_EXECUTED
 
   """"""
+  ADMIN_API_MUTATION_CREATE_AUTHENTICATOR_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_CREATE_GROUP_EXECUTED
+
+  """"""
   ADMIN_API_MUTATION_CREATE_IDENTITY_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_CREATE_ROLE_EXECUTED
 
   """"""
   ADMIN_API_MUTATION_CREATE_SESSION_EXECUTED
@@ -58,13 +175,37 @@ enum AuditLogActivityType {
   ADMIN_API_MUTATION_DELETE_AUTHORIZATION_EXECUTED
 
   """"""
+  ADMIN_API_MUTATION_DELETE_GROUP_EXECUTED
+
+  """"""
   ADMIN_API_MUTATION_DELETE_IDENTITY_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_DELETE_ROLE_EXECUTED
 
   """"""
   ADMIN_API_MUTATION_DELETE_USER_EXECUTED
 
   """"""
   ADMIN_API_MUTATION_GENERATE_OOB_OTP_CODE_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_REMOVE_GROUP_FROM_ROLES_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_REMOVE_GROUP_FROM_USERS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_REMOVE_ROLE_FROM_GROUPS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_REMOVE_ROLE_FROM_USERS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_REMOVE_USER_FROM_GROUPS_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_REMOVE_USER_FROM_ROLES_EXECUTED
 
   """"""
   ADMIN_API_MUTATION_RESET_PASSWORD_EXECUTED
@@ -88,6 +229,9 @@ enum AuditLogActivityType {
   ADMIN_API_MUTATION_SET_DISABLED_STATUS_EXECUTED
 
   """"""
+  ADMIN_API_MUTATION_SET_PASSWORD_EXPIRED_EXECUTED
+
+  """"""
   ADMIN_API_MUTATION_SET_VERIFIED_STATUS_EXECUTED
 
   """"""
@@ -97,7 +241,13 @@ enum AuditLogActivityType {
   ADMIN_API_MUTATION_UNSCHEDULE_ACCOUNT_DELETION_EXECUTED
 
   """"""
+  ADMIN_API_MUTATION_UPDATE_GROUP_EXECUTED
+
+  """"""
   ADMIN_API_MUTATION_UPDATE_IDENTITY_EXECUTED
+
+  """"""
+  ADMIN_API_MUTATION_UPDATE_ROLE_EXECUTED
 
   """"""
   ADMIN_API_MUTATION_UPDATE_USER_EXECUTED
@@ -136,7 +286,16 @@ enum AuditLogActivityType {
   AUTHENTICATION_SECONDARY_TOTP_FAILED
 
   """"""
+  BOT_PROTECTION_VERIFICATION_FAILED
+
+  """"""
+  EMAIL_ERROR
+
+  """"""
   EMAIL_SENT
+
+  """"""
+  EMAIL_SUPPRESSED
 
   """"""
   IDENTITY_BIOMETRIC_DISABLED
@@ -229,7 +388,13 @@ enum AuditLogActivityType {
   PROJECT_DOMAIN_VERIFIED
 
   """"""
+  SMS_ERROR
+
+  """"""
   SMS_SENT
+
+  """"""
+  SMS_SUPPRESSED
 
   """"""
   USER_ANONYMIZATION_SCHEDULED
@@ -274,10 +439,16 @@ enum AuditLogActivityType {
   USER_SIGNED_OUT
 
   """"""
+  WHATSAPP_ERROR
+
+  """"""
   WHATSAPP_OTP_VERIFIED
 
   """"""
   WHATSAPP_SENT
+
+  """"""
+  WHATSAPP_SUPPRESSED
 }
 
 """A connection to a list of items."""
@@ -312,6 +483,9 @@ type Authenticator implements Entity & Node {
   """The creation time of entity"""
   createdAt: DateTime!
 
+  """"""
+  expireAfter: DateTime
+
   """The ID of an object"""
   id: ID!
 
@@ -343,6 +517,50 @@ type AuthenticatorConnection {
 
   """Total number of nodes in the connection."""
   totalCount: Int
+}
+
+"""
+Definition of an authenticator. This is a union object, exactly one of the available fields must be present.
+"""
+input AuthenticatorDefinition {
+  """Kind of authenticator."""
+  kind: AuthenticatorKind!
+
+  """
+  OOB OTP Email authenticator definition. Must be provided when type is OOB_OTP_EMAIL.
+  """
+  oobOtpEmail: AuthenticatorDefinitionOOBOTPEmail
+
+  """
+  OOB OTP SMS authenticator definition. Must be provided when type is OOB_OTP_SMS.
+  """
+  oobOtpSMS: AuthenticatorDefinitionOOBOTPSMS
+
+  """
+  Password authenticator definition. Must be provided when type is PASSWORD.
+  """
+  password: AuthenticatorDefinitionPassword
+
+  """Type of authenticator."""
+  type: AuthenticatorType!
+}
+
+""""""
+input AuthenticatorDefinitionOOBOTPEmail {
+  """Email of the new oob otp sms authenticator."""
+  email: String!
+}
+
+""""""
+input AuthenticatorDefinitionOOBOTPSMS {
+  """Phone number of the new oob otp sms authenticator."""
+  phone: String!
+}
+
+""""""
+input AuthenticatorDefinitionPassword {
+  """Password of the new authenticator."""
+  password: String!
 }
 
 """An edge in a connection"""
@@ -430,6 +648,39 @@ type Claim {
 }
 
 """"""
+input CreateAuthenticatorInput {
+  """Definition of the new authenticator."""
+  definition: AuthenticatorDefinition!
+
+  """Target user ID."""
+  userID: ID!
+}
+
+""""""
+type CreateAuthenticatorPayload {
+  """"""
+  authenticator: Authenticator!
+}
+
+""""""
+input CreateGroupInput {
+  """The optional description of the group."""
+  description: String
+
+  """The key of the group."""
+  key: String!
+
+  """The optional name of the group."""
+  name: String
+}
+
+""""""
+type CreateGroupPayload {
+  """"""
+  group: Group!
+}
+
+""""""
 input CreateIdentityInput {
   """Definition of the new identity."""
   definition: IdentityDefinition!
@@ -448,6 +699,24 @@ type CreateIdentityPayload {
 
   """"""
   user: User!
+}
+
+""""""
+input CreateRoleInput {
+  """The optional description of the role."""
+  description: String
+
+  """The key of the role."""
+  key: String!
+
+  """The optional name of the role."""
+  name: String
+}
+
+""""""
+type CreateRolePayload {
+  """"""
+  role: Role!
 }
 
 """"""
@@ -475,6 +744,14 @@ input CreateUserInput {
 
   """Password for the user if required."""
   password: String
+
+  """Indicate whether to send the new password to the user."""
+  sendPassword: Boolean
+
+  """
+  Indicate whether the user is required to change password on next login.
+  """
+  setPasswordExpired: Boolean
 }
 
 """"""
@@ -513,6 +790,18 @@ type DeleteAuthorizationPayload {
 }
 
 """"""
+input DeleteGroupInput {
+  """The ID of the group."""
+  id: ID!
+}
+
+""""""
+type DeleteGroupPayload {
+  """"""
+  ok: Boolean
+}
+
+""""""
 input DeleteIdentityInput {
   """Target identity ID."""
   identityID: ID!
@@ -522,6 +811,18 @@ input DeleteIdentityInput {
 type DeleteIdentityPayload {
   """"""
   user: User!
+}
+
+""""""
+input DeleteRoleInput {
+  """The ID of the role."""
+  id: ID!
+}
+
+""""""
+type DeleteRolePayload {
+  """"""
+  ok: Boolean
 }
 
 """"""
@@ -561,6 +862,54 @@ input GenerateOOBOTPCodeInput {
 type GenerateOOBOTPCodePayload {
   """"""
   code: String!
+}
+
+"""Authgear group"""
+type Group implements Entity & Node {
+  """The creation time of entity"""
+  createdAt: DateTime!
+
+  """The optional description of the group."""
+  description: String
+
+  """The ID of an object"""
+  id: ID!
+
+  """The key of the group."""
+  key: String!
+
+  """The optional name of the group."""
+  name: String
+
+  """The list of roles this group has."""
+  roles(after: String, before: String, first: Int, last: Int): RoleConnection
+
+  """The update time of entity"""
+  updatedAt: DateTime!
+
+  """The list of users in the group."""
+  users(after: String, before: String, first: Int, last: Int): UserConnection
+}
+
+"""A connection to a list of items."""
+type GroupConnection {
+  """Information to aid in pagination."""
+  edges: [GroupEdge]
+
+  """Information to aid in pagination."""
+  pageInfo: PageInfo!
+
+  """Total number of nodes in the connection."""
+  totalCount: Int
+}
+
+"""An edge in a connection"""
+type GroupEdge {
+  """ cursor for use in pagination"""
+  cursor: String!
+
+  """The item at the end of the edge"""
+  node: Group
 }
 
 """"""
@@ -633,6 +982,9 @@ enum IdentityType {
   BIOMETRIC
 
   """"""
+  LDAP
+
+  """"""
   LOGIN_ID
 
   """"""
@@ -647,11 +999,38 @@ enum IdentityType {
 
 """"""
 type Mutation {
+  """Add the group to the roles."""
+  addGroupToRoles(input: AddGroupToRolesInput!): AddGroupToRolesPayload!
+
+  """Add the group to the users."""
+  addGroupToUsers(input: AddGroupToUsersInput!): AddGroupToUsersPayload!
+
+  """Add the role to the groups."""
+  addRoleToGroups(input: AddRoleToGroupsInput!): AddRoleToGroupsPayload!
+
+  """Add the role to the users."""
+  addRoleToUsers(input: AddRoleToUsersInput!): AddRoleToUsersPayload!
+
+  """Add the user to the groups."""
+  addUserToGroups(input: AddUserToGroupsInput!): AddUserToGroupsPayload!
+
+  """Add the user to the roles."""
+  addUserToRoles(input: AddUserToRolesInput!): AddUserToRolesPayload!
+
   """Anonymize specified user"""
   anonymizeUser(input: AnonymizeUserInput!): AnonymizeUserPayload!
 
+  """Create authenticator of user"""
+  createAuthenticator(input: CreateAuthenticatorInput!): CreateAuthenticatorPayload!
+
+  """Create a new group."""
+  createGroup(input: CreateGroupInput!): CreateGroupPayload!
+
   """Create new identity for user"""
   createIdentity(input: CreateIdentityInput!): CreateIdentityPayload!
+
+  """Create a new role."""
+  createRole(input: CreateRoleInput!): CreateRolePayload!
 
   """Create a session of a given user"""
   createSession(input: CreateSessionInput!): CreateSessionPayload!
@@ -665,14 +1044,45 @@ type Mutation {
   """Delete authorization"""
   deleteAuthorization(input: DeleteAuthorizationInput!): DeleteAuthorizationPayload!
 
+  """
+  Delete an existing group. The associations between the group with other roles and other users will also be deleted.
+  """
+  deleteGroup(input: DeleteGroupInput!): DeleteGroupPayload!
+
   """Delete identity of user"""
   deleteIdentity(input: DeleteIdentityInput!): DeleteIdentityPayload!
+
+  """
+  Delete an existing role. The associations between the role with other groups and other users will also be deleted.
+  """
+  deleteRole(input: DeleteRoleInput!): DeleteRolePayload!
 
   """Delete specified user"""
   deleteUser(input: DeleteUserInput!): DeleteUserPayload!
 
   """Generate OOB OTP code for user"""
   generateOOBOTPCode(input: GenerateOOBOTPCodeInput!): GenerateOOBOTPCodePayload!
+
+  """Remove the group from the roles."""
+  removeGroupFromRoles(input: RemoveGroupFromRolesInput!): RemoveGroupFromRolesPayload!
+
+  """Remove the group to the users."""
+  removeGroupFromUsers(input: RemoveGroupFromUsersInput!): RemoveGroupToUsersPayload!
+
+  """Revoke user grace period for MFA enrollment"""
+  removeMFAGracePeriod(input: removeMFAGracePeriodInput!): removeMFAGracePeriodPayload!
+
+  """Remove the role from the groups."""
+  removeRoleFromGroups(input: RemoveRoleFromGroupsInput!): RemoveRoleFromGroupsPayload!
+
+  """Remove the role to the users."""
+  removeRoleFromUsers(input: RemoveRoleFromUsersInput!): RemoveRoleFromUsersPayload!
+
+  """Remove the user from the groups."""
+  removeUserFromGroups(input: RemoveUserFromGroupsInput!): RemoveUserFromGroupsPayload!
+
+  """Remove the user from the roles."""
+  removeUserFromRoles(input: RemoveUserFromRolesInput!): RemoveUserFromRolesPayload!
 
   """Reset password of user"""
   resetPassword(input: ResetPasswordInput!): ResetPasswordPayload!
@@ -695,6 +1105,12 @@ type Mutation {
   """Set disabled status of user"""
   setDisabledStatus(input: SetDisabledStatusInput!): SetDisabledStatusPayload!
 
+  """Grant user grace period for MFA enrollment"""
+  setMFAGracePeriod(input: SetMFAGracePeriodInput!): SetMFAGracePeriodPayload!
+
+  """Force user to change password on next login"""
+  setPasswordExpired(input: SetPasswordExpiredInput!): SetPasswordExpiredPayload!
+
   """Set verified status of a claim of user"""
   setVerifiedStatus(input: SetVerifiedStatusInput!): SetVerifiedStatusPayload!
 
@@ -704,8 +1120,14 @@ type Mutation {
   """Unschedule account deletion"""
   unscheduleAccountDeletion(input: UnscheduleAccountDeletionInput!): UnscheduleAccountDeletionPayload!
 
+  """Update an existing group."""
+  updateGroup(input: UpdateGroupInput!): UpdateGroupPayload!
+
   """Update an existing identity of user"""
   updateIdentity(input: UpdateIdentityInput!): UpdateIdentityPayload!
+
+  """Update an existing role."""
+  updateRole(input: UpdateRoleInput!): UpdateRolePayload!
 
   """Update user"""
   updateUser(input: UpdateUserInput!): UpdateUserPayload!
@@ -744,7 +1166,21 @@ type PageInfo {
 """"""
 type Query {
   """Audit logs"""
-  auditLogs(activityTypes: [AuditLogActivityType!], after: String, before: String, first: Int, last: Int, rangeFrom: DateTime, rangeTo: DateTime, sortDirection: SortDirection, userIDs: [ID!]): AuditLogConnection
+  auditLogs(activityTypes: [AuditLogActivityType!], after: String, before: String, emailAddresses: [String!], first: Int, last: Int, phoneNumbers: [String!], rangeFrom: DateTime, rangeTo: DateTime, sortDirection: SortDirection, userIDs: [ID!]): AuditLogConnection
+
+  """Get user by Login ID."""
+  getUserByLoginID(loginIDKey: String!, loginIDValue: String!): User
+
+  """Get user by OAuth Alias and user ID."""
+  getUserByOAuth(oauthProviderAlias: String!, oauthProviderUserID: String!): User
+
+  """
+  Get users by standardAttribute, attributeName must be email, phone_number or preferred_username.
+  """
+  getUsersByStandardAttribute(attributeName: String!, attributeValue: String!): [User!]!
+
+  """All groups"""
+  groups(after: String, before: String, excludedIDs: [ID!], first: Int, last: Int, searchKeyword: String): GroupConnection
 
   """Fetches an object given its ID"""
   node(
@@ -758,14 +1194,115 @@ type Query {
     ids: [ID!]!
   ): [Node]!
 
+  """All roles"""
+  roles(after: String, before: String, excludedIDs: [ID!], first: Int, last: Int, searchKeyword: String): RoleConnection
+
   """All users"""
-  users(after: String, before: String, first: Int, last: Int, searchKeyword: String, sortBy: UserSortBy, sortDirection: SortDirection): UserConnection
+  users(after: String, before: String, first: Int, groupKeys: [String!], last: Int, roleKeys: [String!], searchKeyword: String, sortBy: UserSortBy, sortDirection: SortDirection): UserConnection
+}
+
+""""""
+input RemoveGroupFromRolesInput {
+  """The key of the group."""
+  groupKey: String!
+
+  """The list of role keys."""
+  roleKeys: [String!]!
+}
+
+""""""
+type RemoveGroupFromRolesPayload {
+  """"""
+  group: Group!
+}
+
+""""""
+input RemoveGroupFromUsersInput {
+  """The key of the group."""
+  groupKey: String!
+
+  """The list of user ids."""
+  userIDs: [ID!]
+}
+
+""""""
+type RemoveGroupToUsersPayload {
+  """"""
+  group: Group!
+}
+
+""""""
+input RemoveRoleFromGroupsInput {
+  """The list of group keys."""
+  groupKeys: [String!]!
+
+  """The key of the role."""
+  roleKey: String!
+}
+
+""""""
+type RemoveRoleFromGroupsPayload {
+  """"""
+  role: Role!
+}
+
+""""""
+input RemoveRoleFromUsersInput {
+  """The key of the role."""
+  roleKey: String!
+
+  """The list of user ids."""
+  userIDs: [ID!]
+}
+
+""""""
+type RemoveRoleFromUsersPayload {
+  """"""
+  role: Role!
+}
+
+""""""
+input RemoveUserFromGroupsInput {
+  """The list of group keys."""
+  groupKeys: [String!]
+
+  """The ID of the user."""
+  userID: ID!
+}
+
+""""""
+type RemoveUserFromGroupsPayload {
+  """"""
+  user: User!
+}
+
+""""""
+input RemoveUserFromRolesInput {
+  """The list of role keys."""
+  roleKeys: [String!]
+
+  """The id of the user."""
+  userID: ID!
+}
+
+""""""
+type RemoveUserFromRolesPayload {
+  """"""
+  user: User!
 }
 
 """"""
 input ResetPasswordInput {
   """New password."""
-  password: String!
+  password: String
+
+  """Indicate whether to send the new password to the user."""
+  sendPassword: Boolean
+
+  """
+  Indicate whether the user is required to change password on next login.
+  """
+  setPasswordExpired: Boolean
 
   """Target user ID."""
   userID: ID!
@@ -799,6 +1336,54 @@ input RevokeSessionInput {
 type RevokeSessionPayload {
   """"""
   user: User!
+}
+
+"""Authgear role"""
+type Role implements Entity & Node {
+  """The creation time of entity"""
+  createdAt: DateTime!
+
+  """The optional description of the role."""
+  description: String
+
+  """The list of groups this role is in."""
+  groups(after: String, before: String, first: Int, last: Int): GroupConnection
+
+  """The ID of an object"""
+  id: ID!
+
+  """The key of the role."""
+  key: String!
+
+  """The optional name of the role."""
+  name: String
+
+  """The update time of entity"""
+  updatedAt: DateTime!
+
+  """The list of users who has this role."""
+  users(after: String, before: String, first: Int, last: Int): UserConnection
+}
+
+"""A connection to a list of items."""
+type RoleConnection {
+  """Information to aid in pagination."""
+  edges: [RoleEdge]
+
+  """Information to aid in pagination."""
+  pageInfo: PageInfo!
+
+  """Total number of nodes in the connection."""
+  totalCount: Int
+}
+
+"""An edge in a connection"""
+type RoleEdge {
+  """ cursor for use in pagination"""
+  cursor: String!
+
+  """The item at the end of the edge"""
+  node: Role
 }
 
 """"""
@@ -865,6 +1450,9 @@ type Session implements Entity & Node {
 
   """The update time of entity"""
   updatedAt: DateTime!
+
+  """"""
+  userAgent: String
 }
 
 """A connection to a list of items."""
@@ -913,6 +1501,36 @@ input SetDisabledStatusInput {
 
 """"""
 type SetDisabledStatusPayload {
+  """"""
+  user: User!
+}
+
+""""""
+input SetMFAGracePeriodInput {
+  """Indicate when will user's MFA grace period end"""
+  endAt: DateTime!
+
+  """Target user ID"""
+  userID: ID!
+}
+
+""""""
+type SetMFAGracePeriodPayload {
+  """"""
+  user: User!
+}
+
+""""""
+input SetPasswordExpiredInput {
+  """Indicate whether the user's password is expired."""
+  expired: Boolean!
+
+  """Target user ID."""
+  userID: ID!
+}
+
+""""""
+type SetPasswordExpiredPayload {
   """"""
   user: User!
 }
@@ -972,6 +1590,33 @@ type UnscheduleAccountDeletionPayload {
 }
 
 """"""
+input UpdateGroupInput {
+  """
+  The new description of the group. Pass null if you do not need to update the description. Pass an empty string to remove the description.
+  """
+  description: String
+
+  """The ID of the group."""
+  id: ID!
+
+  """
+  The new key of the group. Pass null if you do not need to update the key.
+  """
+  key: String
+
+  """
+  The new name of the group. Pass null if you do not need to update the name. Pass an empty string to remove the name.
+  """
+  name: String
+}
+
+""""""
+type UpdateGroupPayload {
+  """"""
+  group: Group!
+}
+
+""""""
 input UpdateIdentityInput {
   """New definition of the identity."""
   definition: IdentityDefinition!
@@ -990,6 +1635,33 @@ type UpdateIdentityPayload {
 
   """"""
   user: User!
+}
+
+""""""
+input UpdateRoleInput {
+  """
+  The new description of the role. Pass null if you do not need to update the description. Pass an empty string to remove the description.
+  """
+  description: String
+
+  """The ID of the role."""
+  id: ID!
+
+  """
+  The new key of the role. Pass null if you do not need to update the key.
+  """
+  key: String
+
+  """
+  The new name of the role. Pass null if you do not need to update the name. Pass an empty string to remove the name.
+  """
+  name: String
+}
+
+""""""
+type UpdateRolePayload {
+  """"""
+  role: Role!
 }
 
 """"""
@@ -1036,6 +1708,9 @@ type User implements Entity & Node {
   """The reason of disabled"""
   disableReason: String
 
+  """The list of computed roles this user has."""
+  effectiveRoles(after: String, before: String, first: Int, last: Int): RoleConnection
+
   """
   The end user account id constructed based on user's personal data. (e.g. email, phone...etc)
   """
@@ -1043,6 +1718,9 @@ type User implements Entity & Node {
 
   """The user's formatted name"""
   formattedName: String
+
+  """The list of groups this user has."""
+  groups(after: String, before: String, first: Int, last: Int): GroupConnection
 
   """The ID of an object"""
   id: ID!
@@ -1068,6 +1746,9 @@ type User implements Entity & Node {
   """The list of login ids"""
   loginIDs: [Identity!]!
 
+  """Indicate when will user's MFA grace period will end"""
+  mfaGracePeriodEndAt: DateTime
+
   """The list of oauth connections"""
   oauthConnections: [Identity!]!
 
@@ -1082,6 +1763,9 @@ type User implements Entity & Node {
 
   """The primary password authenticator"""
   primaryPassword: Authenticator
+
+  """The list of roles this user has."""
+  roles(after: String, before: String, first: Int, last: Int): RoleConnection
 
   """The list of secondary passwordless via email authenticators"""
   secondaryOOBOTPEmailAuthenticators: [Authenticator!]!
@@ -1153,3 +1837,15 @@ scalar UserStandardAttributes
 
 """The `Web3Claims` scalar type represents the scalar type of the user"""
 scalar Web3Claims
+
+""""""
+input removeMFAGracePeriodInput {
+  """Target user ID"""
+  userID: ID!
+}
+
+""""""
+type removeMFAGracePeriodPayload {
+  """"""
+  user: User!
+}

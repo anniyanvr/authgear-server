@@ -1,0 +1,231 @@
+{{ template "authflowv2/__settings_page_frame.html" . }}
+
+{{ define "page-content" }}
+
+<div class="flex flex-col gap-8">
+  <div class="flex flex-col gap-4 items-center">
+    <img
+    class="rounded-full w-30 h-30"
+    {{ if (and (call $.IsReadable "/picture") $.Picture) }}
+      src="{{ $.Picture }}"
+    {{ else }}
+      src="{{ call $.GeneratedStaticAssetURL "v2_avatar_placeholder.svg" }}"
+    {{ end }}
+    >
+    <div class="flex flex-col gap-1">
+      <h1 class="settings-title">
+        {{ $any_name_readable := (or (call $.IsReadable "/name") (call $.IsReadable "/given_name") (call $.IsReadable "/family_name") (call $.IsReadable "/middle_name") (call $.IsReadable "/nickname")) }}
+        {{ if (and $any_name_readable $.FormattedName) }}<span class="truncate">{{ $.FormattedName }}</span>{{ end }}
+        {{ if (and (not $.FormattedName) $.EndUserAccountID) }}<span class="truncate">{{ $.EndUserAccountID }}</span>{{ end }}
+      </h1>
+      <p class="body-text--lg">
+        {{ $editProfileHref := call $.MakeURL "/settings/profile"}}
+        <a href="{{ $editProfileHref }}" >
+          {{ include "v2.page.settings.default.link-label-edit-profile" . }}
+        </a>
+      </p>
+
+    </div>
+  </div>
+
+  {{/* Identity */}}
+  <div class="flex flex-col gap-4">
+    <div class="flex flex-col gap-1">
+      <h2 class="settings-title text-start">
+        {{ include "v2.page.settings.default.title-my-account" . }}
+      </h2>
+      <div class="settings-description text-start">
+        {{ include "v2.page.settings.default.description-my-account" . }}
+      </div>
+    </div>
+
+    <div>
+    {{ range .IdentityCandidates }}
+
+    {{ if eq .type "login_id" }}
+
+      {{ $url := call $.MakeURL "/settings/enter_login_id" "q_login_id_key" .login_id_key "q_login_id_type" .login_id_type "q_login_id_input_type" .login_id_input_type }}
+      {{ if .identity_id }}
+      {{ $url = call $.MakeURL "/settings/enter_login_id" "q_login_id_key" .login_id_key "q_login_id_type" .login_id_type "q_login_id_input_type" .login_id_input_type "q_identity_id" .identity_id }}
+      {{ end }}
+
+      {{ $label := "" }}
+      {{ $identityArr := "" }}
+      {{ $identity := "" }}
+      {{ $url := "" }}
+      {{ $icon := "" }}
+
+      {{/* If is Email */}}
+        {{ if eq .login_id_type "email" }}
+        {{ $label = ( include "v2.page.settings.default.email-button-label" nil ) }}{{ $icon = "email" }}
+        {{ $identityArr = $.Emails }}{{ $identity := $.Email }}
+        {{ $url = call $.MakeURL "/settings/identity/email" "q_login_id_key" .login_id_key }}
+        {{ if and (eq (len $.Emails) 1) (eq (len $.EmailIdentityIDs) 1) }}
+          {{ $url = (call $.MakeURLWithBackURL "/settings/identity/change_email" "q_login_id_key" .login_id_key "q_identity_id" (index $.EmailIdentityIDs 0)) }}
+        {{ end }}
+      {{ end }}
+
+      {{/* If is Phone */}}
+      {{ if eq .login_id_type "phone" }}
+        {{ $label = ( include "v2.page.settings.default.phone-button-label" nil ) }}{{ $icon = "phone_iphone" }}
+        {{ $identityArr = $.PhoneNumbers }}{{ $identity = $.PhoneNumber }}
+        {{ $url = call $.MakeURL "/settings/identity/phone" "q_login_id_key" .login_id_key }}
+        {{ if and (eq (len $.PhoneNumbers) 1) (eq (len $.PhoneIdentityIDs) 1) }}
+          {{ $url = (call $.MakeURLWithBackURL "/settings/identity/change_phone" "q_login_id_key" .login_id_key "q_identity_id" (index $.PhoneIdentityIDs 0)) }}
+        {{ end }}
+      {{ end }}
+
+      {{/* If is Username */}}
+      {{ if eq .login_id_type "username" }}
+        {{ $label = ( include "v2.page.settings.default.username-button-label" nil ) }}{{ $icon = "account_circle" }}
+        {{ $identityArr = $.PreferredUsernames }}{{ $identity = $.PreferredUsername }}
+        {{ $url = call $.MakeURL "/settings/identity/username" "q_login_id_key" .login_id_key }}
+        {{ if and (eq (len $.PreferredUsernames) 1) (eq (len $.UsernameIdentityIDs) 1) }}
+          {{ $url = (call $.MakeURLWithBackURL "/settings/identity/change_username" "q_login_id_key" .login_id_key "q_login_id" (index $.UsernameIdentityIDs 0)) }}
+        {{ end }}
+      {{ end }}
+
+      {{/* Render with given variable */}}
+      <a href="{{$url}}" class="contents">
+        {{ template "authflowv2/__settings_item.html"
+          (dict
+            "Label" $label
+            "WithArrow" true
+            "MaterialIconName" $icon
+            "Children" $identityArr
+          )
+        }}
+      </a>
+
+    {{ end }}
+    {{ end}}
+
+    {{ $url := call $.MakeURL "/settings/identity/oauth" }}
+
+    <a href="{{$url}}" class="contents">
+      {{ template "authflowv2/__settings_item.html"
+        (dict
+          "Label" ( include "v2.page.settings.default.social-accounts-button-label" nil )
+          "WithArrow" true
+          "MaterialIconName" "link"
+        )
+      }}
+    </a>
+    </div>
+  </div>
+
+  {{/* Security */}}
+  <div class="flex flex-col gap-4">
+    <div class="flex flex-col gap-1">
+      <h2 class="settings-title text-start">
+        {{ include "v2.page.settings.default.title-security" . }}
+      </h2>
+      <div class="settings-description text-start">
+        {{ include "v2.page.settings.default.description-security" . }}
+      </div>
+    </div>
+
+    <div>
+      {{ range $.Authenticators }}
+        {{ if and (eq .Type "password") (eq .Kind "primary") }}
+          {{ $url = call $.MakeURL "/settings/change_password" }}
+          <a href="{{$url}}" class="contents">
+            {{ template "authflowv2/__settings_item.html"
+              (dict
+                "Label" ( include "v2.page.settings.default.password-button-label" nil )
+                "WithArrow" true
+                "MaterialIconName" "key"
+              )
+            }}
+          </a>
+        {{ end }}
+      {{ end }}
+
+      {{ if $.ShowPrimaryPasskey }}
+        {{ $url = call $.MakeURL "/settings/passkey" }}
+        <a href="{{$url}}" class="contents">
+          {{ template "authflowv2/__settings_item.html"
+            (dict
+              "Label" ( include "v2.page.settings.default.passkey-button-label" nil )
+              "WithArrow" true
+              "MaterialIconName" "passkey"
+            )
+          }}
+        </a>
+      {{ end }}
+
+      {{ if $.ShowMFA }}
+        {{ $url = call $.MakeURL "/settings/mfa" }}
+        <a href="{{$url}}" class="contents">
+          {{ template "authflowv2/__settings_item.html"
+            (dict
+              "Label" ( include "v2.page.settings.default.mfa-button-label" nil )
+              "WithArrow" true
+              "MaterialIconName" "encrypted"
+            )
+          }}
+        </a>
+      {{ end }}
+
+      {{ if $.ShowBiometric }}
+        {{ $url = call $.MakeURL "/settings/biometric" }}
+        <a href="{{$url}}" class="contents">
+          {{ template "authflowv2/__settings_item.html"
+            (dict
+              "Label" ( include "v2.page.settings.default.biometric-login-button-label" nil )
+              "WithArrow" true
+              "MaterialIconName" "fingerprint"
+            )
+          }}
+        </a>
+      {{ end }}
+
+      {{ $url = call $.MakeURL "/settings/sessions" }}
+      <a href="{{$url}}" class="contents">
+        {{ template "authflowv2/__settings_item.html"
+          (dict
+            "Label" ( include "v2.page.settings.default.signed-in-devices-button-label" nil )
+            "WithArrow" true
+            "MaterialIconName" "verified_user"
+          )
+        }}
+      </a>
+
+
+      {{ $show_advanced_settings_button := false }}
+      {{ if $.AccountDeletionAllowed }}
+        {{ $show_advanced_settings_button = true }}
+      {{ end }}
+
+      {{ if $show_advanced_settings_button }}
+        {{ $url = call $.MakeURL "/settings/advanced_settings" }}
+        <a href="{{$url}}" class="contents">
+          {{ template "authflowv2/__settings_item.html"
+            (dict
+              "Label" ( include "v2.page.settings.default.advanced-settings-button-label" nil )
+              "WithArrow" true
+              "MaterialIconName" "settings_alert"
+            )
+          }}
+        </a>
+      {{ end }}
+    </div>
+  </div>
+
+  {{ if and $.ClientURI (not $.IsNativePlatform) }}
+  <div class="flex justify-center">
+    <a
+      class="secondary-btn w-full tablet:max-w-86"
+      href="{{ $.ClientURI }}"
+    >
+      <div class="flex gap-2 items-center">
+        <i class="alternative-icon material-icons">
+          home
+        </i>
+        {{ include "v2.page.settings.default.back-to-app-button-label" . }}
+      </div>
+    </a>
+  </div>
+  {{ end}}
+</div>
+{{ end }}

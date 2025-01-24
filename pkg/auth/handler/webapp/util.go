@@ -45,6 +45,7 @@ type FormPrefiller struct {
 	UI      *config.UIConfig
 }
 
+//nolint:gocognit
 func (p *FormPrefiller) Prefill(form url.Values) {
 	hasEmail := false
 	hasUsername := false
@@ -109,7 +110,7 @@ func (p *FormPrefiller) Prefill(form url.Values) {
 	}
 }
 
-func createQRCodeImage(content string, width int, height int, level qr.ErrorCorrectionLevel) (image.Image, error) {
+func CreateQRCodeImage(content string, width int, height int, level qr.ErrorCorrectionLevel) (image.Image, error) {
 	b, err := qr.Encode(content, level, qr.Auto)
 
 	if err != nil {
@@ -125,7 +126,7 @@ func createQRCodeImage(content string, width int, height int, level qr.ErrorCorr
 	return b, nil
 }
 
-func findLoginIDInPreviousInput(s *webapp.Session, xStep string) (string, bool) {
+func FindLoginIDInPreviousInput(s *webapp.Session, xStep string) (string, bool) {
 	if s.Authflow == nil {
 		return "", false
 	}

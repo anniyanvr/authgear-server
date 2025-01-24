@@ -32,24 +32,35 @@ func NewNodeDoCreateSession(ctx context.Context, deps *authflow.Dependencies, fl
 		return nil, err
 	}
 	attrs.SetAMR(amr)
-	s, token := deps.IDPSessions.MakeSession(attrs)
-	sessionCookie := deps.Cookies.ValueCookie(deps.SessionCookie.Def, token)
+	authnInfo := authenticationinfo.T{
+		UserID:          n.UserID,
+		AuthenticatedAt: deps.Clock.NowUTC(),
+		AMR:             amr,
+	}
+	var newSession *idpsession.IDPSession = nil
+	var sessionCookie *http.Cookie = nil
 
-	authnInfo := s.GetAuthenticationInfo()
 	authnInfo.ShouldFireAuthenticatedEventWhenIssueOfflineGrant = n.SkipCreate && n.CreateReason == session.CreateReasonLogin
-	authnInfoEntry := authenticationinfo.NewEntry(authnInfo, authflow.GetOAuthSessionID(ctx))
 
 	sameSiteStrictCookie := deps.Cookies.ValueCookie(
 		deps.SessionCookie.SameSiteStrictDef,
 		"true",
 	)
 
-	if n.SkipCreate {
-		s = nil
-		sessionCookie = nil
+	if !n.SkipCreate {
+		s, token := deps.IDPSessions.MakeSession(attrs)
+		newSession = s
+		sessionCookie = deps.Cookies.ValueCookie(deps.SessionCookie.Def, token)
+		authnInfo.AuthenticatedBySessionID = newSession.SessionID()
+		authnInfo.AuthenticatedBySessionType = string(newSession.SessionType())
 	}
 
-	n.Session = s
+	authnInfoEntry := authenticationinfo.NewEntry(authnInfo,
+		authflow.GetOAuthSessionID(ctx),
+		authflow.GetSAMLSessionID(ctx),
+	)
+
+	n.Session = newSession
 	n.SessionCookie = sessionCookie
 	n.AuthenticationInfoEntry = authnInfoEntry
 	n.SameSiteStrictCookie = sameSiteStrictCookie
@@ -80,18 +91,18 @@ func (n *NodeDoCreateSession) MilestoneDoCreateSession() (*idpsession.IDPSession
 func (n *NodeDoCreateSession) GetEffects(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (effs []authflow.Effect, err error) {
 	return []authflow.Effect{
 		authflow.OnCommitEffect(func(ctx context.Context, deps *authflow.Dependencies) error {
-			return deps.AuthenticationInfos.Save(n.AuthenticationInfoEntry)
+			return deps.AuthenticationInfos.Save(ctx, n.AuthenticationInfoEntry)
 		}),
 		authflow.OnCommitEffect(func(ctx context.Context, deps *authflow.Dependencies) error {
 			now := deps.Clock.NowUTC()
-			return deps.Users.UpdateLoginTime(n.UserID, now)
+			return deps.Users.UpdateLoginTime(ctx, n.UserID, now)
 		}),
 		authflow.OnCommitEffect(func(ctx context.Context, deps *authflow.Dependencies) error {
 			if n.Session == nil {
 				return nil
 			}
 
-			err := deps.IDPSessions.Create(n.Session)
+			err := deps.IDPSessions.Create(ctx, n.Session)
 			if err != nil {
 				return err
 			}
@@ -99,7 +110,7 @@ func (n *NodeDoCreateSession) GetEffects(ctx context.Context, deps *authflow.Dep
 			// Clean up unreachable IdP session
 			s := session.GetSession(ctx)
 			if s != nil && s.SessionType() == session.TypeIdentityProvider {
-				err = deps.Sessions.RevokeWithoutEvent(s)
+				err = deps.Sessions.RevokeWithoutEvent(ctx, s)
 				if err != nil {
 					return err
 				}

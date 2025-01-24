@@ -36,6 +36,7 @@
       - [authentication.secondary.oob_otp_email.failed](#authenticationsecondaryoob_otp_emailfailed)
       - [authentication.secondary.oob_otp_sms.failed](#authenticationsecondaryoob_otp_smsfailed)
       - [authentication.secondary.recovery_code.failed](#authenticationsecondaryrecovery_codefailed)
+      - [bot_protection.verification.failed](#bot_protectionverificationfailed)
       - [identity.email.added](#identityemailadded)
       - [identity.email.removed](#identityemailremoved)
       - [identity.email.updated](#identityemailupdated)
@@ -95,6 +96,8 @@ All fields are guaranteed that only backward-compatible changes would be made.
 - `client_id`: The client id, if present.
 - `timestamp`: signed 64-bit UNIX timestamp of when this event is generated. Retried deliveries do not affect this field.
 - `user_id`: The ID of the user associated with the event. It may be absent. For example, the user has not authenticated yet.
+- `ip_address`: The IP address of the HTTP request, if present.
+- `user_agent`: The User-Agent HTTP request header, if present.
 - `triggered_by`: The origin of the event.
   - `user`: The event originates from a end-user facing UI.
   - `admin_api`: The event originates from the Admin API.
@@ -178,6 +181,7 @@ Use this event to add custom fields to the JWT access token.
 {
   "payload": {
     "user": { /* ... */ },
+    "identities": [ ],
     "jwt": {
       "payload": {
         "iss": "issuer",
@@ -188,6 +192,8 @@ Use this event to add custom fields to the JWT access token.
   }
 }
 ```
+
+- `identities`: This contain all Login ID identities, OAuth identities, or LDAP identities that the user has.
 
 ### Non-blocking Events
 
@@ -208,6 +214,7 @@ Use this event to add custom fields to the JWT access token.
 - [authentication.secondary.oob_otp_email.failed](#authenticationsecondaryoob-otp-emailfailed)
 - [authentication.secondary.oob_otp_sms.failed](#authenticationsecondaryoob-otp-smsfailed)
 - [authentication.secondary.recovery_code.failed](#authenticationsecondaryrecovery-codefailed)
+- [bot_protection.verification.failed](#bot-protectionverificationfailed)
 - [identity.email.added](#identityemailadded)
 - [identity.email.removed](#identityemailremoved)
 - [identity.email.updated](#identityemailupdated)
@@ -536,6 +543,18 @@ Occurs after the user failed to input the recovery code.
 }
 ```
 
+#### bot_protection.verification.failed
+
+Occurs after someone failed to pass the bot protection verification.
+
+```json5
+{
+  "payload": {
+    /* The useful information is in the event context, like IP address, timestamp */
+  }
+}
+```
+
 #### identity.email.added
 
 Occurs when a new email is added to existing user. Email can be added by user in setting page, added by admin through admin api or portal.
@@ -693,20 +712,24 @@ Occurs when user disconnected from an OAuth provider. It can be done by user dis
 
 Occurs when user enabled biometric login.
 
+```json5
 {
   "payload": {
     "user": { /* ... */ },
     "identity": { /* ... */ }
   }
 }
+```
 
 #### identity.biometric.disabled
 
 Occurs when biometric login is disabled. It will be triggered only when the user disabled it from the settings page or the admin disabled it from the admin api or portal.
 
+```json5
 {
   "payload": {
     "user": { /* ... */ },
     "identity": { /* ... */ }
   }
 }
+```

@@ -48,6 +48,7 @@ import PasswordSettings, {
   setUIForgotPasswordConfig,
 } from "./PasswordSettings";
 import { formatDuration, parseDuration } from "../../util/duration";
+import HorizontalDivider from "../../HorizontalDivider";
 
 interface AuthenticatorTypeFormState<T> {
   isChecked: boolean;
@@ -68,6 +69,7 @@ const secondaryAuthenticatorNameIds = {
 
 interface ConfigFormState {
   mfaMode: SecondaryAuthenticationMode;
+  mfaGlobalGracePeriodEnabled: boolean;
   deviceTokenEnabled: boolean;
   recoveryCodeEnabled: boolean;
   numRecoveryCode: number | undefined;
@@ -150,6 +152,9 @@ function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
     deviceTokenEnabled: !(
       config.authentication?.device_token?.disabled ?? false
     ),
+    mfaGlobalGracePeriodEnabled:
+      config.authentication?.secondary_authentication_grace_period?.enabled ??
+      false,
     recoveryCodeEnabled: !(
       config.authentication?.recovery_code?.disabled ?? false
     ),
@@ -159,19 +164,35 @@ function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
     primary: config.authentication?.primary_authenticators ?? [],
     secondary,
     authenticatorPasswordConfig: {
-      ...config.authenticator?.password,
+      force_change: config.authenticator?.password?.force_change,
       policy: {
-        min_length: 8,
-        uppercase_required: false,
-        lowercase_required: false,
-        alphabet_required: false,
-        digit_required: false,
-        symbol_required: false,
-        minimum_guessable_level: 0 as const,
-        excluded_keywords: [],
-        history_size: 0,
-        history_days: 0,
-        ...config.authenticator?.password?.policy,
+        min_length: config.authenticator?.password?.policy?.min_length ?? 8,
+        uppercase_required:
+          config.authenticator?.password?.policy?.uppercase_required ?? false,
+        lowercase_required:
+          config.authenticator?.password?.policy?.lowercase_required ?? false,
+        alphabet_required:
+          config.authenticator?.password?.policy?.alphabet_required ?? false,
+        digit_required:
+          config.authenticator?.password?.policy?.digit_required ?? false,
+        symbol_required:
+          config.authenticator?.password?.policy?.symbol_required ?? false,
+        minimum_guessable_level:
+          config.authenticator?.password?.policy?.minimum_guessable_level ??
+          (0 as const),
+        excluded_keywords:
+          config.authenticator?.password?.policy?.excluded_keywords ?? [],
+        history_size: config.authenticator?.password?.policy?.history_size ?? 0,
+        history_days: config.authenticator?.password?.policy?.history_days ?? 0,
+      },
+      expiry: {
+        force_change: {
+          enabled:
+            config.authenticator?.password?.expiry?.force_change?.enabled,
+          duration_since_last_update:
+            config.authenticator?.password?.expiry?.force_change
+              ?.duration_since_last_update,
+        },
       },
     },
     forgotPasswordLinkValidPeriodSeconds,
@@ -182,10 +203,10 @@ function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
 }
 
 function constructConfig(
-  _config: PortalAPIAppConfig,
+  config: PortalAPIAppConfig,
   _initialState: ConfigFormState,
   currentState: ConfigFormState,
-  config: PortalAPIAppConfig
+  _effectiveConfig: PortalAPIAppConfig
 ): PortalAPIAppConfig {
   return produce(config, (config) => {
     function filterEnabled<T extends string>(
@@ -205,6 +226,15 @@ function constructConfig(
     );
 
     config.authentication.secondary_authentication_mode = currentState.mfaMode;
+
+    if (!currentState.mfaGlobalGracePeriodEnabled) {
+      config.authentication.secondary_authentication_grace_period = undefined;
+    } else {
+      config.authentication.secondary_authentication_grace_period = {
+        enabled: currentState.mfaGlobalGracePeriodEnabled,
+      };
+    }
+
     config.authentication.device_token.disabled =
       !currentState.deviceTokenEnabled;
 
@@ -218,6 +248,7 @@ function constructConfig(
     config.authenticator.password = {
       force_change: currentState.authenticatorPasswordConfig.force_change,
       policy: currentState.authenticatorPasswordConfig.policy,
+      expiry: currentState.authenticatorPasswordConfig.expiry,
     };
 
     if (currentState.forgotPasswordLinkValidPeriodSeconds != null) {
@@ -290,6 +321,7 @@ const MFAConfigurationContent: React.VFC<MFAConfigurationContentProps> =
     const { state, setState } = props.form;
     const {
       mfaMode,
+      mfaGlobalGracePeriodEnabled,
       deviceTokenEnabled,
       recoveryCodeEnabled,
       recoveryCodeListEnabled,
@@ -321,6 +353,8 @@ const MFAConfigurationContent: React.VFC<MFAConfigurationContentProps> =
         setState((prev) => ({
           ...prev,
           mfaMode: option,
+          mfaGlobalGracePeriodEnabled:
+            option !== "required" ? false : mfaGlobalGracePeriodEnabled,
         }));
       },
       mfaMode,
@@ -364,6 +398,16 @@ const MFAConfigurationContent: React.VFC<MFAConfigurationContentProps> =
           };
         }),
       [secondary, featureDisabled, disabledText]
+    );
+
+    const onChangeMFAGlobalGracePeriodEnabled = useCallback(
+      (_e, checked?: boolean) => {
+        setState((prev) => ({
+          ...prev,
+          mfaGlobalGracePeriodEnabled: checked ?? false,
+        }));
+      },
+      [setState]
     );
 
     const onChangeDeviceTokenEnabled = useCallback(
@@ -449,6 +493,21 @@ const MFAConfigurationContent: React.VFC<MFAConfigurationContentProps> =
               selectedKey={mfaMode}
               onChange={onChangeMFAMode}
             />
+            {mfaMode === "required" ? (
+              <div>
+                <Toggle
+                  label={
+                    <FormattedMessage id="MFAConfigurationScreen.policy.enable-global-grace-period.title" />
+                  }
+                  inlineLabel={false}
+                  checked={mfaGlobalGracePeriodEnabled}
+                  onChange={onChangeMFAGlobalGracePeriodEnabled}
+                />
+                <WidgetDescription>
+                  <FormattedMessage id="MFAConfigurationScreen.policy.enable-global-grace-period.description" />
+                </WidgetDescription>
+              </div>
+            ) : null}
             <Toggle
               label={
                 <FormattedMessage id="MFAConfigurationScreen.policy.device-token.title" />
@@ -458,6 +517,7 @@ const MFAConfigurationContent: React.VFC<MFAConfigurationContentProps> =
               onChange={onChangeDeviceTokenEnabled}
             />
           </Widget>
+          <HorizontalDivider className={styles.separator} />
           <Widget className={styles.widget}>
             <WidgetTitle>
               <FormattedMessage id="MFAConfigurationScreen.authenticator.title" />
@@ -482,25 +542,29 @@ const MFAConfigurationContent: React.VFC<MFAConfigurationContentProps> =
             <UnreasonableWarning primary={primary} secondary={secondary} />
           </Widget>
           {showPasswordSettings ? (
-            <PasswordSettings
-              className={styles.widget}
-              forgotPasswordLinkValidPeriodSeconds={
-                forgotPasswordLinkValidPeriodSeconds
-              }
-              forgotPasswordCodeValidPeriodSeconds={
-                forgotPasswordCodeValidPeriodSeconds
-              }
-              resetPasswordWithEmailBy={resetPasswordWithEmailBy}
-              resetPasswordWithPhoneBy={resetPasswordWithPhoneBy}
-              authenticatorPasswordConfig={authenticatorPasswordConfig}
-              passwordPolicyFeatureConfig={
-                featureConfig?.authenticator?.password?.policy
-              }
-              isLoginIDPhoneEnabled={isLoginIDPhoneEnabled}
-              isLoginIDEmailEnabled={isLoginIDEmailEnabled}
-              setState={setState}
-            />
+            <>
+              <HorizontalDivider className={styles.separator} />
+              <PasswordSettings
+                className={styles.widget}
+                forgotPasswordLinkValidPeriodSeconds={
+                  forgotPasswordLinkValidPeriodSeconds
+                }
+                forgotPasswordCodeValidPeriodSeconds={
+                  forgotPasswordCodeValidPeriodSeconds
+                }
+                resetPasswordWithEmailBy={resetPasswordWithEmailBy}
+                resetPasswordWithPhoneBy={resetPasswordWithPhoneBy}
+                authenticatorPasswordConfig={authenticatorPasswordConfig}
+                passwordPolicyFeatureConfig={
+                  featureConfig?.authenticator?.password?.policy
+                }
+                isLoginIDPhoneEnabled={isLoginIDPhoneEnabled}
+                isLoginIDEmailEnabled={isLoginIDEmailEnabled}
+                setState={setState}
+              />
+            </>
           ) : null}
+          <HorizontalDivider className={styles.separator} />
           <Widget className={styles.widget}>
             <WidgetTitle>
               <FormattedMessage id="MFAConfigurationScreen.recovery-code.title" />
@@ -605,7 +669,7 @@ const MFAConfigurationScreen: React.VFC = function MFAConfigurationScreen() {
   }
 
   return (
-    <FormContainer form={form}>
+    <FormContainer form={form} stickyFooterComponent={true}>
       <MFAConfigurationContent
         form={form}
         isLoginIDEmailEnabled={isLoginIDEmailEnabled}

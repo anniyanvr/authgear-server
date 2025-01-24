@@ -6,7 +6,7 @@ import {
   Text,
 } from "@fluentui/react";
 import { useNavigate, useParams } from "react-router-dom";
-import produce, { createDraft } from "immer";
+import { produce, createDraft } from "immer";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 
 import ScreenContent from "../../ScreenContent";
@@ -31,12 +31,6 @@ import Widget from "../../Widget";
 import ButtonWithLoading from "../../ButtonWithLoading";
 import { FormErrorMessageBar } from "../../FormErrorMessageBar";
 import ScreenLayoutScrollView from "../../ScreenLayoutScrollView";
-import {
-  AuthgearGTMEvent,
-  AuthgearGTMEventType,
-  useAuthgearGTMEventBase,
-  useGTMDispatch,
-} from "../../GTMProvider";
 import {
   AppSecretConfigFormModel,
   useAppSecretConfigForm,
@@ -63,7 +57,7 @@ function constructFormState(
       access_token_lifetime_seconds: undefined,
       refresh_token_lifetime_seconds: undefined,
       post_logout_redirect_uris: undefined,
-      issue_jwt_access_token: undefined,
+      issue_jwt_access_token: true,
     },
   };
 }
@@ -75,30 +69,34 @@ function constructConfig(
   currentState: FormState,
   _effectiveConfig: PortalAPIAppConfig
 ): [PortalAPIAppConfig, PortalAPISecretConfig] {
-  return produce([config, secretConfig], ([config, _secretConfig]) => {
-    config.oauth ??= {};
-    config.oauth.clients = currentState.clients.slice();
-    const draft = createDraft(currentState.newClient);
-    if (
-      draft.x_application_type === "spa" ||
-      draft.x_application_type === "traditional_webapp"
-    ) {
-      draft.redirect_uris = ["http://localhost/after-authentication"];
-      draft.post_logout_redirect_uris = ["http://localhost/after-logout"];
-    } else if (draft.x_application_type === "native") {
-      draft.redirect_uris = ["com.example.myapp://host/path"];
-      draft.post_logout_redirect_uris = undefined;
-    } else if (
-      draft.x_application_type === "confidential" ||
-      draft.x_application_type === "third_party_app"
-    ) {
-      draft.client_name = draft.name;
-      draft.redirect_uris = ["http://localhost/after-authentication"];
-      draft.post_logout_redirect_uris = undefined;
+  const [newConfig, _] = produce(
+    [config, currentState],
+    ([config, currentState]) => {
+      config.oauth ??= {};
+      config.oauth.clients = currentState.clients;
+      const draft = createDraft(currentState.newClient);
+      if (
+        draft.x_application_type === "spa" ||
+        draft.x_application_type === "traditional_webapp"
+      ) {
+        draft.redirect_uris = ["http://localhost/after-authentication"];
+        draft.post_logout_redirect_uris = ["http://localhost/after-logout"];
+      } else if (draft.x_application_type === "native") {
+        draft.redirect_uris = ["com.example.myapp://host/path"];
+        draft.post_logout_redirect_uris = undefined;
+      } else if (
+        draft.x_application_type === "confidential" ||
+        draft.x_application_type === "third_party_app"
+      ) {
+        draft.client_name = draft.name;
+        draft.redirect_uris = ["http://localhost/after-authentication"];
+        draft.post_logout_redirect_uris = undefined;
+      }
+      config.oauth.clients.push(draft);
+      clearEmptyObject(config);
     }
-    config.oauth.clients.push(draft);
-    clearEmptyObject(config);
-  });
+  );
+  return [newConfig, secretConfig];
 }
 
 function constructSecretUpdateInstruction(
@@ -243,28 +241,32 @@ const CreateOAuthClientContent: React.VFC<CreateOAuthClientContentProps> =
     const onApplicationChange = useCallback(
       (_e, option) => {
         if (option != null) {
+          let issueJwtAccessToken: boolean | undefined;
+          switch (option.key) {
+            case "spa":
+            case "native":
+              issueJwtAccessToken = true;
+              break;
+            default:
+              issueJwtAccessToken = undefined;
+              break;
+          }
           onClientConfigChange(
-            updateClientConfig(client, "x_application_type", option.key)
+            updateClientConfig(
+              updateClientConfig(client, "x_application_type", option.key),
+              "issue_jwt_access_token",
+              issueJwtAccessToken
+            )
           );
         }
       },
       [onClientConfigChange, client]
     );
 
-    const gtmEventBase = useAuthgearGTMEventBase();
-    const sendDataToGTM = useGTMDispatch();
     const onClickSave = useCallback(() => {
       save()
         .then(
           () => {
-            const event: AuthgearGTMEvent = {
-              ...gtmEventBase,
-              event: AuthgearGTMEventType.CreatedApplication,
-              event_data: {
-                application_type: client.x_application_type,
-              },
-            };
-            sendDataToGTM(event);
             navigate(
               `/project/${appID}/configuration/apps/${encodeURIComponent(
                 clientId
@@ -277,15 +279,7 @@ const CreateOAuthClientContent: React.VFC<CreateOAuthClientContentProps> =
           () => {}
         )
         .catch(() => {});
-    }, [
-      navigate,
-      appID,
-      clientId,
-      save,
-      gtmEventBase,
-      client.x_application_type,
-      sendDataToGTM,
-    ]);
+    }, [navigate, appID, clientId, save]);
 
     const parentJSONPointer = /\/oauth\/clients\/\d+/;
 

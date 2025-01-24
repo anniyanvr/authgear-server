@@ -1,5 +1,11 @@
 package config
 
+import (
+	"github.com/authgear/oauthrelyingparty/pkg/api/oauthrelyingparty"
+
+	liboauthrelyingparty "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty"
+)
+
 var _ = FeatureConfigSchema.Add("IdentityFeatureConfig", `
 {
 	"type": "object",
@@ -16,6 +22,15 @@ type IdentityFeatureConfig struct {
 	LoginID   *LoginIDFeatureConfig   `json:"login_id,omitempty"`
 	OAuth     *OAuthSSOFeatureConfig  `json:"oauth,omitempty"`
 	Biometric *BiometricFeatureConfig `json:"biometric,omitempty"`
+}
+
+var _ MergeableFeatureConfig = &IdentityFeatureConfig{}
+
+func (c *IdentityFeatureConfig) Merge(layer *FeatureConfig) MergeableFeatureConfig {
+	if layer.Identity == nil {
+		return c
+	}
+	return layer.Identity
 }
 
 var _ = FeatureConfigSchema.Add("LoginIDFeatureConfig", `
@@ -110,6 +125,32 @@ type OAuthSSOProvidersFeatureConfig struct {
 	ADFS       *OAuthSSOProviderFeatureConfig `json:"adfs,omitempty"`
 	Apple      *OAuthSSOProviderFeatureConfig `json:"apple,omitempty"`
 	Wechat     *OAuthSSOProviderFeatureConfig `json:"wechat,omitempty"`
+}
+
+func (c *OAuthSSOProvidersFeatureConfig) IsDisabled(cfg oauthrelyingparty.ProviderConfig) bool {
+	switch cfg.Type() {
+	case liboauthrelyingparty.TypeGoogle:
+		return c.Google.Disabled
+	case liboauthrelyingparty.TypeFacebook:
+		return c.Facebook.Disabled
+	case liboauthrelyingparty.TypeGithub:
+		return c.Github.Disabled
+	case liboauthrelyingparty.TypeLinkedin:
+		return c.LinkedIn.Disabled
+	case liboauthrelyingparty.TypeAzureADv2:
+		return c.Azureadv2.Disabled
+	case liboauthrelyingparty.TypeAzureADB2C:
+		return c.Azureadb2c.Disabled
+	case liboauthrelyingparty.TypeADFS:
+		return c.ADFS.Disabled
+	case liboauthrelyingparty.TypeApple:
+		return c.Apple.Disabled
+	case liboauthrelyingparty.TypeWechat:
+		return c.Wechat.Disabled
+	default:
+		// Not a provider we recognize here. Allow it.
+		return false
+	}
 }
 
 var _ = FeatureConfigSchema.Add("OAuthSSOProviderFeatureConfig", `

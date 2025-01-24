@@ -16,9 +16,9 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
+	apimodel "github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
-	"github.com/authgear/authgear-server/pkg/portal/model"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
 	corerand "github.com/authgear/authgear-server/pkg/util/rand"
@@ -43,19 +43,20 @@ var DomainVerificationFailed = apierrors.Forbidden.WithReason("DomainVerificatio
 var InvalidDomain = apierrors.Invalid.WithReason("InvalidDomain")
 
 type DomainConfigService interface {
-	CreateDomain(appID string, domainID string, domain string, isCustom bool) error
-	DeleteDomain(domain *model.Domain) error
+	CreateDomain(ctx context.Context, appID string, domainID string, domain string, isCustom bool) error
+	DeleteDomain(ctx context.Context, domain *apimodel.Domain) error
 }
 
 type DomainService struct {
-	Context      context.Context
-	Clock        clock.Clock
-	DomainConfig DomainConfigService
-	SQLBuilder   *globaldb.SQLBuilder
-	SQLExecutor  *globaldb.SQLExecutor
+	Clock          clock.Clock
+	DomainConfig   DomainConfigService
+	SQLBuilder     *globaldb.SQLBuilder
+	SQLExecutor    *globaldb.SQLExecutor
+	GlobalDatabase *globaldb.Handle
 }
 
-func (s *DomainService) GetMany(ids []string) ([]*model.Domain, error) {
+// GetMany acquires connection.
+func (s *DomainService) GetMany(ctx context.Context, ids []string) ([]*apimodel.Domain, error) {
 	var rawIDs []string
 	for _, id := range ids {
 		_, rawID, ok := parseDomainID(id)
@@ -64,28 +65,48 @@ func (s *DomainService) GetMany(ids []string) ([]*model.Domain, error) {
 		}
 	}
 
-	pendingDomains, err := s.listDomains(rawIDs, false)
-	if err != nil {
-		return nil, err
-	}
-	domains, err := s.listDomains(rawIDs, true)
+	var pendingDomains []*apimodel.Domain
+	var domains []*apimodel.Domain
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		pendingDomains, err = s.listDomains(ctx, rawIDs, false)
+		if err != nil {
+			return err
+		}
+		domains, err = s.listDomains(ctx, rawIDs, true)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	var out []*model.Domain
+	var out []*apimodel.Domain
 	out = append(out, pendingDomains...)
 	out = append(out, domains...)
 	return out, nil
 }
 
-func (s *DomainService) ListDomains(appID string) ([]*model.Domain, error) {
-	pendingDomains, err := s.listDomainsByAppID(appID, false)
-	if err != nil {
-		return nil, err
-	}
+// ListDomains acquires connection.
+func (s *DomainService) ListDomains(ctx context.Context, appID string) ([]*apimodel.Domain, error) {
+	var pendingDomains []*apimodel.Domain
+	var domains []*apimodel.Domain
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		pendingDomains, err = s.listDomainsByAppID(ctx, appID, false)
+		if err != nil {
+			return err
+		}
 
-	domains, err := s.listDomainsByAppID(appID, true)
+		domains, err = s.listDomainsByAppID(ctx, appID, true)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -98,11 +119,26 @@ func (s *DomainService) ListDomains(appID string) ([]*model.Domain, error) {
 	return result, nil
 }
 
-func (s *DomainService) CreateCustomDomain(appID string, domain string) (*model.Domain, error) {
-	return s.CreateDomain(appID, domain, false, true)
+// CreateCustomDomain acquires connection.
+func (s *DomainService) CreateCustomDomain(ctx context.Context, appID string, domain string) (*apimodel.Domain, error) {
+	var out *apimodel.Domain
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		out, err = s.CreateDomain(ctx, appID, domain, false, true)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
 
-func (s *DomainService) CreateDomain(appID string, domain string, isVerified bool, isCustom bool) (*model.Domain, error) {
+// CreateDomain assumes acquired connection.
+func (s *DomainService) CreateDomain(ctx context.Context, appID string, domain string, isVerified bool, isCustom bool) (*apimodel.Domain, error) {
 	d, err := newDomain(appID, domain, s.Clock.NowUTC(), isCustom)
 	if err != nil {
 		return nil, err
@@ -114,7 +150,7 @@ func (s *DomainService) CreateDomain(appID string, domain string, isVerified boo
 		d.ApexDomain = d.Domain
 	}
 
-	err = s.createDomain(d, isVerified)
+	err = s.createDomain(ctx, d, isVerified)
 
 	if err != nil {
 		return nil, err
@@ -122,7 +158,7 @@ func (s *DomainService) CreateDomain(appID string, domain string, isVerified boo
 
 	domainModel := d.toModel(isVerified)
 	if isVerified {
-		err = s.DomainConfig.CreateDomain(appID, domainModel.ID, domainModel.Domain, domainModel.IsCustom)
+		err = s.DomainConfig.CreateDomain(ctx, appID, domainModel.ID, domainModel.Domain, domainModel.IsCustom)
 		if err != nil {
 			return nil, err
 		}
@@ -130,23 +166,24 @@ func (s *DomainService) CreateDomain(appID string, domain string, isVerified boo
 	return domainModel, nil
 }
 
-func (s *DomainService) DeleteDomain(appID string, id string) error {
+// DeleteDomain assumes acquired connection.
+func (s *DomainService) DeleteDomain(ctx context.Context, appID string, id string) error {
 	isVerified, id, ok := parseDomainID(id)
 	if !ok {
 		return ErrDomainNotFound
 	}
 
-	d, err := s.getDomain(appID, id, isVerified)
+	d, err := s.getDomain(ctx, appID, id, isVerified)
 	if err != nil {
 		return err
 	}
 
-	err = s.deleteDomain(d, isVerified)
+	err = s.deleteDomain(ctx, d, isVerified)
 	if err != nil {
 		return err
 	}
 
-	err = s.DomainConfig.DeleteDomain(d.toModel(isVerified))
+	err = s.DomainConfig.DeleteDomain(ctx, d.toModel(isVerified))
 	if err != nil {
 		return err
 	}
@@ -154,8 +191,9 @@ func (s *DomainService) DeleteDomain(appID string, id string) error {
 	return nil
 }
 
-func (s *DomainService) listDomains(ids []string, isVerified bool) ([]*model.Domain, error) {
+func (s *DomainService) listDomains(ctx context.Context, ids []string, isVerified bool) ([]*apimodel.Domain, error) {
 	rows, err := s.SQLExecutor.QueryWith(
+		ctx,
 		s.SQLBuilder.
 			Select("id", "app_id", "created_at", "domain", "apex_domain", "verification_nonce", "is_custom").
 			Where("id = ANY (?)", pq.Array(ids)).
@@ -166,7 +204,7 @@ func (s *DomainService) listDomains(ids []string, isVerified bool) ([]*model.Dom
 	}
 	defer rows.Close()
 
-	var domains []*model.Domain
+	var domains []*apimodel.Domain
 	for rows.Next() {
 		d, err := scanDomain(rows)
 		if err != nil {
@@ -178,8 +216,9 @@ func (s *DomainService) listDomains(ids []string, isVerified bool) ([]*model.Dom
 	return domains, nil
 }
 
-func (s *DomainService) listDomainsByAppID(appID string, isVerified bool) ([]*model.Domain, error) {
+func (s *DomainService) listDomainsByAppID(ctx context.Context, appID string, isVerified bool) ([]*apimodel.Domain, error) {
 	rows, err := s.SQLExecutor.QueryWith(
+		ctx,
 		s.SQLBuilder.
 			Select("id", "app_id", "created_at", "domain", "apex_domain", "verification_nonce", "is_custom").
 			Where("app_id = ?", appID).
@@ -190,7 +229,7 @@ func (s *DomainService) listDomainsByAppID(appID string, isVerified bool) ([]*mo
 	}
 	defer rows.Close()
 
-	var domains []*model.Domain
+	var domains []*apimodel.Domain
 	for rows.Next() {
 		d, err := scanDomain(rows)
 		if err != nil {
@@ -202,7 +241,8 @@ func (s *DomainService) listDomainsByAppID(appID string, isVerified bool) ([]*mo
 	return domains, nil
 }
 
-func (s *DomainService) VerifyDomain(appID string, id string) (*model.Domain, error) {
+// VerifyDomain acquires connection.
+func (s *DomainService) VerifyDomain(ctx context.Context, appID string, id string) (*apimodel.Domain, error) {
 	isVerified, id, ok := parseDomainID(id)
 	if !ok {
 		return nil, ErrDomainNotFound
@@ -212,38 +252,50 @@ func (s *DomainService) VerifyDomain(appID string, id string) (*model.Domain, er
 		return nil, ErrDomainVerified
 	}
 
-	d, err := s.getDomain(appID, id, false)
-	if err != nil {
-		return nil, err
-	}
+	var d *domain
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		d, err = s.getDomain(ctx, appID, id, false)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 
-	err = s.verifyDomain(d)
+	err = s.verifyDomain(ctx, d)
 	if err != nil {
 		return nil, DomainVerificationFailed.Errorf("domain verification failed: %w", err)
 	}
 
-	// Migrate the domain from pending domains to domains
-	err = s.deleteDomain(d, false)
-	if err != nil {
-		return nil, err
-	}
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		// Migrate the domain from pending domains to domains
+		err = s.deleteDomain(ctx, d, false)
+		if err != nil {
+			return err
+		}
 
-	d.CreatedAt = s.Clock.NowUTC()
-	err = s.createDomain(d, true)
+		d.CreatedAt = s.Clock.NowUTC()
+		err = s.createDomain(ctx, d, true)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	domainModel := d.toModel(true)
-	err = s.DomainConfig.CreateDomain(appID, domainModel.ID, domainModel.Domain, domainModel.IsCustom)
+	err = s.DomainConfig.CreateDomain(ctx, appID, domainModel.ID, domainModel.Domain, domainModel.IsCustom)
 	if err != nil {
 		return nil, err
 	}
 	return domainModel, nil
 }
 
-func (s *DomainService) verifyDomain(domain *domain) error {
-	ctx, cancel := context.WithTimeout(s.Context, DomainVerificationTimeout)
+func (s *DomainService) verifyDomain(ctx context.Context, domain *domain) error {
+	ctx, cancel := context.WithTimeout(ctx, DomainVerificationTimeout)
 	defer cancel()
 
 	resolver := &net.Resolver{}
@@ -267,8 +319,9 @@ func (s *DomainService) verifyDomain(domain *domain) error {
 	return nil
 }
 
-func (s *DomainService) getDomain(appID string, id string, isVerified bool) (*domain, error) {
+func (s *DomainService) getDomain(ctx context.Context, appID string, id string, isVerified bool) (*domain, error) {
 	row, err := s.SQLExecutor.QueryRowWith(
+		ctx,
 		s.SQLBuilder.
 			Select("id", "app_id", "created_at", "domain", "apex_domain", "verification_nonce", "is_custom").
 			Where("app_id = ? AND id = ?", appID, id).
@@ -281,7 +334,7 @@ func (s *DomainService) getDomain(appID string, id string, isVerified bool) (*do
 	return scanDomain(row)
 }
 
-func (s *DomainService) createDomain(d *domain, isVerified bool) error {
+func (s *DomainService) createDomain(ctx context.Context, d *domain, isVerified bool) error {
 	tableName := domainTableName(isVerified)
 	dupeQuery := s.SQLBuilder.
 		Select("COUNT(*)").
@@ -293,7 +346,7 @@ func (s *DomainService) createDomain(d *domain, isVerified bool) error {
 		dupeQuery = dupeQuery.Where("app_id = ?", d.AppID)
 	}
 
-	scanner, err := s.SQLExecutor.QueryRowWith(dupeQuery)
+	scanner, err := s.SQLExecutor.QueryRowWith(ctx, dupeQuery)
 	if err != nil {
 		return err
 	}
@@ -307,7 +360,7 @@ func (s *DomainService) createDomain(d *domain, isVerified bool) error {
 		return ErrDomainDuplicated
 	}
 
-	_, err = s.SQLExecutor.ExecWith(s.SQLBuilder.
+	_, err = s.SQLExecutor.ExecWith(ctx, s.SQLBuilder.
 		Insert(s.SQLBuilder.TableName(tableName)).
 		Columns(
 			"id",
@@ -335,12 +388,12 @@ func (s *DomainService) createDomain(d *domain, isVerified bool) error {
 	return nil
 }
 
-func (s *DomainService) deleteDomain(d *domain, isVerified bool) error {
+func (s *DomainService) deleteDomain(ctx context.Context, d *domain, isVerified bool) error {
 	if !d.IsCustom {
 		return ErrDomainNotCustom
 	}
 
-	_, err := s.SQLExecutor.ExecWith(s.SQLBuilder.
+	_, err := s.SQLExecutor.ExecWith(ctx, s.SQLBuilder.
 		Delete(s.SQLBuilder.TableName(domainTableName(isVerified))).
 		Where("id = ?", d.ID),
 	)
@@ -407,7 +460,7 @@ func newDomain(appID string, domainName string, createdAt time.Time, isCustom bo
 	}, nil
 }
 
-func (d *domain) toModel(isVerified bool) *model.Domain {
+func (d *domain) toModel(isVerified bool) *apimodel.Domain {
 	var prefix string
 	if isVerified {
 		prefix = "verified:"
@@ -423,7 +476,7 @@ func (d *domain) toModel(isVerified bool) *model.Domain {
 		cookieDomain = httputil.CookieDomainWithoutPort(d.Domain)
 	}
 
-	return &model.Domain{
+	return &apimodel.Domain{
 		// Base64-encoded to avoid invalid k8s resource label invalid chars
 		ID:                    base64.RawURLEncoding.EncodeToString([]byte(prefix + d.ID)),
 		AppID:                 d.AppID,

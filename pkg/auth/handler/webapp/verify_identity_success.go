@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -10,7 +11,7 @@ import (
 
 var TemplateWebVerifyIdentitySuccessHTML = template.RegisterHTML(
 	"web/verify_identity_success.html",
-	components...,
+	Components...,
 )
 
 func ConfigureVerifyIdentitySuccessRoute(route httproute.Route) httproute.Route {
@@ -38,9 +39,9 @@ func (h *VerifyIdentitySuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		data, err := h.GetData(r, w)
 		if err != nil {
 			return err

@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -58,9 +59,9 @@ func (h *SettingsChangeSecondaryPasswordHandler) ServeHTTP(w http.ResponseWriter
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		data, err := h.GetData(r, w)
 		if err != nil {
 			return err
@@ -70,14 +71,14 @@ func (h *SettingsChangeSecondaryPasswordHandler) ServeHTTP(w http.ResponseWriter
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		userID := ctrl.RequireUserID()
+	ctrl.PostAction("", func(ctx context.Context) error {
+		userID := ctrl.RequireUserID(ctx)
 		opts := webapp.SessionOptions{
 			RedirectURI: "/settings",
 		}
 		intent := intents.NewIntentChangeSecondaryPassword(userID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			err = SettingsChangeSecondaryPasswordSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

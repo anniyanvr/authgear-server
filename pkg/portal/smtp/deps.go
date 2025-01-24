@@ -1,6 +1,8 @@
 package smtp
 
 import (
+	"context"
+
 	"github.com/google/wire"
 
 	"github.com/authgear/authgear-server/pkg/portal/model"
@@ -9,12 +11,13 @@ import (
 )
 
 var DependencySet = wire.NewSet(
+	NewLogger,
 	wire.Struct(new(Service), "*"),
 )
 
 type NoopStaticAssetResolver struct{}
 
-func (r *NoopStaticAssetResolver) StaticAssetURL(id string) (url string, err error) {
+func (r *NoopStaticAssetResolver) StaticAssetURL(ctx context.Context, id string) (url string, err error) {
 	panic("NoopStaticAssetResolver is not supposed to be reachable")
 }
 

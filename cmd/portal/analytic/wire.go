@@ -4,7 +4,7 @@
 package analytic
 
 import (
-	"context"
+	"github.com/google/wire"
 
 	"github.com/authgear/authgear-server/pkg/lib/analytic"
 	"github.com/authgear/authgear-server/pkg/lib/config"
@@ -12,11 +12,9 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/periodical"
-	"github.com/google/wire"
 )
 
 func NewUserWeeklyReport(
-	ctx context.Context,
 	pool *db.Pool,
 	databaseCredentials *config.DatabaseCredentials,
 ) *analytic.UserWeeklyReport {
@@ -26,7 +24,6 @@ func NewUserWeeklyReport(
 }
 
 func NewProjectHourlyReport(
-	ctx context.Context,
 	pool *db.Pool,
 	databaseCredentials *config.DatabaseCredentials,
 	auditDatabaseCredentials *config.AuditDatabaseCredentials,
@@ -37,7 +34,6 @@ func NewProjectHourlyReport(
 }
 
 func NewProjectWeeklyReport(
-	ctx context.Context,
 	pool *db.Pool,
 	databaseCredentials *config.DatabaseCredentials,
 	auditDatabaseCredentials *config.AuditDatabaseCredentials,
@@ -48,7 +44,6 @@ func NewProjectWeeklyReport(
 }
 
 func NewProjectMonthlyReport(
-	ctx context.Context,
 	pool *db.Pool,
 	databaseCredentials *config.DatabaseCredentials,
 	auditDatabaseCredentials *config.AuditDatabaseCredentials,
@@ -59,7 +54,6 @@ func NewProjectMonthlyReport(
 }
 
 func NewCountCollector(
-	ctx context.Context,
 	pool *db.Pool,
 	databaseCredentials *config.DatabaseCredentials,
 	auditDatabaseCredentials *config.AuditDatabaseCredentials,
@@ -75,5 +69,18 @@ func NewPeriodicalArgumentParser() *periodical.ArgumentParser {
 	panic(wire.Build(
 		clock.DependencySet,
 		periodical.DependencySet,
+	))
+}
+
+func NewPosthogIntegration(
+	pool *db.Pool,
+	databaseCredentials *config.DatabaseCredentials,
+	auditDatabaseCredentials *config.AuditDatabaseCredentials,
+	redisPool *redis.Pool,
+	credentials *config.AnalyticRedisCredentials,
+	posthogCredentials *analytic.PosthogCredentials,
+) *analytic.PosthogIntegration {
+	panic(wire.Build(
+		DependencySet,
 	))
 }

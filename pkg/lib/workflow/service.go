@@ -40,18 +40,18 @@ func NewServiceLogger(lf *log.Factory) ServiceLogger {
 }
 
 type Store interface {
-	CreateSession(session *Session) error
-	GetSession(workflowID string) (*Session, error)
-	DeleteSession(session *Session) error
+	CreateSession(ctx context.Context, session *Session) error
+	GetSession(ctx context.Context, workflowID string) (*Session, error)
+	DeleteSession(ctx context.Context, session *Session) error
 
-	CreateWorkflow(workflow *Workflow) error
-	GetWorkflowByInstanceID(instanceID string) (*Workflow, error)
-	DeleteWorkflow(workflow *Workflow) error
+	CreateWorkflow(ctx context.Context, workflow *Workflow) error
+	GetWorkflowByInstanceID(ctx context.Context, instanceID string) (*Workflow, error)
+	DeleteWorkflow(ctx context.Context, workflow *Workflow) error
 }
 
 type ServiceDatabase interface {
-	WithTx(do func() error) (err error)
-	ReadOnly(do func() error) (err error)
+	WithTx(ctx context.Context, do func(ctx context.Context) error) (err error)
+	ReadOnly(ctx context.Context, do func(ctx context.Context) error) (err error)
 }
 
 type ServiceUIInfoResolver interface {
@@ -59,27 +59,25 @@ type ServiceUIInfoResolver interface {
 }
 
 type Service struct {
-	ContextDoNotUseDirectly context.Context
-	Deps                    *Dependencies
-	Logger                  ServiceLogger
-	Store                   Store
-	Database                ServiceDatabase
-	UIInfoResolver          ServiceUIInfoResolver
+	Deps           *Dependencies
+	Logger         ServiceLogger
+	Store          Store
+	Database       ServiceDatabase
+	UIInfoResolver ServiceUIInfoResolver
 }
 
-func (s *Service) CreateNewWorkflow(intent Intent, sessionOptions *SessionOptions) (output *ServiceOutput, err error) {
+func (s *Service) CreateNewWorkflow(ctx context.Context, intent Intent, sessionOptions *SessionOptions) (output *ServiceOutput, err error) {
 	session := NewSession(sessionOptions)
-	err = s.Store.CreateSession(session)
+	ctx = session.Context(ctx)
+	err = s.Store.CreateSession(ctx, session)
 	if err != nil {
 		return
 	}
 
-	ctx := session.Context(s.ContextDoNotUseDirectly)
-
 	var workflow *Workflow
 	var workflowOutput *WorkflowOutput
 	var action *WorkflowAction
-	err = s.Database.ReadOnly(func() error {
+	err = s.Database.ReadOnly(ctx, func(ctx context.Context) error {
 		workflow, workflowOutput, action, err = s.createNewWorkflow(ctx, session, intent)
 		return err
 	})
@@ -92,7 +90,7 @@ func (s *Service) CreateNewWorkflow(intent Intent, sessionOptions *SessionOption
 
 	var cookies []*http.Cookie
 	if isEOF {
-		err = s.Database.WithTx(func() error {
+		err = s.Database.WithTx(ctx, func(ctx context.Context) error {
 			cookies, err = s.finishWorkflow(ctx, workflow)
 			return err
 		})
@@ -100,12 +98,12 @@ func (s *Service) CreateNewWorkflow(intent Intent, sessionOptions *SessionOption
 			return
 		}
 
-		err = s.Store.DeleteSession(session)
+		err = s.Store.DeleteSession(ctx, session)
 		if err != nil {
 			return
 		}
 
-		err = s.Store.DeleteWorkflow(workflow)
+		err = s.Store.DeleteWorkflow(ctx, workflow)
 		if err != nil {
 			return
 		}
@@ -147,7 +145,7 @@ func (s *Service) createNewWorkflow(ctx context.Context, session *Session, inten
 
 	// err is nil or err is ErrEOF.
 	// We persist the workflow instance.
-	err = s.Store.CreateWorkflow(workflow)
+	err = s.Store.CreateWorkflow(ctx, workflow)
 	if err != nil {
 		return
 	}
@@ -168,8 +166,8 @@ func (s *Service) createNewWorkflow(ctx context.Context, session *Session, inten
 	return
 }
 
-func (s *Service) Get(workflowID string, instanceID string, userAgentID string) (output *ServiceOutput, err error) {
-	w, err := s.Store.GetWorkflowByInstanceID(instanceID)
+func (s *Service) Get(ctx context.Context, workflowID string, instanceID string, userAgentID string) (output *ServiceOutput, err error) {
+	w, err := s.Store.GetWorkflowByInstanceID(ctx, instanceID)
 	if err != nil {
 		return
 	}
@@ -179,7 +177,7 @@ func (s *Service) Get(workflowID string, instanceID string, userAgentID string) 
 		return
 	}
 
-	session, err := s.Store.GetSession(w.WorkflowID)
+	session, err := s.Store.GetSession(ctx, w.WorkflowID)
 	if err != nil {
 		return
 	}
@@ -189,9 +187,9 @@ func (s *Service) Get(workflowID string, instanceID string, userAgentID string) 
 		return
 	}
 
-	ctx := session.Context(s.ContextDoNotUseDirectly)
+	ctx = session.Context(ctx)
 
-	err = s.Database.ReadOnly(func() error {
+	err = s.Database.ReadOnly(ctx, func(ctx context.Context) error {
 		output, err = s.get(ctx, session, w)
 		return err
 	})
@@ -227,8 +225,8 @@ func (s *Service) get(ctx context.Context, session *Session, w *Workflow) (outpu
 	return
 }
 
-func (s *Service) FeedInput(workflowID string, instanceID string, userAgentID string, input Input) (output *ServiceOutput, err error) {
-	workflow, err := s.Store.GetWorkflowByInstanceID(instanceID)
+func (s *Service) FeedInput(ctx context.Context, workflowID string, instanceID string, userAgentID string, input Input) (output *ServiceOutput, err error) {
+	workflow, err := s.Store.GetWorkflowByInstanceID(ctx, instanceID)
 	if err != nil {
 		return
 	}
@@ -238,21 +236,20 @@ func (s *Service) FeedInput(workflowID string, instanceID string, userAgentID st
 		return
 	}
 
-	session, err := s.Store.GetSession(workflow.WorkflowID)
+	session, err := s.Store.GetSession(ctx, workflow.WorkflowID)
 	if err != nil {
 		return
 	}
+	ctx = session.Context(ctx)
 
 	if session.UserAgentID != "" && session.UserAgentID != userAgentID {
 		err = ErrUserAgentUnmatched
 		return
 	}
 
-	ctx := session.Context(s.ContextDoNotUseDirectly)
-
 	var workflowOutput *WorkflowOutput
 	var action *WorkflowAction
-	err = s.Database.ReadOnly(func() error {
+	err = s.Database.ReadOnly(ctx, func(ctx context.Context) error {
 		workflow, workflowOutput, action, err = s.feedInput(ctx, session, instanceID, input)
 		return err
 	})
@@ -265,7 +262,7 @@ func (s *Service) FeedInput(workflowID string, instanceID string, userAgentID st
 
 	var cookies []*http.Cookie
 	if isEOF {
-		err = s.Database.WithTx(func() error {
+		err = s.Database.WithTx(ctx, func(ctx context.Context) error {
 			cookies, err = s.finishWorkflow(ctx, workflow)
 			return err
 		})
@@ -273,12 +270,12 @@ func (s *Service) FeedInput(workflowID string, instanceID string, userAgentID st
 			return
 		}
 
-		err = s.Store.DeleteSession(session)
+		err = s.Store.DeleteSession(ctx, session)
 		if err != nil {
 			return
 		}
 
-		err = s.Store.DeleteWorkflow(workflow)
+		err = s.Store.DeleteWorkflow(ctx, workflow)
 		if err != nil {
 			return
 		}
@@ -299,7 +296,7 @@ func (s *Service) FeedInput(workflowID string, instanceID string, userAgentID st
 }
 
 func (s *Service) feedInput(ctx context.Context, session *Session, instanceID string, input Input) (workflow *Workflow, output *WorkflowOutput, action *WorkflowAction, err error) {
-	workflow, err = s.Store.GetWorkflowByInstanceID(instanceID)
+	workflow, err = s.Store.GetWorkflowByInstanceID(ctx, instanceID)
 	if err != nil {
 		return
 	}
@@ -318,7 +315,7 @@ func (s *Service) feedInput(ctx context.Context, session *Session, instanceID st
 
 	// err is nil or err is ErrEOF.
 	// We persist the workflow instance.
-	err = s.Store.CreateWorkflow(workflow)
+	err = s.Store.CreateWorkflow(ctx, workflow)
 	if err != nil {
 		return
 	}

@@ -23,6 +23,8 @@ type IntentSignupFlow struct {
 
 var _ authflow.PublicFlow = &IntentSignupFlow{}
 var _ authflow.EffectGetter = &IntentSignupFlow{}
+var _ authflow.Milestone = &IntentSignupFlow{}
+var _ MilestoneSwitchToExistingUser = &IntentSignupFlow{}
 
 func (*IntentSignupFlow) Kind() string {
 	return "IntentSignupFlow"
@@ -44,13 +46,22 @@ func (i *IntentSignupFlow) FlowRootObject(deps *authflow.Dependencies) (config.A
 	return flowRootObject(deps, i.FlowReference)
 }
 
+func (*IntentSignupFlow) Milestone() {}
+func (i *IntentSignupFlow) MilestoneSwitchToExistingUser(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error {
+	milestone, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateUser](flows)
+	if ok {
+		milestone.MilestoneDoCreateUserUseExisting(newUserID)
+	}
+	return nil
+}
+
 func (i *IntentSignupFlow) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
 	// The list of nodes looks like
 	// 1 NodeDoCreateUser
 	// 1 IntentSignupFlowSteps
 	// 1 NodeDoCreateSession
 	// So if MarkerDoCreateSession is found, this flow has finished.
-	_, ok := authflow.FindMilestone[MilestoneDoCreateSession](flows.Nearest)
+	_, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateSession](flows)
 	if ok {
 		return nil, authflow.ErrEOF
 	}
@@ -58,21 +69,31 @@ func (i *IntentSignupFlow) CanReactTo(ctx context.Context, deps *authflow.Depend
 }
 
 func (i *IntentSignupFlow) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, _ authflow.Input) (*authflow.Node, error) {
+	if deps.Config.Authentication.PublicSignupDisabled {
+		return nil, ErrNoPublicSignup
+	}
+
 	switch {
 	case len(flows.Nearest.Nodes) == 0:
 		return authflow.NewNodeSimple(&NodeDoCreateUser{
 			UserID: uuid.New(),
 		}), nil
 	case len(flows.Nearest.Nodes) == 1:
+		userID, _ := i.userID(flows)
+		if userID == "" {
+			panic(fmt.Errorf("expected userID to be non empty in IntentSignupFlow"))
+		}
 		return authflow.NewSubFlow(&IntentSignupFlowSteps{
-			JSONPointer: i.JSONPointer,
-			UserID:      i.userID(flows.Nearest),
+			FlowReference: i.FlowReference,
+			JSONPointer:   i.JSONPointer,
+			UserID:        userID,
 		}), nil
 	case len(flows.Nearest.Nodes) == 2:
+		userID, createUser := i.userID(flows)
 		n, err := NewNodeDoCreateSession(ctx, deps, flows, &NodeDoCreateSession{
-			UserID:       i.userID(flows.Nearest),
+			UserID:       userID,
 			CreateReason: session.CreateReasonSignup,
-			SkipCreate:   authflow.GetSuppressIDPSessionCookie(ctx),
+			SkipCreate:   !createUser || authflow.GetSuppressIDPSessionCookie(ctx),
 		})
 		if err != nil {
 			return nil, err
@@ -88,32 +109,39 @@ func (i *IntentSignupFlow) GetEffects(ctx context.Context, deps *authflow.Depend
 		authflow.OnCommitEffect(func(ctx context.Context, deps *authflow.Dependencies) error {
 			// Apply rate limit on sign up.
 			spec := SignupPerIPRateLimitBucketSpec(deps.Config.Authentication, false, string(deps.RemoteIP))
-			err := deps.RateLimiter.Allow(spec)
+			failed, err := deps.RateLimiter.Allow(ctx, spec)
 			if err != nil {
+				return err
+			}
+			if err := failed.Error(); err != nil {
 				return err
 			}
 			return nil
 		}),
 		authflow.OnCommitEffect(func(ctx context.Context, deps *authflow.Dependencies) error {
-			userID := i.userID(flows.Nearest)
+			userID, createUser := i.userID(flows)
+			if !createUser {
+				// The creation is skipped for some reason, such as entered account linking flow
+				return nil
+			}
 			isAdminAPI := false
 
-			u, err := deps.Users.GetRaw(userID)
+			u, err := deps.Users.GetRaw(ctx, userID)
 			if err != nil {
 				return err
 			}
 
-			identities, err := deps.Identities.ListByUser(userID)
+			identities, err := deps.Identities.ListByUser(ctx, userID)
 			if err != nil {
 				return err
 			}
 
-			authenticators, err := deps.Authenticators.List(userID)
+			authenticators, err := deps.Authenticators.List(ctx, userID)
 			if err != nil {
 				return err
 			}
 
-			err = deps.Users.AfterCreate(
+			err = deps.Users.AfterCreate(ctx,
 				u,
 				identities,
 				authenticators,
@@ -128,13 +156,11 @@ func (i *IntentSignupFlow) GetEffects(ctx context.Context, deps *authflow.Depend
 	}, nil
 }
 
-func (i *IntentSignupFlow) userID(w *authflow.Flow) string {
-	m, ok := authflow.FindMilestone[MilestoneDoCreateUser](w)
+func (i *IntentSignupFlow) userID(flows authflow.Flows) (userID string, createUser bool) {
+	m, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateUser](flows)
 	if !ok {
 		panic(fmt.Errorf("expected userID"))
 	}
 
-	id := m.MilestoneDoCreateUser()
-
-	return id
+	return m.MilestoneDoCreateUser()
 }

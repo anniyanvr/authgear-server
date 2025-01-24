@@ -1,8 +1,11 @@
 package graphql
 
 import (
-	relay "github.com/authgear/graphql-go-relay"
+	"context"
+
 	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/lib/audit"
 	"github.com/authgear/authgear-server/pkg/util/graphqlutil"
@@ -52,6 +55,9 @@ var auditLogActivityType = graphql.NewEnum(graphql.EnumConfig{
 		},
 		"USER_ANONYMIZED": &graphql.EnumValueConfig{
 			Value: "user.anonymized",
+		},
+		"BOT_PROTECTION_VERIFICATION_FAILED": &graphql.EnumValueConfig{
+			Value: "bot_protection.verification.failed",
 		},
 		"AUTHENTICATION_IDENTITY_LOGIN_ID_FAILED": &graphql.EnumValueConfig{
 			Value: "authentication.identity.login_id.failed",
@@ -137,6 +143,21 @@ var auditLogActivityType = graphql.NewEnum(graphql.EnumConfig{
 		"IDENTITY_BIOMETRIC_DISABLED": &graphql.EnumValueConfig{
 			Value: "identity.biometric.disabled",
 		},
+		// "PASSWORD_PRIMARY_RESET": &graphql.EnumValueConfig{
+		// 	Value: "password.primary.reset",
+		// },
+		// "PASSWORD_PRIMARY_CHANGED": &graphql.EnumValueConfig{
+		// 	Value: "password.primary.changed",
+		// },
+		// "PASSWORD_SECONDARY_CHANGED": &graphql.EnumValueConfig{
+		// 	Value: "password.secondary.changed",
+		// },
+		// "PASSWORD_PRIMARY_FORCE_CHANGED": &graphql.EnumValueConfig{
+		// 	Value: "password.primary.force_changed",
+		// },
+		// "PASSWORD_SECONDARY_FORCE_CHANGED": &graphql.EnumValueConfig{
+		// 	Value: "password.secondary.force_changed",
+		// },
 		"EMAIL_SENT": &graphql.EnumValueConfig{
 			Value: "email.sent",
 		},
@@ -145,6 +166,24 @@ var auditLogActivityType = graphql.NewEnum(graphql.EnumConfig{
 		},
 		"WHATSAPP_SENT": &graphql.EnumValueConfig{
 			Value: "whatsapp.sent",
+		},
+		"EMAIL_SUPPRESSED": &graphql.EnumValueConfig{
+			Value: "email.suppressed",
+		},
+		"SMS_SUPPRESSED": &graphql.EnumValueConfig{
+			Value: "sms.suppressed",
+		},
+		"WHATSAPP_SUPPRESSED": &graphql.EnumValueConfig{
+			Value: "whatsapp.suppressed",
+		},
+		"EMAIL_ERROR": &graphql.EnumValueConfig{
+			Value: "email.error",
+		},
+		"SMS_ERROR": &graphql.EnumValueConfig{
+			Value: "sms.error",
+		},
+		"WHATSAPP_ERROR": &graphql.EnumValueConfig{
+			Value: "whatsapp.error",
 		},
 		"WHATSAPP_OTP_VERIFIED": &graphql.EnumValueConfig{
 			Value: "whatsapp.otp.verified",
@@ -160,6 +199,9 @@ var auditLogActivityType = graphql.NewEnum(graphql.EnumConfig{
 		},
 		"ADMIN_API_MUTATION_CREATE_USER_EXECUTED": &graphql.EnumValueConfig{
 			Value: "admin_api.mutation.create_user.executed",
+		},
+		"ADMIN_API_MUTATION_CREATE_AUTHENTICATOR_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.create_authenticator.executed",
 		},
 		"ADMIN_API_MUTATION_DELETE_AUTHENTICATOR_EXECUTED": &graphql.EnumValueConfig{
 			Value: "admin_api.mutation.delete_authenticator.executed",
@@ -211,6 +253,63 @@ var auditLogActivityType = graphql.NewEnum(graphql.EnumConfig{
 		},
 		"ADMIN_API_MUTATION_UPDATE_USER_EXECUTED": &graphql.EnumValueConfig{
 			Value: "admin_api.mutation.update_user.executed",
+		},
+		"ADMIN_API_MUTATION_UPDATE_ROLE_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.update_role.executed",
+		},
+		"ADMIN_API_MUTATION_UPDATE_GROUP_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.update_group.executed",
+		},
+		"ADMIN_API_MUTATION_ADD_GROUP_TO_ROLES_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.add_group_to_roles.executed",
+		},
+		"ADMIN_API_MUTATION_ADD_ROLE_TO_GROUPS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.add_role_to_groups.executed",
+		},
+		"ADMIN_API_MUTATION_REMOVE_GROUP_FROM_ROLES_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.remove_group_from_roles.executed",
+		},
+		"ADMIN_API_MUTATION_REMOVE_ROLE_FROM_GROUPS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.remove_role_from_groups.executed",
+		},
+		"ADMIN_API_MUTATION_ADD_GROUP_TO_USERS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.add_group_to_users.executed",
+		},
+		"ADMIN_API_MUTATION_ADD_USER_TO_GROUPS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.add_user_to_groups.executed",
+		},
+		"ADMIN_API_MUTATION_REMOVE_GROUP_FROM_USERS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.remove_group_from_users.executed",
+		},
+		"ADMIN_API_MUTATION_REMOVE_USER_FROM_GROUPS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.remove_user_from_groups.executed",
+		},
+		"ADMIN_API_MUTATION_ADD_ROLE_TO_USERS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.add_role_to_users.executed",
+		},
+		"ADMIN_API_MUTATION_ADD_USER_TO_ROLES_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.add_user_to_roles.executed",
+		},
+		"ADMIN_API_MUTATION_REMOVE_ROLE_FROM_USERS_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.remove_role_from_users.executed",
+		},
+		"ADMIN_API_MUTATION_REMOVE_USER_FROM_ROLES_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.remove_user_from_roles.executed",
+		},
+		"ADMIN_API_MUTATION_DELETE_GROUP_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.delete_group.executed",
+		},
+		"ADMIN_API_MUTATION_DELETE_ROLE_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.delete_role.executed",
+		},
+		"ADMIN_API_MUTATION_CREATE_GROUP_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.create_group.executed",
+		},
+		"ADMIN_API_MUTATION_CREATE_ROLE_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.create_role.executed",
+		},
+		"ADMIN_API_MUTATION_SET_PASSWORD_EXPIRED_EXECUTED": &graphql.EnumValueConfig{
+			Value: "admin_api.mutation.set_password_expired.executed",
 		},
 		"PROJECT_APP_UPDATED": &graphql.EnumValueConfig{
 			Value: "project.app.updated",
@@ -275,8 +374,9 @@ var nodeAuditLog = node(
 				Type: nodeUser,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					source := p.Source.(*audit.Log)
-					gqlCtx := GQLContext(p.Context)
-					return gqlCtx.Users.Load(source.UserID).Value, nil
+					ctx := p.Context
+					gqlCtx := GQLContext(ctx)
+					return gqlCtx.Users.Load(ctx, source.UserID).Value, nil
 				},
 			},
 			"ipAddress": &graphql.Field{
@@ -294,8 +394,8 @@ var nodeAuditLog = node(
 		},
 	}),
 	&audit.Log{},
-	func(ctx *Context, id string) (interface{}, error) {
-		return ctx.AuditLogs.Load(id).Value, nil
+	func(ctx context.Context, gqlCtx *Context, id string) (interface{}, error) {
+		return gqlCtx.AuditLogs.Load(ctx, id).Value, nil
 	},
 )
 

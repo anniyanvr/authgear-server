@@ -1,6 +1,7 @@
 package analytic
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
@@ -30,7 +31,9 @@ type ChartService struct {
 	AnalyticConfig *config.AnalyticConfig
 }
 
+// GetActiveUserChart acquires connection.
 func (s *ChartService) GetActiveUserChart(
+	ctx context.Context,
 	appID string,
 	periodical string,
 	rangeFrom time.Time,
@@ -57,7 +60,15 @@ func (s *ChartService) GetActiveUserChart(
 		return &Chart{}, nil
 	}
 
-	dataset, err := s.getDataPointsByCountType(appID, countType, periodicalType, rangeFrom, rangeTo)
+	var dataset []*DataPoint
+	err = s.Database.WithTx(ctx, func(ctx context.Context) error {
+		dataset, err = s.getDataPointsByCountType(ctx, appID, countType, periodicalType, rangeFrom, rangeTo)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +78,8 @@ func (s *ChartService) GetActiveUserChart(
 	}, nil
 }
 
-func (s *ChartService) GetTotalUserCountChart(appID string, rangeFrom time.Time, rangeTo time.Time) (*Chart, error) {
+// GetTotalUserCountChart acquires connection.
+func (s *ChartService) GetTotalUserCountChart(ctx context.Context, appID string, rangeFrom time.Time, rangeTo time.Time) (*Chart, error) {
 	if s.Database == nil {
 		return &Chart{}, nil
 	}
@@ -78,16 +90,25 @@ func (s *ChartService) GetTotalUserCountChart(appID string, rangeFrom time.Time,
 		return &Chart{}, nil
 	}
 
-	dataset, err := s.getDataPointsByCountType(appID, CumulativeUserCountType, periodicalutil.Daily, rangeFrom, rangeTo)
+	var dataset []*DataPoint
+	err = s.Database.WithTx(ctx, func(ctx context.Context) error {
+		dataset, err = s.getDataPointsByCountType(ctx, appID, CumulativeUserCountType, periodicalutil.Daily, rangeFrom, rangeTo)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
+
 	return &Chart{
 		DataSet: dataset,
 	}, nil
 }
 
-func (s *ChartService) GetSignupConversionRate(appID string, rangeFrom time.Time, rangeTo time.Time) (*SignupConversionRateData, error) {
+// GetSignupConversionRate acquires connection.
+func (s *ChartService) GetSignupConversionRate(ctx context.Context, appID string, rangeFrom time.Time, rangeTo time.Time) (*SignupConversionRateData, error) {
 	if s.Database == nil {
 		return &SignupConversionRateData{}, nil
 	}
@@ -98,14 +119,23 @@ func (s *ChartService) GetSignupConversionRate(appID string, rangeFrom time.Time
 		return &SignupConversionRateData{}, nil
 	}
 
-	totalSignupCount, err := s.AuditStore.GetSumOfAnalyticCountsByType(appID, DailySignupCountType, &rangeFrom, &rangeTo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch total signup count: %w", err)
-	}
+	var totalSignupCount int
+	var totalSignupUniquePageCount int
+	err = s.Database.WithTx(ctx, func(ctx context.Context) error {
+		totalSignupCount, err = s.AuditStore.GetSumOfAnalyticCountsByType(ctx, appID, DailySignupCountType, &rangeFrom, &rangeTo)
+		if err != nil {
+			return fmt.Errorf("failed to fetch total signup count: %w", err)
+		}
 
-	totalSignupUniquePageCount, err := s.AuditStore.GetSumOfAnalyticCountsByType(appID, DailySignupUniquePageViewCountType, &rangeFrom, &rangeTo)
+		totalSignupUniquePageCount, err = s.AuditStore.GetSumOfAnalyticCountsByType(ctx, appID, DailySignupUniquePageViewCountType, &rangeFrom, &rangeTo)
+		if err != nil {
+			return fmt.Errorf("failed to fetch total signup unique page view count: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch total signup unique page view count: %w", err)
+		return nil, err
 	}
 
 	conversionRate := float64(0)
@@ -121,7 +151,8 @@ func (s *ChartService) GetSignupConversionRate(appID string, rangeFrom time.Time
 	}, nil
 }
 
-func (s *ChartService) GetSignupByMethodsChart(appID string, rangeFrom time.Time, rangeTo time.Time) (*Chart, error) {
+// GetSignupByMethodsChart acquires connection.
+func (s *ChartService) GetSignupByMethodsChart(ctx context.Context, appID string, rangeFrom time.Time, rangeTo time.Time) (*Chart, error) {
 	if s.Database == nil {
 		return &Chart{}, nil
 	}
@@ -134,16 +165,24 @@ func (s *ChartService) GetSignupByMethodsChart(appID string, rangeFrom time.Time
 
 	// SignupByMethodsChart are the data points for signup by method pie chart
 	signupByMethodsChart := []*DataPoint{}
-	for _, method := range DailySignupCountTypeByMethods {
-		c, err := s.AuditStore.GetSumOfAnalyticCountsByType(appID, method.CountType, &rangeFrom, &rangeTo)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch signup count for method: %s: %w", method.MethodName, err)
+	err = s.Database.WithTx(ctx, func(ctx context.Context) error {
+		for _, method := range DailySignupCountTypeByMethods {
+			c, err := s.AuditStore.GetSumOfAnalyticCountsByType(ctx, appID, method.CountType, &rangeFrom, &rangeTo)
+			if err != nil {
+				return fmt.Errorf("failed to fetch signup count for method: %s: %w", method.MethodName, err)
+			}
+			signupByMethodsChart = append(signupByMethodsChart, &DataPoint{
+				Label: method.MethodName,
+				Data:  c,
+			})
 		}
-		signupByMethodsChart = append(signupByMethodsChart, &DataPoint{
-			Label: method.MethodName,
-			Data:  c,
-		})
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
+
 	return &Chart{
 		DataSet: signupByMethodsChart,
 	}, nil
@@ -199,13 +238,14 @@ func (s *ChartService) GetBoundedRange(
 }
 
 func (s *ChartService) getDataPointsByCountType(
+	ctx context.Context,
 	appID string,
 	countType string,
 	periodical periodicalutil.Type,
 	rangeFrom time.Time,
 	rangeTo time.Time,
 ) ([]*DataPoint, error) {
-	counts, err := s.AuditStore.GetAnalyticCountsByType(appID, countType, &rangeFrom, &rangeTo)
+	counts, err := s.AuditStore.GetAnalyticCountsByType(ctx, appID, countType, &rangeFrom, &rangeTo)
 	if err != nil {
 		return nil, err
 	}

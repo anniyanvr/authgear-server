@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/event"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	libevent "github.com/authgear/authgear-server/pkg/lib/event"
@@ -22,11 +23,10 @@ import (
 )
 
 type AuditServiceAppService interface {
-	Get(id string) (*model.App, error)
+	Get(ctx context.Context, id string) (*model.App, error)
 }
 
 type AuditService struct {
-	Context         context.Context
 	RemoteIP        httputil.RemoteIP
 	UserAgentString httputil.UserAgentString
 	Request         *http.Request
@@ -36,8 +36,9 @@ type AuditService struct {
 
 	DenoEndpoint config.DenoEndpoint
 
-	SQLBuilder  *globaldb.SQLBuilder
-	SQLExecutor *globaldb.SQLExecutor
+	GlobalSQLBuilder  *globaldb.SQLBuilder
+	GlobalSQLExecutor *globaldb.SQLExecutor
+	GlobalDatabase    *globaldb.Handle
 
 	AuditDatabase *auditdb.WriteHandle
 
@@ -45,44 +46,45 @@ type AuditService struct {
 	LoggerFactory *log.Factory
 }
 
-func (s *AuditService) Log(app *model.App, payload event.NonBlockingPayload) (err error) {
+func (s *AuditService) Log(ctx context.Context, app *model.App, payload event.NonBlockingPayload) (err error) {
 	if s.AuditDatabase == nil {
 		return
 	}
 
-	authgearApp, err := s.Apps.Get(s.Authgear.AppID)
+	authgearApp, err := s.Apps.Get(ctx, s.Authgear.AppID)
 	if err != nil {
 		return
 	}
 
 	cfg := app.Context.Config
 	loggerFactory := s.LoggerFactory.ReplaceHooks(
+		apierrors.SkipLoggingHook{},
 		log.NewDefaultMaskLogHook(),
 		config.NewSecretMaskLogHook(cfg.SecretConfig),
-		sentry.NewLogHookFromContext(s.Context),
+		sentry.NewLogHookFromContext(ctx),
 	)
 	loggerFactory.DefaultFields["app"] = cfg.AppConfig.ID
 
 	// AuditSink is app specific.
 	// The records MUST have correct app_id.
 	// We have construct audit sink with the target app.
-	auditSink := newAuditSink(s.Context, app, s.AuditDatabase, loggerFactory)
+	auditSink := newAuditSink(app, s.AuditDatabase, loggerFactory)
 	// The portal uses its Authgear to deliver hooks.
 	// We have construct hook sink with the Authgear app.
-	hookSink := newHookSink(s.Context, authgearApp, s.DenoEndpoint, loggerFactory)
+	hookSink := newHookSink(authgearApp, s.DenoEndpoint, loggerFactory)
 
 	// Use the target app ID.
-	e, err := s.resolveNonBlockingEvent(app.ID, payload)
+	e, err := s.resolveNonBlockingEvent(ctx, app.ID, payload)
 	if err != nil {
 		return err
 	}
 
-	err = auditSink.ReceiveNonBlockingEvent(e)
+	err = auditSink.ReceiveNonBlockingEvent(ctx, e)
 	if err != nil {
 		return err
 	}
 
-	err = hookSink.ReceiveNonBlockingEvent(e)
+	err = hookSink.ReceiveNonBlockingEvent(ctx, e)
 	if err != nil {
 		return err
 	}
@@ -90,10 +92,10 @@ func (s *AuditService) Log(app *model.App, payload event.NonBlockingPayload) (er
 	return nil
 }
 
-func (s *AuditService) nextSeq() (seq int64, err error) {
-	builder := s.SQLBuilder.
-		Select(fmt.Sprintf("nextval('%s')", s.SQLBuilder.TableName("_auth_event_sequence")))
-	row, err := s.SQLExecutor.QueryRowWith(builder)
+func (s *AuditService) nextSeq(ctx context.Context) (seq int64, err error) {
+	builder := s.GlobalSQLBuilder.
+		Select(fmt.Sprintf("nextval('%s')", s.GlobalSQLBuilder.TableName("_auth_event_sequence")))
+	row, err := s.GlobalSQLExecutor.QueryRowWith(ctx, builder)
 	if err != nil {
 		return
 	}
@@ -101,14 +103,14 @@ func (s *AuditService) nextSeq() (seq int64, err error) {
 	return
 }
 
-func (s *AuditService) makeContext(appID string, payload event.Payload) event.Context {
+func (s *AuditService) makeContext(ctx context.Context, appID string, payload event.Payload) event.Context {
 	var userIDStr string
-	portalSession := portalsession.GetValidSessionInfo(s.Context)
+	portalSession := portalsession.GetValidSessionInfo(ctx)
 	if portalSession != nil {
 		userIDStr = portalSession.UserID
 	}
 
-	preferredLanguageTags := intl.GetPreferredLanguageTags(s.Context)
+	preferredLanguageTags := intl.GetPreferredLanguageTags(ctx)
 	// Initialize this to an empty slice so that it is always present in the JSON.
 	if preferredLanguageTags == nil {
 		preferredLanguageTags = []string{}
@@ -116,7 +118,7 @@ func (s *AuditService) makeContext(appID string, payload event.Payload) event.Co
 
 	triggeredBy := payload.GetTriggeredBy()
 
-	uiParam := uiparam.GetUIParam(s.Context)
+	uiParam := uiparam.GetUIParam(ctx)
 	clientID := uiParam.ClientID
 	// This audit context must be constructed here.
 	// We cannot use GetAdminAuthzAudit because that is for Admin API to audit context.
@@ -126,7 +128,7 @@ func (s *AuditService) makeContext(appID string, payload event.Payload) event.Co
 		HTTPReferer: s.Request.Header.Get("Referer"),
 	}
 
-	ctx := &event.Context{
+	eventCtx := &event.Context{
 		Timestamp: s.Clock.NowUTC().Unix(),
 		// We do not populate UserID because the event is not about UserID.
 		TriggeredBy:        triggeredBy,
@@ -139,14 +141,23 @@ func (s *AuditService) makeContext(appID string, payload event.Payload) event.Co
 		AppID:              appID,
 	}
 
-	payload.FillContext(ctx)
+	payload.FillContext(eventCtx)
 
-	return *ctx
+	return *eventCtx
 }
 
-func (s *AuditService) resolveNonBlockingEvent(appID string, payload event.NonBlockingPayload) (*event.Event, error) {
-	eventContext := s.makeContext(appID, payload)
-	seq, err := s.nextSeq()
+func (s *AuditService) resolveNonBlockingEvent(ctx context.Context, appID string, payload event.NonBlockingPayload) (*event.Event, error) {
+	eventContext := s.makeContext(ctx, appID, payload)
+	var seq int64
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		seq, err = s.nextSeq(ctx)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}

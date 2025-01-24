@@ -1,12 +1,9 @@
 package oidc
 
 import (
-	"encoding/base64"
-	"errors"
+	"context"
 	"fmt"
 	"net/url"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
@@ -15,7 +12,6 @@ import (
 
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticationinfo"
-	"github.com/authgear/authgear-server/pkg/lib/authn/stdattrs"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/oauth"
 	"github.com/authgear/authgear-server/pkg/lib/oauth/protocol"
@@ -25,95 +21,40 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/duration"
 	"github.com/authgear/authgear-server/pkg/util/jwtutil"
-	"github.com/authgear/authgear-server/pkg/util/slice"
 )
 
-var UserinfoScopes = []string{
-	oauth.FullAccessScope,
-	oauth.FullUserInfoScope,
-}
-
-var IDTokenStandardAttributes = []string{
-	stdattrs.Email,
-	stdattrs.EmailVerified,
-	stdattrs.PhoneNumber,
-	stdattrs.PhoneNumberVerified,
-	stdattrs.PreferredUsername,
-}
+//go:generate mockgen -source=id_token.go -destination=id_token_mock_test.go -package oidc
 
 type UserProvider interface {
-	Get(id string, role accesscontrol.Role) (*model.User, error)
+	Get(ctx context.Context, id string, role accesscontrol.Role) (*model.User, error)
+}
+
+type RolesAndGroupsProvider interface {
+	ListEffectiveRolesByUserID(ctx context.Context, userID string) ([]*model.Role, error)
 }
 
 type BaseURLProvider interface {
-	BaseURL() *url.URL
+	Origin() *url.URL
 }
 
 type IDTokenIssuer struct {
-	Secrets *config.OAuthKeyMaterials
-	BaseURL BaseURLProvider
-	Users   UserProvider
-	Clock   clock.Clock
+	Secrets        *config.OAuthKeyMaterials
+	BaseURL        BaseURLProvider
+	Users          UserProvider
+	RolesAndGroups RolesAndGroupsProvider
+	Clock          clock.Clock
 }
 
 // IDTokenValidDuration is the valid period of ID token.
 // It can be short, since id_token_hint should accept expired ID tokens.
 const IDTokenValidDuration = duration.Short
 
-type SessionLike interface {
-	SessionID() string
-	SessionType() session.Type
-}
-
-func EncodeSID(s SessionLike) string {
-	raw := fmt.Sprintf("%s:%s", s.SessionType(), s.SessionID())
-	return base64.RawURLEncoding.EncodeToString([]byte(raw))
-}
-
-func DecodeSID(sid string) (typ session.Type, sessionID string, ok bool) {
-	bytes, err := base64.RawURLEncoding.DecodeString(sid)
-	if err != nil {
-		return
-	}
-
-	if !utf8.Valid(bytes) {
-		return
-	}
-	str := string(bytes)
-
-	parts := strings.Split(str, ":")
-	if len(parts) != 2 {
-		return
-	}
-
-	typStr := parts[0]
-	sessionID = parts[1]
-	switch typStr {
-	case string(session.TypeIdentityProvider):
-		typ = session.TypeIdentityProvider
-	case string(session.TypeOfflineGrant):
-		typ = session.TypeOfflineGrant
-	}
-	if typ == "" {
-		return
-	}
-
-	ok = true
-	return
-}
-
 func (ti *IDTokenIssuer) GetPublicKeySet() (jwk.Set, error) {
 	return jwk.PublicSetOf(ti.Secrets.Set)
 }
 
 func (ti *IDTokenIssuer) Iss() string {
-	return ti.BaseURL.BaseURL().String()
-}
-
-func (ti *IDTokenIssuer) updateTimeClaims(token jwt.Token) {
-	now := ti.Clock.NowUTC()
-	_ = token.Set(jwt.IssuedAtKey, now.Unix())
-	_ = token.Set(jwt.ExpirationKey, now.Add(IDTokenValidDuration).Unix())
+	return ti.BaseURL.Origin().String()
 }
 
 func (ti *IDTokenIssuer) sign(token jwt.Token) (string, error) {
@@ -131,43 +72,42 @@ type IssueIDTokenOptions struct {
 	Nonce              string
 	AuthenticationInfo authenticationinfo.T
 	ClientLike         *oauth.ClientLike
+	DeviceSecretHash   string
 }
 
-func (ti *IDTokenIssuer) IssueIDToken(opts IssueIDTokenOptions) (string, error) {
+func (ti *IDTokenIssuer) IssueIDToken(ctx context.Context, opts IssueIDTokenOptions) (string, error) {
 	claims := jwt.New()
 
 	info := opts.AuthenticationInfo
 
-	// For the first party client,
-	// We MUST NOT include any personal identifiable information (PII) here.
-	// The ID token may be included in the GET request in form of `id_token_hint`.
-	nonPIIUserClaimsOnly := true
-	if opts.ClientLike.PIIAllowedInIDToken {
-		for _, s := range UserinfoScopes {
-			if slice.ContainsString(opts.ClientLike.Scopes, s) {
-				nonPIIUserClaimsOnly = false
-			}
-		}
-	}
+	// iss
+	_ = claims.Set(jwt.IssuerKey, ti.Iss())
+	// aud
+	_ = claims.Set(jwt.AudienceKey, opts.ClientID)
+	now := ti.Clock.NowUTC()
+	// iat
+	_ = claims.Set(jwt.IssuedAtKey, now.Unix())
+	// exp
+	_ = claims.Set(jwt.ExpirationKey, now.Add(IDTokenValidDuration).Unix())
 
-	err := ti.PopulateUserClaims(claims, info.UserID, nonPIIUserClaimsOnly)
+	err := ti.PopulateUserClaimsInIDToken(ctx, claims, info.UserID, opts.ClientLike)
 	if err != nil {
 		return "", err
 	}
 
-	// Populate client specific claims
-	_ = claims.Set(jwt.AudienceKey, opts.ClientID)
-
-	// Populate Time specific claims
-	ti.updateTimeClaims(claims)
-
-	// Populate session specific claims
+	// auth_time
+	_ = claims.Set(string(model.ClaimAuthTime), info.AuthenticatedAt.Unix())
 	if sid := opts.SID; sid != "" {
+		// sid
 		_ = claims.Set(string(model.ClaimSID), sid)
 	}
-	_ = claims.Set(string(model.ClaimAuthTime), info.AuthenticatedAt.Unix())
 	if amr := info.AMR; len(amr) > 0 {
+		// amr
 		_ = claims.Set(string(model.ClaimAMR), amr)
+	}
+	if dshash := opts.DeviceSecretHash; dshash != "" {
+		// ds_hash
+		_ = claims.Set(string(model.ClaimDeviceSecretHash), dshash)
 	}
 
 	// Populate authorization flow specific claims
@@ -183,76 +123,67 @@ func (ti *IDTokenIssuer) IssueIDToken(opts IssueIDTokenOptions) (string, error) 
 	return signed, nil
 }
 
-func (ti *IDTokenIssuer) VerifyIDTokenHintWithoutClient(idTokenHint string) (token jwt.Token, err error) {
+func (ti *IDTokenIssuer) VerifyIDToken(idToken string) (token jwt.Token, err error) {
 	// Verify the signature.
 	jwkSet, err := ti.GetPublicKeySet()
 	if err != nil {
 		return
 	}
 
-	_, err = jws.Verify([]byte(idTokenHint), jws.WithKeySet(jwkSet))
+	_, err = jws.Verify([]byte(idToken), jws.WithKeySet(jwkSet))
 	if err != nil {
 		return
 	}
 	// Parse the JWT.
-	_, token, err = jwtutil.SplitWithoutVerify([]byte(idTokenHint))
+	_, token, err = jwtutil.SplitWithoutVerify([]byte(idToken))
 	if err != nil {
 		return
 	}
 
-	return
-}
-
-func (ti *IDTokenIssuer) VerifyIDTokenHint(client *config.OAuthClientConfig, idTokenHint string) (token jwt.Token, err error) {
-	token, err = ti.VerifyIDTokenHintWithoutClient(idTokenHint)
-	if err != nil {
-		return
-	}
-
-	// Validate the claims in the JWT.
-	// Here we do not use the library function jwt.Validate because
-	// we do not want to validate the exp of the token.
-
-	// We want to validate `aud` only.
-	foundAud := false
-	aud := client.ClientID
-	for _, v := range token.Audience() {
-		if v == aud {
-			foundAud = true
-			break
-		}
-	}
-	if !foundAud {
-		err = errors.New(`aud not satisfied`)
-		return
-	}
+	// We used to validate `aud`.
+	// However, some features like Native SSO will share a id token with multiple clients.
+	// So we removed the checking of `aud`.
 
 	// Normally we should also validate `iss`.
 	// But `iss` can change if public_origin was changed.
 	// We should still accept ID token referencing an old public_origin.
+	// See https://linear.app/authgear/issue/DEV-1712
 
 	return
 }
 
-func (ti *IDTokenIssuer) PopulateNonPIIUserClaims(token jwt.Token, userID string) error {
-	return ti.PopulateUserClaims(token, userID, true)
-}
-
-func (ti *IDTokenIssuer) PopulateUserClaims(token jwt.Token, userID string, nonPIIUserClaimsOnly bool) error {
-	user, err := ti.Users.Get(userID, config.RoleBearer)
+func (ti *IDTokenIssuer) PopulateUserClaimsInIDToken(ctx context.Context, token jwt.Token, userID string, clientLike *oauth.ClientLike) error {
+	user, err := ti.Users.Get(ctx, userID, config.RoleBearer)
 	if err != nil {
 		return err
 	}
 
-	_ = token.Set(jwt.IssuerKey, ti.Iss())
+	roles, err := ti.RolesAndGroups.ListEffectiveRolesByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	roleKeys := make([]string, len(roles))
+	for i := range roles {
+		roleKeys[i] = roles[i].Key
+	}
+
 	_ = token.Set(jwt.SubjectKey, userID)
 	_ = token.Set(string(model.ClaimUserIsAnonymous), user.IsAnonymous)
 	_ = token.Set(string(model.ClaimUserIsVerified), user.IsVerified)
 	_ = token.Set(string(model.ClaimUserCanReauthenticate), user.CanReauthenticate)
+	_ = token.Set(string(model.ClaimAuthgearRoles), roleKeys)
 
-	if !nonPIIUserClaimsOnly {
+	if clientLike.PIIAllowedInIDToken {
 		for k, v := range user.StandardAttributes {
-			if slice.ContainsString(IDTokenStandardAttributes, k) {
+			isAllowed := false
+			for _, scope := range clientLike.Scopes {
+				if oauth.ScopeAllowsClaim(scope, k) {
+					isAllowed = true
+					break
+				}
+			}
+
+			if isAllowed {
 				_ = token.Set(k, v)
 			}
 		}
@@ -261,10 +192,19 @@ func (ti *IDTokenIssuer) PopulateUserClaims(token jwt.Token, userID string, nonP
 	return nil
 }
 
-func (ti *IDTokenIssuer) GetUserInfo(userID string, clientLike *oauth.ClientLike) (map[string]interface{}, error) {
-	user, err := ti.Users.Get(userID, config.RoleBearer)
+func (ti *IDTokenIssuer) GetUserInfo(ctx context.Context, userID string, clientLike *oauth.ClientLike) (map[string]interface{}, error) {
+	user, err := ti.Users.Get(ctx, userID, config.RoleBearer)
 	if err != nil {
 		return nil, err
+	}
+
+	roles, err := ti.RolesAndGroups.ListEffectiveRolesByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	roleKeys := make([]string, len(roles))
+	for i := range roles {
+		roleKeys[i] = roles[i].Key
 	}
 
 	out := make(map[string]interface{})
@@ -272,54 +212,61 @@ func (ti *IDTokenIssuer) GetUserInfo(userID string, clientLike *oauth.ClientLike
 	out[string(model.ClaimUserIsAnonymous)] = user.IsAnonymous
 	out[string(model.ClaimUserIsVerified)] = user.IsVerified
 	out[string(model.ClaimUserCanReauthenticate)] = user.CanReauthenticate
+	out[string(model.ClaimAuthgearRoles)] = roleKeys
 
-	nonPIIUserClaimsOnly := true
-	// When the client is first party
-	// always include userinfo for the userinfo endpoint
-	// We check the scopes only for third party client
 	if clientLike.IsFirstParty {
-		nonPIIUserClaimsOnly = false
+		// When the client is first party, we always include all standard attributes, all custom attributes.
+		for k, v := range user.StandardAttributes {
+			out[k] = v
+		}
+
+		out["custom_attributes"] = user.CustomAttributes
+		out["x_web3"] = user.Web3
 	} else {
-		for _, s := range UserinfoScopes {
-			if slice.ContainsString(clientLike.Scopes, s) {
-				nonPIIUserClaimsOnly = false
+		// When the client is third party, we include the standard claims according to scopes.
+		for k, v := range user.StandardAttributes {
+			isAllowed := false
+			for _, scope := range clientLike.Scopes {
+				if oauth.ScopeAllowsClaim(scope, k) {
+					isAllowed = true
+					break
+				}
+			}
+
+			if isAllowed {
+				out[k] = v
 			}
 		}
 	}
-	if nonPIIUserClaimsOnly {
-		return out, nil
-	}
 
-	// Populate userinfo claims
-	for k, v := range user.StandardAttributes {
-		out[k] = v
-	}
-	out["custom_attributes"] = user.CustomAttributes
-	out["x_web3"] = user.Web3
 	return out, nil
 }
 
 type IDTokenHintResolverIssuer interface {
-	VerifyIDTokenHint(client *config.OAuthClientConfig, idTokenHint string) (idToken jwt.Token, err error)
+	VerifyIDToken(idTokenHint string) (idToken jwt.Token, err error)
 }
 
 type IDTokenHintResolverSessionProvider interface {
-	Get(id string) (*idpsession.IDPSession, error)
+	Get(ctx context.Context, id string) (*idpsession.IDPSession, error)
+}
+
+type IDTokenHintResolverOfflineGrantService interface {
+	GetOfflineGrant(ctx context.Context, id string) (*oauth.OfflineGrant, error)
 }
 
 type IDTokenHintResolver struct {
-	Issuer        IDTokenHintResolverIssuer
-	Sessions      IDTokenHintResolverSessionProvider
-	OfflineGrants oauth.OfflineGrantStore
+	Issuer              IDTokenHintResolverIssuer
+	Sessions            IDTokenHintResolverSessionProvider
+	OfflineGrantService IDTokenHintResolverOfflineGrantService
 }
 
-func (r *IDTokenHintResolver) ResolveIDTokenHint(client *config.OAuthClientConfig, req protocol.AuthorizationRequest) (idToken jwt.Token, sidSession session.Session, err error) {
+func (r *IDTokenHintResolver) ResolveIDTokenHint(ctx context.Context, client *config.OAuthClientConfig, req protocol.AuthorizationRequest) (idToken jwt.Token, sidSession session.ListableSession, err error) {
 	idTokenHint, ok := req.IDTokenHint()
 	if !ok {
 		return
 	}
 
-	idToken, err = r.Issuer.VerifyIDTokenHint(client, idTokenHint)
+	idToken, err = r.Issuer.VerifyIDToken(idTokenHint)
 	if err != nil {
 		return
 	}
@@ -334,18 +281,18 @@ func (r *IDTokenHintResolver) ResolveIDTokenHint(client *config.OAuthClientConfi
 		return
 	}
 
-	typ, sessionID, ok := DecodeSID(sid)
+	typ, sessionID, ok := oauth.DecodeSID(sid)
 	if !ok {
 		return
 	}
 
 	switch typ {
 	case session.TypeIdentityProvider:
-		if sess, err := r.Sessions.Get(sessionID); err == nil {
+		if sess, err := r.Sessions.Get(ctx, sessionID); err == nil {
 			sidSession = sess
 		}
 	case session.TypeOfflineGrant:
-		if sess, err := r.OfflineGrants.GetOfflineGrant(sessionID); err == nil {
+		if sess, err := r.OfflineGrantService.GetOfflineGrant(ctx, sessionID); err == nil {
 			sidSession = sess
 		}
 	default:

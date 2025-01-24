@@ -1,26 +1,38 @@
 import * as Types from '../globalTypes.generated';
 
 import { gql } from '@apollo/client';
+import { AuthenticatorFragmentFragmentDoc } from '../query/userQuery.generated';
 import * as Apollo from '@apollo/client';
 const defaultOptions = {} as const;
 export type ResetPasswordMutationMutationVariables = Types.Exact<{
-  userID: Types.Scalars['ID'];
-  password: Types.Scalars['String'];
+  userID: Types.Scalars['ID']['input'];
+  password: Types.Scalars['String']['input'];
+  sendPassword?: Types.InputMaybe<Types.Scalars['Boolean']['input']>;
+  setPasswordExpired?: Types.InputMaybe<Types.Scalars['Boolean']['input']>;
 }>;
 
 
-export type ResetPasswordMutationMutation = { __typename?: 'Mutation', resetPassword: { __typename?: 'ResetPasswordPayload', user: { __typename?: 'User', id: string } } };
+export type ResetPasswordMutationMutation = { __typename?: 'Mutation', resetPassword: { __typename?: 'ResetPasswordPayload', user: { __typename?: 'User', id: string, authenticators?: { __typename?: 'AuthenticatorConnection', edges?: Array<{ __typename?: 'AuthenticatorEdge', node?: { __typename?: 'Authenticator', id: string, type: Types.AuthenticatorType, kind: Types.AuthenticatorKind, isDefault: boolean, claims: any, createdAt: any, updatedAt: any, expireAfter?: any | null } | null } | null> | null } | null } } };
 
 
 export const ResetPasswordMutationDocument = gql`
-    mutation resetPasswordMutation($userID: ID!, $password: String!) {
-  resetPassword(input: {userID: $userID, password: $password}) {
+    mutation resetPasswordMutation($userID: ID!, $password: String!, $sendPassword: Boolean, $setPasswordExpired: Boolean) {
+  resetPassword(
+    input: {userID: $userID, password: $password, sendPassword: $sendPassword, setPasswordExpired: $setPasswordExpired}
+  ) {
     user {
       id
+      authenticators {
+        edges {
+          node {
+            ...AuthenticatorFragment
+          }
+        }
+      }
     }
   }
 }
-    `;
+    ${AuthenticatorFragmentFragmentDoc}`;
 export type ResetPasswordMutationMutationFn = Apollo.MutationFunction<ResetPasswordMutationMutation, ResetPasswordMutationMutationVariables>;
 
 /**
@@ -38,6 +50,8 @@ export type ResetPasswordMutationMutationFn = Apollo.MutationFunction<ResetPassw
  *   variables: {
  *      userID: // value for 'userID'
  *      password: // value for 'password'
+ *      sendPassword: // value for 'sendPassword'
+ *      setPasswordExpired: // value for 'setPasswordExpired'
  *   },
  * });
  */

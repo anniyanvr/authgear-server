@@ -6,27 +6,38 @@ import (
 	"errors"
 
 	sq "github.com/Masterminds/squirrel"
-	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 
 	"github.com/authgear/authgear-server/pkg/util/errorutil"
 )
 
-type SQLExecutor struct {
-	Context  context.Context
-	Database Handle
-}
+type SQLExecutor struct{}
 
-func (e *SQLExecutor) ExecWith(sqlizeri sq.Sqlizer) (sql.Result, error) {
-	db, err := e.Database.conn()
-	if err != nil {
-		return nil, err
-	}
+func (e *SQLExecutor) ExecWith(ctx context.Context, sqlizeri sq.Sqlizer) (sql.Result, error) {
 	sql, args, err := sqlizeri.ToSql()
 	if err != nil {
 		return nil, err
 	}
-	result, err := db.ExecContext(e.Context, sql, args...)
+
+	stmtPreparer, ok := getStmtPreparer(ctx)
+	if !ok {
+		tx := mustGetTxLike(ctx)
+		result, err := tx.ExecContext(ctx, sql, args...)
+		if err != nil {
+			if isWriteConflict(err) {
+				panic(ErrWriteConflict)
+			}
+			return nil, errorutil.WithDetails(err, errorutil.Details{"sql": errorutil.SafeDetail.Value(sql)})
+		}
+		return result, nil
+	}
+
+	stmt, err := stmtPreparer.PrepareContext(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := stmt.ExecContext(ctx, args...)
 	if err != nil {
 		if isWriteConflict(err) {
 			panic(ErrWriteConflict)
@@ -36,16 +47,31 @@ func (e *SQLExecutor) ExecWith(sqlizeri sq.Sqlizer) (sql.Result, error) {
 	return result, nil
 }
 
-func (e *SQLExecutor) QueryWith(sqlizeri sq.Sqlizer) (*sqlx.Rows, error) {
-	db, err := e.Database.conn()
-	if err != nil {
-		return nil, err
-	}
+func (e *SQLExecutor) QueryWith(ctx context.Context, sqlizeri sq.Sqlizer) (*sql.Rows, error) {
 	sql, args, err := sqlizeri.ToSql()
 	if err != nil {
 		return nil, err
 	}
-	result, err := db.QueryxContext(e.Context, sql, args...)
+
+	stmtPreparer, ok := getStmtPreparer(ctx)
+	if !ok {
+		tx := mustGetTxLike(ctx)
+		result, err := tx.QueryContext(ctx, sql, args...)
+		if err != nil {
+			if isWriteConflict(err) {
+				panic(ErrWriteConflict)
+			}
+			return nil, errorutil.WithDetails(err, errorutil.Details{"sql": errorutil.SafeDetail.Value(sql)})
+		}
+		return result, nil
+	}
+
+	stmt, err := stmtPreparer.PrepareContext(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := stmt.QueryContext(ctx, args...)
 	if err != nil {
 		if isWriteConflict(err) {
 			panic(ErrWriteConflict)
@@ -55,19 +81,24 @@ func (e *SQLExecutor) QueryWith(sqlizeri sq.Sqlizer) (*sqlx.Rows, error) {
 	return result, nil
 }
 
-func (e *SQLExecutor) QueryRowWith(sqlizeri sq.Sqlizer) (*sqlx.Row, error) {
-	db, err := e.Database.conn()
+func (e *SQLExecutor) QueryRowWith(ctx context.Context, sqlizeri sq.Sqlizer) (*sql.Row, error) {
+	sql, args, err := sqlizeri.ToSql()
 	if err != nil {
 		return nil, err
 	}
-	sql, args, err := sqlizeri.ToSql()
-	if err != nil {
-		if isWriteConflict(err) {
-			panic(ErrWriteConflict)
-		}
-		return nil, errorutil.WithDetails(err, errorutil.Details{"sql": errorutil.SafeDetail.Value(sql)})
+
+	stmtPreparer, ok := getStmtPreparer(ctx)
+	if !ok {
+		tx := mustGetTxLike(ctx)
+		return tx.QueryRowContext(ctx, sql, args...), nil
 	}
-	return db.QueryRowxContext(e.Context, sql, args...), nil
+
+	stmt, err := stmtPreparer.PrepareContext(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+
+	return stmt.QueryRowContext(ctx, args...), nil
 }
 
 func isWriteConflict(err error) bool {

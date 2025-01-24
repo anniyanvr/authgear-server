@@ -5,21 +5,29 @@ import (
 
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
+	"github.com/authgear/oauthrelyingparty/pkg/api/oauthrelyingparty"
+
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
 type InputSchemaStepIdentify struct {
-	JSONPointer jsonpointer.T
-	Options     []IdentificationOption
+	JSONPointer               jsonpointer.T
+	FlowRootObject            config.AuthenticationFlowObject
+	Options                   []IdentificationOption
+	ShouldBypassBotProtection bool
+	BotProtectionCfg          *config.BotProtectionConfig
 }
 
 var _ authflow.InputSchema = &InputSchemaStepIdentify{}
 
 func (i *InputSchemaStepIdentify) GetJSONPointer() jsonpointer.T {
 	return i.JSONPointer
+}
+
+func (i *InputSchemaStepIdentify) GetFlowRootObject() config.AuthenticationFlowObject {
+	return i.FlowRootObject
 }
 
 func (i *InputSchemaStepIdentify) SchemaBuilder() validation.SchemaBuilder {
@@ -34,10 +42,18 @@ func (i *InputSchemaStepIdentify) SchemaBuilder() validation.SchemaBuilder {
 			required = append(required, key)
 			b.Properties().Property(key, validation.SchemaBuilder{}.Type(validation.TypeString))
 		}
+		requireBotProtection := func() {
+			required = append(required, "bot_protection")
+			b.Properties().Property("bot_protection", NewBotProtectionBodySchemaBuilder(i.BotProtectionCfg))
+		}
 
 		setRequiredAndAppendOneOf := func() {
 			b.Required(required...)
 			oneOf = append(oneOf, b)
+		}
+
+		if !i.ShouldBypassBotProtection && i.BotProtectionCfg != nil && option.isBotProtectionRequired() {
+			requireBotProtection()
 		}
 
 		switch option.Identification {
@@ -65,12 +81,35 @@ func (i *InputSchemaStepIdentify) SchemaBuilder() validation.SchemaBuilder {
 			// response_mode is optional.
 			b.Properties().Property("response_mode", validation.SchemaBuilder{}.
 				Type(validation.TypeString).
-				Enum(sso.ResponseModeFormPost, sso.ResponseModeQuery))
+				Enum(oauthrelyingparty.ResponseModeFormPost, oauthrelyingparty.ResponseModeQuery))
 
 			setRequiredAndAppendOneOf()
 		case config.AuthenticationFlowIdentificationPasskey:
 			required = append(required, "assertion_response")
 			b.Properties().Property("assertion_response", passkeyAssertionResponseSchemaBuilder)
+			setRequiredAndAppendOneOf()
+		case config.AuthenticationFlowIdentificationLDAP:
+			required = append(required, "server_name")
+			b.Properties().
+				Property(
+					"server_name",
+					validation.SchemaBuilder{}.Type(validation.TypeString).Const(option.ServerName),
+				)
+
+			required = append(required, "username")
+			b.Properties().
+				Property(
+					"username",
+					validation.SchemaBuilder{}.Type(validation.TypeString).MinLength(1),
+				)
+
+			required = append(required, "password")
+			b.Properties().
+				Property(
+					"password",
+					validation.SchemaBuilder{}.Type(validation.TypeString).MinLength(1),
+				)
+
 			setRequiredAndAppendOneOf()
 		default:
 			break
@@ -103,9 +142,15 @@ type InputStepIdentify struct {
 
 	LoginID string `json:"login,omitempty"`
 
-	Alias        string           `json:"alias,omitempty"`
-	RedirectURI  string           `json:"redirect_uri,omitempty"`
-	ResponseMode sso.ResponseMode `json:"response_mode,omitempty"`
+	Alias        string `json:"alias,omitempty"`
+	RedirectURI  string `json:"redirect_uri,omitempty"`
+	ResponseMode string `json:"response_mode,omitempty"`
+
+	BotProtection *InputTakeBotProtectionBody `json:"bot_protection,omitempty"`
+
+	ServerName string `json:"server_name"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
 }
 
 var _ authflow.Input = &InputStepIdentify{}
@@ -113,6 +158,8 @@ var _ inputTakeIdentificationMethod = &InputStepIdentify{}
 var _ inputTakeIDToken = &InputStepIdentify{}
 var _ inputTakeLoginID = &InputStepIdentify{}
 var _ inputTakeOAuthAuthorizationRequest = &InputStepIdentify{}
+var _ inputTakeBotProtection = &InputStepIdentify{}
+var _ inputTakeLDAP = &InputStepIdentify{}
 
 func (*InputStepIdentify) Input() {}
 
@@ -136,6 +183,36 @@ func (i *InputStepIdentify) GetOAuthRedirectURI() string {
 	return i.RedirectURI
 }
 
-func (i *InputStepIdentify) GetOAuthResponseMode() sso.ResponseMode {
+func (i *InputStepIdentify) GetOAuthResponseMode() string {
 	return i.ResponseMode
+}
+
+func (i *InputStepIdentify) GetBotProtectionProvider() *InputTakeBotProtectionBody {
+	return i.BotProtection
+}
+
+func (i *InputStepIdentify) GetBotProtectionProviderType() config.BotProtectionProviderType {
+	if i.BotProtection == nil {
+		return ""
+	}
+	return i.BotProtection.Type
+}
+
+func (i *InputStepIdentify) GetBotProtectionProviderResponse() string {
+	if i.BotProtection == nil {
+		return ""
+	}
+	return i.BotProtection.Response
+}
+
+func (i *InputStepIdentify) GetServerName() string {
+	return i.ServerName
+}
+
+func (i *InputStepIdentify) GetUsername() string {
+	return i.Username
+}
+
+func (i *InputStepIdentify) GetPassword() string {
+	return i.Password
 }

@@ -1,8 +1,11 @@
 package nodes
 
 import (
+	"context"
 	"net/http"
+	"time"
 
+	"github.com/authgear/authgear-server/pkg/lib/feature/forgotpassword"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/lib/successpage"
 )
@@ -14,21 +17,24 @@ func init() {
 
 type NodeResetPasswordBegin struct{}
 
-func (n *NodeResetPasswordBegin) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeResetPasswordBegin) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeResetPasswordBegin) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeResetPasswordBegin) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return nil, nil
 }
 
-func (n *NodeResetPasswordBegin) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
+func (n *NodeResetPasswordBegin) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
 	return []interaction.Edge{&EdgeResetPassword{}}, nil
 }
 
 type InputResetPassword interface {
 	GetResetPasswordUserID() string
 	GetNewPassword() string
+	GeneratePassword() bool
+	SendPassword() bool
+	ChangeOnLogin() bool
 }
 
 type InputResetPasswordByCode interface {
@@ -38,7 +44,7 @@ type InputResetPasswordByCode interface {
 
 type EdgeResetPassword struct{}
 
-func (e *EdgeResetPassword) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
+func (e *EdgeResetPassword) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
 	var resetInput InputResetPassword
 	var codeInput InputResetPasswordByCode
 	successPageCookie := ctx.CookieManager.ValueCookie(successpage.PathCookieDef, "/flows/reset_password/success")
@@ -72,20 +78,42 @@ func (n *NodeResetPasswordEnd) GetCookies() []*http.Cookie {
 	return []*http.Cookie{n.SuccessPageCookie}
 }
 
-func (n *NodeResetPasswordEnd) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeResetPasswordEnd) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeResetPasswordEnd) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeResetPasswordEnd) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return []interaction.Effect{
-		interaction.EffectOnCommit(func(ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
+		interaction.EffectOnCommit(func(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
 			if n.InputResetPassword != nil {
 				resetInput := n.InputResetPassword
 
 				userID := resetInput.GetResetPasswordUserID()
 				newPassword := resetInput.GetNewPassword()
+				generatePassword := resetInput.GeneratePassword()
+				sendPassword := resetInput.SendPassword()
 
-				err := ctx.ResetPassword.SetPassword(userID, newPassword)
+				var expireAfter *time.Time = nil
+				now := ctx.Clock.NowUTC()
+				if resetInput.ChangeOnLogin() {
+					expireAfter = &now
+				}
+
+				var err error
+				if generatePassword {
+					newPassword, err = ctx.PasswordGenerator.Generate()
+					if err != nil {
+						return err
+					}
+				}
+
+				err = ctx.ResetPassword.ChangePasswordByAdmin(goCtx, &forgotpassword.SetPasswordOptions{
+					UserID:         userID,
+					PlainPassword:  newPassword,
+					SendPassword:   sendPassword,
+					ExpireAfter:    expireAfter,
+					SetExpireAfter: true,
+				})
 				if err != nil {
 					return err
 				}
@@ -96,7 +124,7 @@ func (n *NodeResetPasswordEnd) GetEffects() ([]interaction.Effect, error) {
 				code := codeInput.GetCode()
 				newPassword := codeInput.GetNewPassword()
 
-				err := ctx.ResetPassword.ResetPassword(code, newPassword)
+				err := ctx.ResetPassword.ResetPasswordByEndUser(goCtx, code, newPassword)
 				if err != nil {
 					return err
 				}
@@ -107,6 +135,6 @@ func (n *NodeResetPasswordEnd) GetEffects() ([]interaction.Effect, error) {
 	}, nil
 }
 
-func (n *NodeResetPasswordEnd) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
-	return graph.Intent.DeriveEdgesForNode(graph, n)
+func (n *NodeResetPasswordEnd) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
+	return graph.Intent.DeriveEdgesForNode(goCtx, graph, n)
 }

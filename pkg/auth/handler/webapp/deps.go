@@ -1,14 +1,18 @@
 package webapp
 
-import "github.com/google/wire"
+import (
+	"github.com/google/wire"
+)
 
 var DependencySet = wire.NewSet(
 	wire.Struct(new(AuthEntryPointMiddleware), "*"),
 	wire.Struct(new(ImplementationSwitcherMiddleware), "*"),
+	wire.Struct(new(SettingsImplementationSwitcherMiddleware), "*"),
 
 	wire.Struct(new(ResponseRenderer), "*"),
 	wire.Struct(new(FormPrefiller), "*"),
 	wire.Bind(new(Renderer), new(*ResponseRenderer)),
+	wire.Struct(new(ErrorRenderer), "*"),
 
 	wire.Struct(new(ControllerDeps), "*"),
 	wire.Struct(new(ControllerFactory), "*"),
@@ -21,6 +25,10 @@ var DependencySet = wire.NewSet(
 
 	NewPanicMiddlewareLogger,
 	wire.Struct(new(PanicMiddleware), "*"),
+
+	NewCSRFMiddlewareLogger,
+	wire.Struct(new(CSRFMiddleware), "*"),
+	wire.Struct(new(CSRFErrorInstructionHandler), "*"),
 
 	wire.Struct(new(AppStaticAssetsHandler), "*"),
 
@@ -85,7 +93,6 @@ var DependencySet = wire.NewSet(
 	wire.Struct(new(PasskeyCreationOptionsHandler), "*"),
 	wire.Struct(new(PasskeyRequestOptionsHandler), "*"),
 	wire.Struct(new(ConnectWeb3AccountHandler), "*"),
-	wire.Struct(new(MissingWeb3WalletHandler), "*"),
 	wire.Struct(new(FeatureDisabledHandler), "*"),
 
 	wire.Struct(new(AuthflowLoginHandler), "*"),
@@ -114,6 +121,7 @@ var DependencySet = wire.NewSet(
 	wire.Struct(new(AuthflowResetPasswordSuccessHandler), "*"),
 	wire.Struct(new(AuthflowAccountStatusHandler), "*"),
 	wire.Struct(new(AuthflowNoAuthenticatorHandler), "*"),
+	wire.Struct(new(AuthflowFinishFlowHandler), "*"),
 
 	wire.Struct(new(ResponseWriter), "*"),
 )

@@ -1,0 +1,69 @@
+name: Facebook
+authgear.yaml:
+  override: |
+    authentication:
+        identities:
+          - oauth
+        primary_authenticators:
+          - password
+
+    identity:
+      oauth:
+        providers:
+          - alias: facebook
+            client_id: "facebook"
+            type: facebook
+steps:
+  - action: "create"
+    input: |
+      {
+        "type": "signup",
+        "name": "default"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "identification": "oauth",
+        "alias": "facebook",
+        "redirect_uri": "http://mock"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify",
+            "data": {
+              "oauth_authorization_url": "[[string]]"
+            }
+          }
+        }
+
+  - action: oauth_redirect
+    to: "{{ .prev.result.action.data.oauth_authorization_url }}"
+    redirect_uri: http://mock
+    output:
+      result: |
+        {
+          "query": "[[string]]"
+        }
+
+  - action: input
+    input: |
+      {
+        "query": "{{ .prev.result.query }}"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "finished"
+          }
+        }

@@ -1,7 +1,7 @@
 package graphqlutil
 
 import (
-	relay "github.com/authgear/graphql-go-relay"
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 )
 
 const MaxPageSize uint64 = 100
@@ -66,7 +66,9 @@ func NewPageResult(args PageArgs, itemsLen int, totalCount *Lazy) *PageResult {
 		hasPage = &hasPreviousPage
 	}
 
-	if limit != nil && uint64(itemsLen) < *limit {
+	//nolint:gosec // G115
+	itemsLen_uint64 := uint64(itemsLen)
+	if limit != nil && itemsLen_uint64 < *limit {
 		*hasPage = false
 	}
 

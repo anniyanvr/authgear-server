@@ -34,6 +34,9 @@ var identityType = graphql.NewEnum(graphql.EnumConfig{
 		"SIWE": &graphql.EnumValueConfig{
 			Value: string(model.IdentityTypeSIWE),
 		},
+		"LDAP": &graphql.EnumValueConfig{
+			Value: string(model.IdentityTypeLDAP),
+		},
 	},
 })
 
@@ -85,8 +88,8 @@ var nodeIdentity = node(
 		},
 	}),
 	&identity.Info{},
-	func(ctx *Context, id string) (interface{}, error) {
-		return ctx.Identities.Load(id).Value, nil
+	func(ctx context.Context, gqlCtx *Context, id string) (interface{}, error) {
+		return gqlCtx.Identities.Load(ctx, id).Value, nil
 	},
 )
 
@@ -97,7 +100,7 @@ func loadIdentity(ctx context.Context, obj interface{}) *graphqlutil.Lazy {
 	case *identity.Info:
 		return graphqlutil.NewLazyValue(obj)
 	case *model.IdentityRef:
-		return GQLContext(ctx).Identities.Load(obj.ID)
+		return GQLContext(ctx).Identities.Load(ctx, obj.ID)
 	default:
 		panic(fmt.Sprintf("graphql: unknown identity type: %T", obj))
 	}

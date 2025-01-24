@@ -1,10 +1,12 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
 	"github.com/authgear/authgear-server/pkg/lib/authn"
+	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 	pwd "github.com/authgear/authgear-server/pkg/util/password"
 	"github.com/authgear/authgear-server/pkg/util/template"
@@ -13,7 +15,7 @@ import (
 
 var TemplateWebChangeSecondaryPasswordHTML = template.RegisterHTML(
 	"web/change_secondary_password.html",
-	components...,
+	Components...,
 )
 
 var ForceChangeSecondaryPasswordSchema = validation.NewSimpleSchema(`
@@ -33,13 +35,14 @@ func ConfigureForceChangeSecondaryPasswordRoute(route httproute.Route) httproute
 }
 
 type ForceChangeSecondaryPasswordHandler struct {
-	ControllerFactory ControllerFactory
-	BaseViewModel     *viewmodels.BaseViewModeler
-	Renderer          Renderer
-	PasswordPolicy    PasswordPolicy
+	ControllerFactory       ControllerFactory
+	BaseViewModel           *viewmodels.BaseViewModeler
+	ChangePasswordViewModel viewmodels.ChangePasswordViewModeler
+	Renderer                Renderer
+	PasswordPolicy          PasswordPolicy
 }
 
-func (h *ForceChangeSecondaryPasswordHandler) GetData(r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
+func (h *ForceChangeSecondaryPasswordHandler) GetData(r *http.Request, rw http.ResponseWriter, graph *interaction.Graph) (map[string]interface{}, error) {
 	data := make(map[string]interface{})
 	baseViewModel := h.BaseViewModel.ViewModel(r, rw)
 	passwordPolicyViewModel := viewmodels.NewPasswordPolicyViewModel(
@@ -48,8 +51,10 @@ func (h *ForceChangeSecondaryPasswordHandler) GetData(r *http.Request, rw http.R
 		baseViewModel.RawError,
 		viewmodels.GetDefaultPasswordPolicyViewModelOptions(),
 	)
+	changePasswordViewModel := h.ChangePasswordViewModel.NewWithGraph(graph)
 	viewmodels.Embed(data, baseViewModel)
 	viewmodels.Embed(data, passwordPolicyViewModel)
+	viewmodels.Embed(data, changePasswordViewModel)
 
 	viewmodels.Embed(data, ChangePasswordViewModel{
 		Force: true,
@@ -63,18 +68,18 @@ func (h *ForceChangeSecondaryPasswordHandler) ServeHTTP(w http.ResponseWriter, r
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		// Ensure there is an ongoing web session.
 		// If the user clicks back just after authentication, there is no ongoing web session.
 		// The user will see the normal web session not found error page.
-		_, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
 
-		data, err := h.GetData(r, w)
+		data, err := h.GetData(r, w, graph)
 		if err != nil {
 			return err
 		}
@@ -83,8 +88,8 @@ func (h *ForceChangeSecondaryPasswordHandler) ServeHTTP(w http.ResponseWriter, r
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			err = ForceChangeSecondaryPasswordSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

@@ -5,10 +5,12 @@
 package hook
 
 import (
+	context "context"
 	url "net/url"
 	reflect "reflect"
 
 	event "github.com/authgear/authgear-server/pkg/api/event"
+	rolesgroups "github.com/authgear/authgear-server/pkg/lib/rolesgroups"
 	accesscontrol "github.com/authgear/authgear-server/pkg/util/accesscontrol"
 	gomock "github.com/golang/mock/gomock"
 )
@@ -37,17 +39,17 @@ func (m *MockStandardAttributesServiceNoEvent) EXPECT() *MockStandardAttributesS
 }
 
 // UpdateStandardAttributes mocks base method.
-func (m *MockStandardAttributesServiceNoEvent) UpdateStandardAttributes(role accesscontrol.Role, userID string, stdAttrs map[string]interface{}) error {
+func (m *MockStandardAttributesServiceNoEvent) UpdateStandardAttributes(ctx context.Context, role accesscontrol.Role, userID string, stdAttrs map[string]interface{}) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateStandardAttributes", role, userID, stdAttrs)
+	ret := m.ctrl.Call(m, "UpdateStandardAttributes", ctx, role, userID, stdAttrs)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateStandardAttributes indicates an expected call of UpdateStandardAttributes.
-func (mr *MockStandardAttributesServiceNoEventMockRecorder) UpdateStandardAttributes(role, userID, stdAttrs interface{}) *gomock.Call {
+func (mr *MockStandardAttributesServiceNoEventMockRecorder) UpdateStandardAttributes(ctx, role, userID, stdAttrs interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStandardAttributes", reflect.TypeOf((*MockStandardAttributesServiceNoEvent)(nil).UpdateStandardAttributes), role, userID, stdAttrs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStandardAttributes", reflect.TypeOf((*MockStandardAttributesServiceNoEvent)(nil).UpdateStandardAttributes), ctx, role, userID, stdAttrs)
 }
 
 // MockCustomAttributesServiceNoEvent is a mock of CustomAttributesServiceNoEvent interface.
@@ -74,17 +76,68 @@ func (m *MockCustomAttributesServiceNoEvent) EXPECT() *MockCustomAttributesServi
 }
 
 // UpdateAllCustomAttributes mocks base method.
-func (m *MockCustomAttributesServiceNoEvent) UpdateAllCustomAttributes(role accesscontrol.Role, userID string, reprForm map[string]interface{}) error {
+func (m *MockCustomAttributesServiceNoEvent) UpdateAllCustomAttributes(ctx context.Context, role accesscontrol.Role, userID string, reprForm map[string]interface{}) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateAllCustomAttributes", role, userID, reprForm)
+	ret := m.ctrl.Call(m, "UpdateAllCustomAttributes", ctx, role, userID, reprForm)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateAllCustomAttributes indicates an expected call of UpdateAllCustomAttributes.
-func (mr *MockCustomAttributesServiceNoEventMockRecorder) UpdateAllCustomAttributes(role, userID, reprForm interface{}) *gomock.Call {
+func (mr *MockCustomAttributesServiceNoEventMockRecorder) UpdateAllCustomAttributes(ctx, role, userID, reprForm interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAllCustomAttributes", reflect.TypeOf((*MockCustomAttributesServiceNoEvent)(nil).UpdateAllCustomAttributes), role, userID, reprForm)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAllCustomAttributes", reflect.TypeOf((*MockCustomAttributesServiceNoEvent)(nil).UpdateAllCustomAttributes), ctx, role, userID, reprForm)
+}
+
+// MockRolesAndGroupsServiceNoEvent is a mock of RolesAndGroupsServiceNoEvent interface.
+type MockRolesAndGroupsServiceNoEvent struct {
+	ctrl     *gomock.Controller
+	recorder *MockRolesAndGroupsServiceNoEventMockRecorder
+}
+
+// MockRolesAndGroupsServiceNoEventMockRecorder is the mock recorder for MockRolesAndGroupsServiceNoEvent.
+type MockRolesAndGroupsServiceNoEventMockRecorder struct {
+	mock *MockRolesAndGroupsServiceNoEvent
+}
+
+// NewMockRolesAndGroupsServiceNoEvent creates a new mock instance.
+func NewMockRolesAndGroupsServiceNoEvent(ctrl *gomock.Controller) *MockRolesAndGroupsServiceNoEvent {
+	mock := &MockRolesAndGroupsServiceNoEvent{ctrl: ctrl}
+	mock.recorder = &MockRolesAndGroupsServiceNoEventMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockRolesAndGroupsServiceNoEvent) EXPECT() *MockRolesAndGroupsServiceNoEventMockRecorder {
+	return m.recorder
+}
+
+// ResetUserGroup mocks base method.
+func (m *MockRolesAndGroupsServiceNoEvent) ResetUserGroup(ctx context.Context, options *rolesgroups.ResetUserGroupOptions) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetUserGroup", ctx, options)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetUserGroup indicates an expected call of ResetUserGroup.
+func (mr *MockRolesAndGroupsServiceNoEventMockRecorder) ResetUserGroup(ctx, options interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetUserGroup", reflect.TypeOf((*MockRolesAndGroupsServiceNoEvent)(nil).ResetUserGroup), ctx, options)
+}
+
+// ResetUserRole mocks base method.
+func (m *MockRolesAndGroupsServiceNoEvent) ResetUserRole(ctx context.Context, options *rolesgroups.ResetUserRoleOptions) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetUserRole", ctx, options)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetUserRole indicates an expected call of ResetUserRole.
+func (mr *MockRolesAndGroupsServiceNoEventMockRecorder) ResetUserRole(ctx, options interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetUserRole", reflect.TypeOf((*MockRolesAndGroupsServiceNoEvent)(nil).ResetUserRole), ctx, options)
 }
 
 // MockEventWebHook is a mock of EventWebHook interface.
@@ -111,32 +164,32 @@ func (m *MockEventWebHook) EXPECT() *MockEventWebHookMockRecorder {
 }
 
 // DeliverBlockingEvent mocks base method.
-func (m *MockEventWebHook) DeliverBlockingEvent(u *url.URL, e *event.Event) (*event.HookResponse, error) {
+func (m *MockEventWebHook) DeliverBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) (*event.HookResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeliverBlockingEvent", u, e)
+	ret := m.ctrl.Call(m, "DeliverBlockingEvent", ctx, u, e)
 	ret0, _ := ret[0].(*event.HookResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeliverBlockingEvent indicates an expected call of DeliverBlockingEvent.
-func (mr *MockEventWebHookMockRecorder) DeliverBlockingEvent(u, e interface{}) *gomock.Call {
+func (mr *MockEventWebHookMockRecorder) DeliverBlockingEvent(ctx, u, e interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverBlockingEvent", reflect.TypeOf((*MockEventWebHook)(nil).DeliverBlockingEvent), u, e)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverBlockingEvent", reflect.TypeOf((*MockEventWebHook)(nil).DeliverBlockingEvent), ctx, u, e)
 }
 
 // DeliverNonBlockingEvent mocks base method.
-func (m *MockEventWebHook) DeliverNonBlockingEvent(u *url.URL, e *event.Event) error {
+func (m *MockEventWebHook) DeliverNonBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeliverNonBlockingEvent", u, e)
+	ret := m.ctrl.Call(m, "DeliverNonBlockingEvent", ctx, u, e)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeliverNonBlockingEvent indicates an expected call of DeliverNonBlockingEvent.
-func (mr *MockEventWebHookMockRecorder) DeliverNonBlockingEvent(u, e interface{}) *gomock.Call {
+func (mr *MockEventWebHookMockRecorder) DeliverNonBlockingEvent(ctx, u, e interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverNonBlockingEvent", reflect.TypeOf((*MockEventWebHook)(nil).DeliverNonBlockingEvent), u, e)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverNonBlockingEvent", reflect.TypeOf((*MockEventWebHook)(nil).DeliverNonBlockingEvent), ctx, u, e)
 }
 
 // SupportURL mocks base method.
@@ -177,32 +230,32 @@ func (m *MockEventDenoHook) EXPECT() *MockEventDenoHookMockRecorder {
 }
 
 // DeliverBlockingEvent mocks base method.
-func (m *MockEventDenoHook) DeliverBlockingEvent(u *url.URL, e *event.Event) (*event.HookResponse, error) {
+func (m *MockEventDenoHook) DeliverBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) (*event.HookResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeliverBlockingEvent", u, e)
+	ret := m.ctrl.Call(m, "DeliverBlockingEvent", ctx, u, e)
 	ret0, _ := ret[0].(*event.HookResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DeliverBlockingEvent indicates an expected call of DeliverBlockingEvent.
-func (mr *MockEventDenoHookMockRecorder) DeliverBlockingEvent(u, e interface{}) *gomock.Call {
+func (mr *MockEventDenoHookMockRecorder) DeliverBlockingEvent(ctx, u, e interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverBlockingEvent", reflect.TypeOf((*MockEventDenoHook)(nil).DeliverBlockingEvent), u, e)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverBlockingEvent", reflect.TypeOf((*MockEventDenoHook)(nil).DeliverBlockingEvent), ctx, u, e)
 }
 
 // DeliverNonBlockingEvent mocks base method.
-func (m *MockEventDenoHook) DeliverNonBlockingEvent(u *url.URL, e *event.Event) error {
+func (m *MockEventDenoHook) DeliverNonBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeliverNonBlockingEvent", u, e)
+	ret := m.ctrl.Call(m, "DeliverNonBlockingEvent", ctx, u, e)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeliverNonBlockingEvent indicates an expected call of DeliverNonBlockingEvent.
-func (mr *MockEventDenoHookMockRecorder) DeliverNonBlockingEvent(u, e interface{}) *gomock.Call {
+func (mr *MockEventDenoHookMockRecorder) DeliverNonBlockingEvent(ctx, u, e interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverNonBlockingEvent", reflect.TypeOf((*MockEventDenoHook)(nil).DeliverNonBlockingEvent), u, e)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverNonBlockingEvent", reflect.TypeOf((*MockEventDenoHook)(nil).DeliverNonBlockingEvent), ctx, u, e)
 }
 
 // SupportURL mocks base method.

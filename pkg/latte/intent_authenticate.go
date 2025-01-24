@@ -6,6 +6,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/workflow"
+	"github.com/authgear/authgear-server/pkg/util/stringutil"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
@@ -51,13 +52,13 @@ func (i *IntentAuthenticate) ReactTo(ctx context.Context, deps *workflow.Depende
 		spec := &identity.Spec{
 			Type: model.IdentityTypeLoginID,
 			LoginID: &identity.LoginIDSpec{
-				Value: loginID,
+				Value: stringutil.NewUserInputString(loginID),
 			},
 		}
 
 		// TODO: account enumeration? although need OTP to proceed, login/signup is indicated in workflow data.
 
-		exactMatch, _, err := deps.Identities.SearchBySpec(spec)
+		exactMatch, _, err := deps.Identities.SearchBySpec(ctx, spec)
 		if err != nil {
 			return nil, err
 		}

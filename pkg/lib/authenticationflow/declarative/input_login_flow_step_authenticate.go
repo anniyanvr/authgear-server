@@ -13,15 +13,22 @@ import (
 )
 
 type InputSchemaLoginFlowStepAuthenticate struct {
-	JSONPointer        jsonpointer.T
-	Options            []AuthenticateOption
-	DeviceTokenEnabled bool
+	JSONPointer               jsonpointer.T
+	FlowRootObject            config.AuthenticationFlowObject
+	Options                   []AuthenticateOption
+	DeviceTokenEnabled        bool
+	ShouldBypassBotProtection bool
+	BotProtectionCfg          *config.BotProtectionConfig
 }
 
 var _ authflow.InputSchema = &InputSchemaLoginFlowStepAuthenticate{}
 
 func (i *InputSchemaLoginFlowStepAuthenticate) GetJSONPointer() jsonpointer.T {
 	return i.JSONPointer
+}
+
+func (i *InputSchemaLoginFlowStepAuthenticate) GetFlowRootObject() config.AuthenticationFlowObject {
+	return i.FlowRootObject
 }
 
 func (i *InputSchemaLoginFlowStepAuthenticate) SchemaBuilder() validation.SchemaBuilder {
@@ -46,6 +53,11 @@ func (i *InputSchemaLoginFlowStepAuthenticate) SchemaBuilder() validation.Schema
 				Const(index),
 			)
 		}
+		requireBotProtection := func() {
+			required = append(required, "bot_protection")
+			b.Properties().Property("bot_protection", NewBotProtectionBodySchemaBuilder(i.BotProtectionCfg))
+
+		}
 		mayRequireChannel := func() {
 			if len(option.Channels) > 1 {
 				required = append(required, "channel")
@@ -55,10 +67,13 @@ func (i *InputSchemaLoginFlowStepAuthenticate) SchemaBuilder() validation.Schema
 				)
 			}
 		}
-
 		setRequiredAndAppendOneOf := func() {
 			b.Required(required...)
 			oneOf = append(oneOf, b)
+		}
+
+		if !i.ShouldBypassBotProtection && i.BotProtectionCfg != nil && option.isBotProtectionRequired() {
+			requireBotProtection()
 		}
 
 		switch option.Authentication {
@@ -134,6 +149,7 @@ type InputLoginFlowStepAuthenticate struct {
 	RecoveryCode       string                                  `json:"recovery_code,omitempty"`
 	Index              int                                     `json:"index,omitempty"`
 	Channel            model.AuthenticatorOOBChannel           `json:"channel,omitempty"`
+	BotProtection      *InputTakeBotProtectionBody             `json:"bot_protection,omitempty"`
 }
 
 var _ authflow.Input = &InputLoginFlowStepAuthenticate{}
@@ -144,6 +160,7 @@ var _ inputTakeTOTP = &InputLoginFlowStepAuthenticate{}
 var _ inputTakeRecoveryCode = &InputLoginFlowStepAuthenticate{}
 var _ inputTakeAuthenticationOptionIndex = &InputLoginFlowStepAuthenticate{}
 var _ inputTakeOOBOTPChannel = &InputLoginFlowStepAuthenticate{}
+var _ inputTakeBotProtection = &InputLoginFlowStepAuthenticate{}
 
 func (*InputLoginFlowStepAuthenticate) Input() {}
 
@@ -173,4 +190,22 @@ func (i *InputLoginFlowStepAuthenticate) GetIndex() int {
 
 func (i *InputLoginFlowStepAuthenticate) GetChannel() model.AuthenticatorOOBChannel {
 	return i.Channel
+}
+
+func (i *InputLoginFlowStepAuthenticate) GetBotProtectionProvider() *InputTakeBotProtectionBody {
+	return i.BotProtection
+}
+
+func (i *InputLoginFlowStepAuthenticate) GetBotProtectionProviderType() config.BotProtectionProviderType {
+	if i.BotProtection == nil {
+		return ""
+	}
+	return i.BotProtection.Type
+}
+
+func (i *InputLoginFlowStepAuthenticate) GetBotProtectionProviderResponse() string {
+	if i.BotProtection == nil {
+		return ""
+	}
+	return i.BotProtection.Response
 }

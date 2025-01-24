@@ -34,10 +34,31 @@ func (i *IntentLookupIdentityOAuth) MilestoneIdentificationMethod() config.Authe
 
 func (i *IntentLookupIdentityOAuth) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
 	if len(flows.Nearest.Nodes) == 0 {
-		oauthOptions := NewIdentificationOptionsOAuth(deps.Config.Identity.OAuth, deps.FeatureConfig.Identity.OAuth.Providers)
+		flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+		if err != nil {
+			return nil, err
+		}
+		current, err := authflow.FlowObject(flowRootObject, i.JSONPointer)
+		if err != nil {
+			return nil, err
+		}
+		var authflowCfg *config.AuthenticationFlowBotProtection = nil
+		if currentBranch, ok := current.(config.AuthenticationFlowObjectBotProtectionConfigProvider); ok {
+			authflowCfg = currentBranch.GetBotProtectionConfig()
+		}
+
+		oauthOptions := NewIdentificationOptionsOAuth(deps.Config.Identity.OAuth, deps.FeatureConfig.Identity.OAuth.Providers, authflowCfg, deps.Config.BotProtection)
+		isBotProtectionRequired, err := IsBotProtectionRequired(ctx, deps, flows, i.JSONPointer)
+		if err != nil {
+			return nil, err
+		}
+
 		return &InputSchemaTakeOAuthAuthorizationRequest{
-			JSONPointer:  i.JSONPointer,
-			OAuthOptions: oauthOptions,
+			FlowRootObject:          flowRootObject,
+			JSONPointer:             i.JSONPointer,
+			OAuthOptions:            oauthOptions,
+			IsBotProtectionRequired: isBotProtectionRequired,
+			BotProtectionCfg:        deps.Config.BotProtection,
 		}, nil
 	}
 	return nil, authflow.ErrEOF
@@ -47,6 +68,12 @@ func (i *IntentLookupIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.
 	if len(flows.Nearest.Nodes) == 0 {
 		var inputOAuth inputTakeOAuthAuthorizationRequest
 		if authflow.AsInput(input, &inputOAuth) {
+			var bpSpecialErr error
+			bpSpecialErr, err := HandleBotProtection(ctx, deps, flows, i.JSONPointer, input)
+			if err != nil {
+				return nil, err
+			}
+
 			alias := inputOAuth.GetOAuthAlias()
 			redirectURI := inputOAuth.GetOAuthRedirectURI()
 			responseMode := inputOAuth.GetOAuthResponseMode()
@@ -64,7 +91,7 @@ func (i *IntentLookupIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.
 				Alias:          alias,
 				RedirectURI:    redirectURI,
 				ResponseMode:   responseMode,
-			}), nil
+			}), bpSpecialErr
 		}
 	}
 	return nil, authflow.ErrIncompatibleInput

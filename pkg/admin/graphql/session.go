@@ -1,6 +1,8 @@
 package graphql
 
 import (
+	"context"
+
 	"github.com/graphql-go/graphql"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -56,11 +58,14 @@ var nodeSession = node(
 			"displayName": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.String),
 			},
+			"userAgent": &graphql.Field{
+				Type: graphql.String,
+			},
 		},
 	}),
 	&model.Session{},
-	func(ctx *Context, id string) (interface{}, error) {
-		s, err := ctx.SessionFacade.Get(id)
+	func(ctx context.Context, gqlCtx *Context, id string) (interface{}, error) {
+		s, err := gqlCtx.SessionFacade.Get(ctx, id)
 		if err != nil {
 			return nil, err
 		}

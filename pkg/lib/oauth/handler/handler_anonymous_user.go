@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/anonymous"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/dpop"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	interactionintents "github.com/authgear/authgear-server/pkg/lib/interaction/intents"
 	"github.com/authgear/authgear-server/pkg/lib/interaction/nodes"
@@ -48,15 +50,15 @@ func NewAnonymousUserHandlerLogger(lf *log.Factory) AnonymousUserHandlerLogger {
 }
 
 type UserProvider interface {
-	Get(id string, role accesscontrol.Role) (*model.User, error)
+	Get(ctx context.Context, id string, role accesscontrol.Role) (*model.User, error)
 }
 
 type AnonymousIdentityProvider interface {
-	List(userID string) ([]*identity.Anonymous, error)
+	List(ctx context.Context, userID string) ([]*identity.Anonymous, error)
 }
 
 type PromotionCodeStore interface {
-	CreatePromotionCode(code *anonymous.PromotionCode) error
+	CreatePromotionCode(ctx context.Context, code *anonymous.PromotionCode) error
 }
 
 type CookiesGetter interface {
@@ -85,6 +87,7 @@ type AnonymousUserHandler struct {
 
 // SignupAnonymousUser return token response or api errors
 func (h *AnonymousUserHandler) SignupAnonymousUser(
+	ctx context.Context,
 	req *http.Request,
 	clientID string,
 	sessionType WebSessionType,
@@ -92,20 +95,21 @@ func (h *AnonymousUserHandler) SignupAnonymousUser(
 ) (*SignupAnonymousUserResult, error) {
 	switch sessionType {
 	case WebSessionTypeCookie:
-		return h.signupAnonymousUserWithCookieSessionType(req)
+		return h.signupAnonymousUserWithCookieSessionType(ctx, req)
 	case WebSessionTypeRefreshToken:
-		return h.signupAnonymousUserWithRefreshTokenSessionType(clientID, refreshToken)
+		return h.signupAnonymousUserWithRefreshTokenSessionType(ctx, req, clientID, refreshToken)
 	default:
 		panic("unknown web session type")
 	}
 }
 
 func (h *AnonymousUserHandler) signupAnonymousUserWithCookieSessionType(
+	ctx context.Context,
 	req *http.Request,
 ) (*SignupAnonymousUserResult, error) {
-	s := session.GetSession(req.Context())
+	s := session.GetSession(ctx)
 	if s != nil && s.SessionType() == session.TypeIdentityProvider {
-		user, err := h.UserProvider.Get(s.GetAuthenticationInfo().UserID, accesscontrol.RoleGreatest)
+		user, err := h.UserProvider.Get(ctx, s.GetAuthenticationInfo().UserID, accesscontrol.RoleGreatest)
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +120,7 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithCookieSessionType(
 		return nil, ErrLoggedInAsNormalUser
 	}
 
-	graph, err := h.runSignupAnonymousUserGraph(false)
+	graph, err := h.runSignupAnonymousUserGraph(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +138,12 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithCookieSessionType(
 }
 
 func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
+	ctx context.Context,
+	req *http.Request,
 	clientID string,
 	refreshToken string,
 ) (*SignupAnonymousUserResult, error) {
-	client := h.OAuthClientResolver.ResolveClient(clientID)
+	ctx, client := resolveClient(ctx, h.OAuthClientResolver, clientID)
 	if client == nil {
 		// "invalid_client"
 		return nil, apierrors.NewInvalid("invalid client ID")
@@ -149,17 +155,17 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
 	}
 
 	// TODO(oauth): allow specifying scopes for anonymous user signup
-	scopes := []string{"openid", oauth.FullAccessScope}
+	scopes := []string{"openid", oauth.OfflineAccess, oauth.FullAccessScope}
 
 	if refreshToken != "" {
-		authz, grant, err := h.TokenService.ParseRefreshToken(refreshToken)
+		authz, grant, refreshTokenHash, err := h.TokenService.ParseRefreshToken(ctx, refreshToken)
 		if errors.Is(err, ErrInvalidRefreshToken) {
 			return nil, apierrors.NewInvalid("invalid refresh token")
 		} else if err != nil {
 			return nil, err
 		}
 
-		user, err := h.UserProvider.Get(authz.UserID, accesscontrol.RoleGreatest)
+		user, err := h.UserProvider.Get(ctx, authz.UserID, accesscontrol.RoleGreatest)
 		if err != nil {
 			return nil, err
 		}
@@ -168,8 +174,15 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
 		}
 
 		resp := protocol.TokenResponse{}
-		err = h.TokenService.IssueAccessGrant(client, scopes, authz.ID, authz.UserID,
-			grant.ID, oauth.GrantSessionKindOffline, resp)
+		issueAccessGrantOptions := oauth.IssueAccessGrantOptions{
+			ClientConfig:       client,
+			Scopes:             scopes,
+			AuthorizationID:    authz.ID,
+			AuthenticationInfo: grant.GetAuthenticationInfo(),
+			SessionLike:        grant,
+			RefreshTokenHash:   refreshTokenHash,
+		}
+		err = h.TokenService.IssueAccessGrant(ctx, issueAccessGrantOptions, resp)
 		if err != nil {
 			return nil, err
 		}
@@ -179,7 +192,7 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
 		}, nil
 	}
 
-	graph, err := h.runSignupAnonymousUserGraph(true)
+	graph, err := h.runSignupAnonymousUserGraph(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +203,7 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
 	}
 
 	authz, err := h.Authorizations.CheckAndGrant(
+		ctx,
 		client.ClientID,
 		info.UserID,
 		scopes,
@@ -197,6 +211,8 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
 	if err != nil {
 		return nil, err
 	}
+
+	dpopJKT, _ := dpop.GetDPoPProofJKT(ctx)
 
 	resp := protocol.TokenResponse{}
 	// SSOEnabled is false for refresh tokens that are granted by anonymous login
@@ -206,14 +222,22 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
 		AuthenticationInfo: info,
 		DeviceInfo:         nil,
 		SSOEnabled:         false,
+		DPoPJKT:            dpopJKT,
 	}
-	offlineGrant, err := h.TokenService.IssueOfflineGrant(client, opts, resp)
+	offlineGrant, tokenHash, err := h.TokenService.IssueOfflineGrant(ctx, client, opts, resp)
 	if err != nil {
 		return nil, err
 	}
 
-	err = h.TokenService.IssueAccessGrant(client, scopes, authz.ID, authz.UserID,
-		offlineGrant.ID, oauth.GrantSessionKindOffline, resp)
+	issueAccessGrantOptions := oauth.IssueAccessGrantOptions{
+		ClientConfig:       client,
+		Scopes:             scopes,
+		AuthorizationID:    authz.ID,
+		AuthenticationInfo: info,
+		SessionLike:        offlineGrant,
+		RefreshTokenHash:   tokenHash,
+	}
+	err = h.TokenService.IssueAccessGrant(ctx, issueAccessGrantOptions, resp)
 	if err != nil {
 		return nil, err
 	}
@@ -224,22 +248,23 @@ func (h *AnonymousUserHandler) signupAnonymousUserWithRefreshTokenSessionType(
 }
 
 func (h *AnonymousUserHandler) runSignupAnonymousUserGraph(
+	ctx context.Context,
 	suppressIDPSessionCookie bool,
 ) (*interaction.Graph, error) {
 	var graph *interaction.Graph
-	err := h.Graphs.DryRun(interaction.ContextValues{}, func(ctx *interaction.Context) (*interaction.Graph, error) {
+	err := h.Graphs.DryRun(ctx, interaction.ContextValues{}, func(ctx context.Context, interactionCtx *interaction.Context) (*interaction.Graph, error) {
 		var err error
 		intent := &interactionintents.IntentAuthenticate{
 			Kind:                     interactionintents.IntentAuthenticateKindLogin,
 			SuppressIDPSessionCookie: suppressIDPSessionCookie,
 		}
-		graph, err = h.Graphs.NewGraph(ctx, intent)
+		graph, err = h.Graphs.NewGraph(ctx, interactionCtx, intent)
 		if err != nil {
 			return nil, err
 		}
 
 		var edges []interaction.Edge
-		graph, edges, err = h.Graphs.Accept(ctx, graph, &anonymousSignupWithoutKeyInput{})
+		graph, edges, err = h.Graphs.Accept(ctx, interactionCtx, graph, &anonymousSignupWithoutKeyInput{})
 		if len(edges) != 0 {
 			return nil, errors.New("interaction not completed for anonymous users")
 		} else if err != nil {
@@ -260,7 +285,7 @@ func (h *AnonymousUserHandler) runSignupAnonymousUserGraph(
 		return nil, err
 	}
 
-	err = h.Graphs.Run(interaction.ContextValues{}, graph)
+	err = h.Graphs.Run(ctx, interaction.ContextValues{}, graph)
 	if apierrors.IsAPIError(err) {
 		return nil, err
 	} else if err != nil {
@@ -271,6 +296,7 @@ func (h *AnonymousUserHandler) runSignupAnonymousUserGraph(
 }
 
 func (h *AnonymousUserHandler) IssuePromotionCode(
+	ctx context.Context,
 	req *http.Request,
 	sessionType WebSessionType,
 	refreshToken string,
@@ -282,7 +308,7 @@ func (h *AnonymousUserHandler) IssuePromotionCode(
 			err = ErrUnauthenticated
 			return
 		}
-		authz, _, e := h.TokenService.ParseRefreshToken(refreshToken)
+		authz, _, _, e := h.TokenService.ParseRefreshToken(ctx, refreshToken)
 		var oauthError *protocol.OAuthProtocolError
 		if errors.As(e, &oauthError) {
 			err = apierrors.NewForbidden(oauthError.Error())
@@ -300,7 +326,7 @@ func (h *AnonymousUserHandler) IssuePromotionCode(
 		appID = authz.AppID
 		userID = authz.UserID
 	case WebSessionTypeCookie:
-		s := session.GetSession(req.Context())
+		s := session.GetSession(ctx)
 		if s != nil && s.SessionType() == session.TypeIdentityProvider {
 			appID = string(h.AppID)
 			userID = s.GetAuthenticationInfo().UserID
@@ -312,7 +338,7 @@ func (h *AnonymousUserHandler) IssuePromotionCode(
 		panic("unknown web session type")
 	}
 
-	user, err := h.UserProvider.Get(userID, accesscontrol.RoleGreatest)
+	user, err := h.UserProvider.Get(ctx, userID, accesscontrol.RoleGreatest)
 	if err != nil {
 		return
 	}
@@ -321,7 +347,7 @@ func (h *AnonymousUserHandler) IssuePromotionCode(
 		return
 	}
 
-	identities, err := h.AnonymousIdentities.List(userID)
+	identities, err := h.AnonymousIdentities.List(ctx, userID)
 	if err != nil {
 		return
 	}
@@ -339,7 +365,7 @@ func (h *AnonymousUserHandler) IssuePromotionCode(
 		ExpireAt:   now.Add(PromotionCodeDuration),
 		CodeHash:   anonymous.HashPromotionCode(c),
 	}
-	err = h.PromotionCodes.CreatePromotionCode(cObj)
+	err = h.PromotionCodes.CreatePromotionCode(ctx, cObj)
 	if err != nil {
 		return
 	}

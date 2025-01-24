@@ -1,0 +1,19 @@
+{{ define "authflowv2/__device_token_checkbox.html" }}
+<div class="{{ $.Classname }} flex flex-row items-center gap-x-2.5">
+  <div class="checkbox">
+    <input
+      {{ if $.Form }}
+      form="{{ $.Form }}"
+      {{ end }}
+      id="device-token"
+      type="checkbox"
+      name="x_device_token"
+      value="true"
+    />
+    <label class="checkbox__label" for="device-token">
+      <span class="checkbox__icon material-icons">check</span>
+    </label>
+  </div>
+  <label class="body-text--md" for="device-token">{{ include "v2.component.device-token-checkbox.default.label" nil }}</label>
+</div>
+{{ end }}

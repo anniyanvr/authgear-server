@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 
@@ -19,7 +20,7 @@ type WebAppURLsProvider interface {
 }
 
 type LogoutSessionManager interface {
-	Logout(session.Session, http.ResponseWriter) error
+	Logout(ctx context.Context, sessionBase session.SessionBase, w http.ResponseWriter) ([]session.ListableSession, error)
 }
 
 type CookieManager interface {
@@ -35,11 +36,12 @@ type EndSessionHandler struct {
 	Cookies          CookieManager
 }
 
-func (h *EndSessionHandler) Handle(s session.Session, req protocol.EndSessionRequest, r *http.Request, rw http.ResponseWriter) error {
+func (h *EndSessionHandler) Handle(ctx context.Context, s session.ResolvedSession, req protocol.EndSessionRequest, r *http.Request, rw http.ResponseWriter) error {
 	sameSiteStrict, err := h.Cookies.GetCookie(r, h.SessionCookieDef.SameSiteStrictDef)
 	if s != nil && err == nil && sameSiteStrict.Value == "true" {
 		// Logout directly.
-		err := h.SessionManager.Logout(s, rw)
+		// TODO(SAML): Logout affected saml service providers
+		_, err := h.SessionManager.Logout(ctx, s, rw)
 		if err != nil {
 			return err
 		}

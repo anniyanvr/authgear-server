@@ -1,318 +1,265 @@
 package otp
 
 import (
+	"context"
 	neturl "net/url"
+	"path/filepath"
 
-	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/infra/mail"
+	"github.com/authgear/authgear-server/pkg/lib/infra/sms"
 	"github.com/authgear/authgear-server/pkg/lib/infra/whatsapp"
-	"github.com/authgear/authgear-server/pkg/lib/messaging"
 	"github.com/authgear/authgear-server/pkg/lib/translation"
-	"github.com/authgear/authgear-server/pkg/util/template"
 )
 
+type AdditionalContext struct {
+	HasPassword bool
+}
+
 type SendOptions struct {
-	OTP               string
-	AdditionalContext any
+	Channel                 model.AuthenticatorOOBChannel
+	Target                  string
+	Form                    Form
+	Type                    translation.MessageType
+	OTP                     string
+	AdditionalContext       *AdditionalContext
+	IsAdminAPIResetPassword bool
 }
 
 type EndpointsProvider interface {
-	BaseURL() *neturl.URL
+	Origin() *neturl.URL
 	LoginLinkVerificationEndpointURL() *neturl.URL
-	ResetPasswordEndpointURL(uiImpl config.UIImplementation) *neturl.URL
+	ResetPasswordEndpointURL() *neturl.URL
 }
 
 type TranslationService interface {
-	EmailMessageData(msg *translation.MessageSpec, args interface{}) (*translation.EmailMessageData, error)
-	SMSMessageData(msg *translation.MessageSpec, args interface{}) (*translation.SMSMessageData, error)
-	WhatsappMessageData(language string, msg *translation.MessageSpec, args interface{}) (*translation.WhatsappMessageData, error)
+	EmailMessageData(ctx context.Context, msg *translation.MessageSpec, variables *translation.PartialTemplateVariables) (*translation.EmailMessageData, error)
+	SMSMessageData(ctx context.Context, msg *translation.MessageSpec, variables *translation.PartialTemplateVariables) (*translation.SMSMessageData, error)
+	WhatsappMessageData(ctx context.Context, language string, msg *translation.MessageSpec, variables *translation.PartialTemplateVariables) (*translation.WhatsappMessageData, error)
 }
 
 type Sender interface {
-	PrepareEmail(email string, msgType nonblocking.MessageType) (*messaging.EmailMessage, error)
-	PrepareSMS(phoneNumber string, msgType nonblocking.MessageType) (*messaging.SMSMessage, error)
-	PrepareWhatsapp(phoneNumber string, msgType nonblocking.MessageType) (*messaging.WhatsappMessage, error)
-}
-
-type WhatsappService interface {
-	ResolveOTPTemplateLanguage() (string, error)
-	PrepareOTPTemplate(language string, text string, code string) (*whatsapp.PreparedOTPTemplate, error)
-}
-
-type PreparedMessage struct {
-	email    *messaging.EmailMessage
-	sms      *messaging.SMSMessage
-	whatsapp *messaging.WhatsappMessage
-	spec     *translation.MessageSpec
-	form     Form
-	msgType  nonblocking.MessageType
-}
-
-func (m *PreparedMessage) Close() {
-	if m.email != nil {
-		m.email.Close()
-	}
-	if m.sms != nil {
-		m.sms.Close()
-	}
-	if m.whatsapp != nil {
-		m.whatsapp.Close()
-	}
+	SendEmailInNewGoroutine(ctx context.Context, msgType translation.MessageType, opts *mail.SendOptions) error
+	SendSMSInNewGoroutine(ctx context.Context, msgType translation.MessageType, opts *sms.SendOptions) error
+	SendWhatsappImmediately(ctx context.Context, msgType translation.MessageType, opts *whatsapp.SendAuthenticationOTPOptions) error
 }
 
 type MessageSender struct {
-	Translation     TranslationService
-	Endpoints       EndpointsProvider
-	Sender          Sender
-	WhatsappService WhatsappService
-	UIConfig        *config.UIConfig
+	AppID       config.AppID
+	Translation TranslationService
+	Endpoints   EndpointsProvider
+	Sender      Sender
 }
 
-func (s *MessageSender) setupTemplateContext(msg *PreparedMessage, opts SendOptions) (any, error) {
-	email := ""
-	if msg.email != nil {
-		email = msg.email.Recipient
-	}
+var FromAdminAPIQueryKey = "x_from_admin_api"
 
-	phone := ""
-	if msg.sms != nil {
-		phone = msg.sms.To
-	}
-
+func (s *MessageSender) setupTemplateContext(msgType translation.MessageType, opts SendOptions) (*translation.PartialTemplateVariables, error) {
 	url := ""
-	if msg.form == FormLink {
+	if opts.Form == FormLink {
 		var linkURL *neturl.URL
-		switch msg.msgType {
-		case nonblocking.MessageTypeSetupPrimaryOOB,
-			nonblocking.MessageTypeSetupSecondaryOOB,
-			nonblocking.MessageTypeAuthenticatePrimaryOOB,
-			nonblocking.MessageTypeAuthenticateSecondaryOOB:
+		switch msgType {
+		case translation.MessageTypeSetupPrimaryOOB,
+			translation.MessageTypeSetupSecondaryOOB,
+			translation.MessageTypeAuthenticatePrimaryOOB,
+			translation.MessageTypeAuthenticateSecondaryOOB:
 
 			linkURL = s.Endpoints.LoginLinkVerificationEndpointURL()
 			query := linkURL.Query()
 			query.Set("code", opts.OTP)
 			linkURL.RawQuery = query.Encode()
 
-		case nonblocking.MessageTypeForgotPassword:
+		case translation.MessageTypeForgotPassword:
 
-			linkURL = s.Endpoints.ResetPasswordEndpointURL(s.UIConfig.Implementation)
+			linkURL = s.Endpoints.ResetPasswordEndpointURL()
 			query := linkURL.Query()
 			query.Set("code", opts.OTP)
+			if opts.IsAdminAPIResetPassword {
+				query.Set(FromAdminAPIQueryKey, "true")
+			}
 			linkURL.RawQuery = query.Encode()
 
 		default:
-			panic("otp: unexpected message type for link: " + msg.msgType)
+			panic("otp: unexpected message type for link: " + msgType)
 		}
 
 		url = linkURL.String()
 	}
 
-	ctx := make(map[string]any)
-	template.Embed(ctx, messageTemplateContext{
-		Email: email,
-		Phone: phone,
-		Code:  opts.OTP,
-		URL:   url,
-		Link:  url,
-		Host:  s.Endpoints.BaseURL().Host,
-	})
+	ctx := &translation.PartialTemplateVariables{
+		Code: opts.OTP,
+		URL:  url,
+		Link: url,
+		Host: s.Endpoints.Origin().Host,
+	}
+
+	switch opts.Channel {
+	case model.AuthenticatorOOBChannelEmail:
+		ctx.Email = opts.Target
+	case model.AuthenticatorOOBChannelSMS:
+		ctx.Phone = opts.Target
+	case model.AuthenticatorOOBChannelWhatsapp:
+		ctx.Phone = opts.Target
+	default:
+		panic("otp: unknown channel: " + opts.Channel)
+	}
+
 	if opts.AdditionalContext != nil {
-		template.Embed(ctx, opts.AdditionalContext)
+		ctx.HasPassword = opts.AdditionalContext.HasPassword
 	}
 
 	return ctx, nil
 }
 
-func (s *MessageSender) selectMessage(form Form, typ MessageType) (*translation.MessageSpec, nonblocking.MessageType) {
+func (s *MessageSender) selectMessage(form Form, typ translation.MessageType) *translation.MessageSpec {
 	var spec *translation.MessageSpec
-	var msgType nonblocking.MessageType
 	switch typ {
-	case MessageTypeVerification:
-		spec = messageVerification
-		msgType = nonblocking.MessageTypeVerification
-	case MessageTypeSetupPrimaryOOB:
+	case translation.MessageTypeVerification:
+		spec = translation.MessageVerification
+	case translation.MessageTypeSetupPrimaryOOB:
 		if form == FormLink {
-			spec = messageSetupPrimaryLoginLink
+			spec = translation.MessageSetupPrimaryLoginLink
 		} else {
-			spec = messageSetupPrimaryOOB
+			spec = translation.MessageSetupPrimaryOOB
 		}
-		msgType = nonblocking.MessageTypeSetupPrimaryOOB
-	case MessageTypeSetupSecondaryOOB:
+	case translation.MessageTypeSetupSecondaryOOB:
 		if form == FormLink {
-			spec = messageSetupSecondaryLoginLink
+			spec = translation.MessageSetupSecondaryLoginLink
 		} else {
-			spec = messageSetupSecondaryOOB
+			spec = translation.MessageSetupSecondaryOOB
 		}
-		msgType = nonblocking.MessageTypeSetupSecondaryOOB
-	case MessageTypeAuthenticatePrimaryOOB:
+	case translation.MessageTypeAuthenticatePrimaryOOB:
 		if form == FormLink {
-			spec = messageAuthenticatePrimaryLoginLink
+			spec = translation.MessageAuthenticatePrimaryLoginLink
 		} else {
-			spec = messageAuthenticatePrimaryOOB
+			spec = translation.MessageAuthenticatePrimaryOOB
 		}
-		msgType = nonblocking.MessageTypeAuthenticatePrimaryOOB
-	case MessageTypeAuthenticateSecondaryOOB:
+	case translation.MessageTypeAuthenticateSecondaryOOB:
 		if form == FormLink {
-			spec = messageAuthenticateSecondaryLoginLink
+			spec = translation.MessageAuthenticateSecondaryLoginLink
 		} else {
-			spec = messageAuthenticateSecondaryOOB
+			spec = translation.MessageAuthenticateSecondaryOOB
 		}
-		msgType = nonblocking.MessageTypeAuthenticateSecondaryOOB
-	case MessageTypeForgotPassword:
+	case translation.MessageTypeForgotPassword:
 		if form == FormLink {
-			spec = messageForgotPasswordLink
+			spec = translation.MessageForgotPasswordLink
 		} else {
-			spec = messageForgotPasswordOOB
+			spec = translation.MessageForgotPasswordOOB
 		}
-		msgType = nonblocking.MessageTypeForgotPassword
-	case MessageTypeWhatsappCode:
-		spec = messageWhatsappCode
-		msgType = nonblocking.MessageTypeWhatsappCode
+	case translation.MessageTypeWhatsappCode:
+		spec = translation.MessageWhatsappCode
 	default:
-		panic("otp: unknown message type: " + msgType)
+		panic("otp: unknown message type: " + typ)
 	}
 
-	return spec, msgType
+	return spec
 }
 
-func (s *MessageSender) Prepare(channel model.AuthenticatorOOBChannel, target string, form Form, typ MessageType) (*PreparedMessage, error) {
-	switch channel {
-	case model.AuthenticatorOOBChannelEmail:
-		return s.prepareEmail(target, form, typ)
-	case model.AuthenticatorOOBChannelSMS:
-		return s.prepareSMS(target, form, typ)
-	case model.AuthenticatorOOBChannelWhatsapp:
-		return s.prepareWhatsapp(target, form, typ)
-	default:
-		panic("otp: unknown channel: " + channel)
-	}
-}
+func (s *MessageSender) sendEmail(ctx context.Context, opts SendOptions) error {
+	spec := s.selectMessage(opts.Form, opts.Type)
+	msgType := spec.MessageType
 
-func (s *MessageSender) prepareEmail(email string, form Form, typ MessageType) (*PreparedMessage, error) {
-	spec, msgType := s.selectMessage(form, typ)
-
-	msg, err := s.Sender.PrepareEmail(email, msgType)
+	variables, err := s.setupTemplateContext(msgType, opts)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &PreparedMessage{
-		email:   msg,
-		spec:    spec,
-		form:    form,
-		msgType: msgType,
-	}, nil
-}
-
-func (s *MessageSender) prepareSMS(phoneNumber string, form Form, typ MessageType) (*PreparedMessage, error) {
-	spec, msgType := s.selectMessage(form, typ)
-
-	msg, err := s.Sender.PrepareSMS(phoneNumber, msgType)
+	data, err := s.Translation.EmailMessageData(ctx, spec, variables)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &PreparedMessage{
-		sms:     msg,
-		spec:    spec,
-		form:    form,
-		msgType: msgType,
-	}, nil
-}
+	mailSendOptions := &mail.SendOptions{
+		Sender:    data.Sender,
+		ReplyTo:   data.ReplyTo,
+		Subject:   data.Subject,
+		Recipient: opts.Target,
+		TextBody:  data.TextBody.String,
+		HTMLBody:  data.HTMLBody.String,
+	}
 
-func (s *MessageSender) prepareWhatsapp(phoneNumber string, form Form, typ MessageType) (*PreparedMessage, error) {
-	spec, msgType := s.selectMessage(form, typ)
-
-	msg, err := s.Sender.PrepareWhatsapp(phoneNumber, msgType)
+	err = s.Sender.SendEmailInNewGoroutine(ctx, msgType, mailSendOptions)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &PreparedMessage{
-		whatsapp: msg,
-		spec:     spec,
-		form:     form,
-		msgType:  msgType,
-	}, nil
-}
-
-func (s *MessageSender) Send(msg *PreparedMessage, opts SendOptions) error {
-	if msg.email != nil {
-		return s.sendEmail(msg, opts)
-	}
-	if msg.sms != nil {
-		return s.sendSMS(msg, opts)
-	}
-	if msg.whatsapp != nil {
-		return s.sendWhatsapp(msg, opts)
-	}
 	return nil
 }
 
-func (s *MessageSender) sendEmail(msg *PreparedMessage, opts SendOptions) error {
-	ctx, err := s.setupTemplateContext(msg, opts)
+func (s *MessageSender) sendSMS(ctx context.Context, opts SendOptions) error {
+	spec := s.selectMessage(opts.Form, opts.Type)
+	msgType := spec.MessageType
+
+	variables, err := s.setupTemplateContext(msgType, opts)
 	if err != nil {
 		return err
 	}
 
-	data, err := s.Translation.EmailMessageData(msg.spec, ctx)
+	data, err := s.Translation.SMSMessageData(ctx, spec, variables)
 	if err != nil {
 		return err
 	}
 
-	msg.email.Sender = data.Sender
-	msg.email.ReplyTo = data.ReplyTo
-	msg.email.Subject = data.Subject
-	msg.email.TextBody = data.TextBody
-	msg.email.HTMLBody = data.HTMLBody
+	smsSendOptions := &sms.SendOptions{
+		Sender:            data.Sender,
+		To:                opts.Target,
+		Body:              data.Body.String,
+		AppID:             string(s.AppID),
+		TemplateName:      filepath.Base(spec.SMSTemplate.Name),
+		LanguageTag:       data.Body.LanguageTag,
+		TemplateVariables: sms.NewTemplateVariablesFromPreparedTemplateVariables(data.PreparedTemplateVariables),
+	}
 
-	return msg.email.Send()
+	err = s.Sender.SendSMSInNewGoroutine(ctx, msgType, smsSendOptions)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (s *MessageSender) sendSMS(msg *PreparedMessage, opts SendOptions) error {
-	ctx, err := s.setupTemplateContext(msg, opts)
-	if err != nil {
-		return err
+func (s *MessageSender) sendWhatsapp(ctx context.Context, opts SendOptions) (err error) {
+
+	spec := s.selectMessage(opts.Form, opts.Type)
+	msgType := spec.MessageType
+
+	whatsappSendAuthenticationOTPOptions := &whatsapp.SendAuthenticationOTPOptions{
+		To:  opts.Target,
+		OTP: opts.OTP,
 	}
 
-	data, err := s.Translation.SMSMessageData(msg.spec, ctx)
+	err = s.Sender.SendWhatsappImmediately(ctx, msgType, whatsappSendAuthenticationOTPOptions)
 	if err != nil {
-		return err
+		return
 	}
 
-	msg.sms.Sender = data.Sender
-	msg.sms.Body = data.Body
-
-	return msg.sms.Send()
+	return
 }
 
-func (s *MessageSender) sendWhatsapp(msg *PreparedMessage, opts SendOptions) error {
-	ctx, err := s.setupTemplateContext(msg, opts)
-	if err != nil {
-		return err
+func (s *MessageSender) Send(ctx context.Context, opts SendOptions) error {
+	switch opts.Channel {
+	case model.AuthenticatorOOBChannelEmail:
+		err := s.sendEmail(ctx, opts)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	case model.AuthenticatorOOBChannelSMS:
+		err := s.sendSMS(ctx, opts)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	case model.AuthenticatorOOBChannelWhatsapp:
+		err := s.sendWhatsapp(ctx, opts)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	default:
+		panic("otp: unknown channel: " + opts.Channel)
 	}
-
-	language, err := s.WhatsappService.ResolveOTPTemplateLanguage()
-	if err != nil {
-		return err
-	}
-
-	data, err := s.Translation.WhatsappMessageData(language, msg.spec, ctx)
-	if err != nil {
-		return err
-	}
-
-	prepared, err := s.WhatsappService.PrepareOTPTemplate(language, data.Body, opts.OTP)
-	if err != nil {
-		return err
-	}
-
-	msg.whatsapp.Options.TemplateName = prepared.TemplateName
-	msg.whatsapp.Options.TemplateType = prepared.TemplateType
-	msg.whatsapp.Options.Language = prepared.Language
-	msg.whatsapp.Options.Components = prepared.Components
-	msg.whatsapp.Options.Namespace = prepared.Namespace
-
-	return msg.whatsapp.Send()
 }

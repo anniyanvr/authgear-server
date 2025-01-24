@@ -40,7 +40,8 @@ var _ = Schema.Add("AuthenticationFlowConfig", `
 			"type": "array",
 			"minItems": 1,
 			"items": { "$ref": "#/$defs/AuthenticationFlowAccountRecoveryFlow" }
-		}
+		},
+		"rate_limits": { "$ref": "#/$defs/AuthenticationFlowRateLimitsConfig" }
 	}
 }
 `)
@@ -60,7 +61,8 @@ var _ = Schema.Add("AuthenticationFlowIdentification", `
 		"phone",
 		"username",
 		"oauth",
-		"passkey"
+		"passkey",
+		"ldap"
 	]
 }
 `)
@@ -174,10 +176,12 @@ var _ = Schema.Add("AuthenticationFlowSignupFlowIdentify", `
 	"required": ["identification"],
 	"properties": {
 		"identification": { "$ref": "#/$defs/AuthenticationFlowIdentification" },
+		"bot_protection": { "$ref": "#/$defs/AuthenticationFlowBotProtection" },
 		"steps": {
 			"type": "array",
 			"items": { "$ref": "#/$defs/AuthenticationFlowSignupFlowStep" }
-		}
+		},
+		"account_linking": { "$ref": "#/$defs/AuthenticationFlowAccountLinking" }
 	}
 }
 `)
@@ -199,6 +203,7 @@ var _ = Schema.Add("AuthenticationFlowSignupFlowAuthenticate", `
 				"secondary_oob_otp_sms"
 			]
 		},
+		"bot_protection": { "$ref": "#/$defs/AuthenticationFlowBotProtection" },
 		"target_step": { "$ref": "#/$defs/AuthenticationFlowObjectName" },
 		"steps": {
 			"type": "array",
@@ -315,6 +320,7 @@ var _ = Schema.Add("AuthenticationFlowLoginFlowIdentify", `
 	"required": ["identification"],
 	"properties": {
 		"identification": { "$ref": "#/$defs/AuthenticationFlowIdentification" },
+		"bot_protection": { "$ref": "#/$defs/AuthenticationFlowBotProtection" },
 		"steps": {
 			"type": "array",
 			"items": { "$ref": "#/$defs/AuthenticationFlowLoginFlowStep" }
@@ -343,6 +349,7 @@ var _ = Schema.Add("AuthenticationFlowLoginFlowAuthenticate", `
 				"device_token"
 			]
 		},
+		"bot_protection": { "$ref": "#/$defs/AuthenticationFlowBotProtection" },
 		"target_step": { "$ref": "#/$defs/AuthenticationFlowObjectName" },
 		"steps": {
 			"type": "array",
@@ -406,6 +413,7 @@ var _ = Schema.Add("AuthenticationFlowSignupLoginFlowIdentify", `
 	"required": ["identification", "signup_flow", "login_flow"],
 	"properties": {
 		"identification": { "$ref": "#/$defs/AuthenticationFlowIdentification" },
+		"bot_protection": { "$ref": "#/$defs/AuthenticationFlowBotProtection" },
 		"signup_flow": { "$ref": "#/$defs/AuthenticationFlowObjectName" },
 		"login_flow": { "$ref": "#/$defs/AuthenticationFlowObjectName" }
 	}
@@ -517,6 +525,7 @@ var _ = Schema.Add("AuthenticationFlowReauthFlowAuthenticate", `
 				"secondary_oob_otp_sms"
 			]
 		},
+		"bot_protection": { "$ref": "#/$defs/AuthenticationFlowBotProtection" },
 		"steps": {
 			"type": "array",
 			"items": { "$ref": "#/$defs/AuthenticationFlowReauthFlowStep" }
@@ -603,6 +612,7 @@ var _ = Schema.Add("AuthenticationFlowAccountRecoveryFlowOneOf", `
 	"required": ["identification"],
 	"properties": {
 		"identification": { "$ref": "#/$defs/AuthenticationFlowAccountRecoveryIdentification" },
+		"bot_protection": { "$ref": "#/$defs/AuthenticationFlowBotProtection" },
 		"on_failure": { "type": "string", "enum": [ "error", "ignore"] },
 		"steps": {
 			"type": "array",
@@ -623,6 +633,46 @@ var _ = Schema.Add("AuthenticationFlowAccountRecoveryIdentification", `
 }
 `)
 
+var _ = Schema.Add("AuthenticationFlowAccountLinking", `
+{
+	"type": "object",
+	"properties": {
+		"oauth": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/AuthenticationFlowAccountLinkingOAuthItem" }
+		},
+		"login_id": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/AuthenticationFlowAccountLinkingLoginIDItem" }
+		}
+	}
+}
+`)
+
+var _ = Schema.Add("AuthenticationFlowAccountLinkingOAuthItem", `
+{
+	"type": "object",
+	"required": ["name"],
+	"properties": {
+		"name": { "type": "string" },
+		"action": { "$ref": "#/$defs/AccountLinkingAction" },
+		"login_flow": { "type": "string" }
+	}
+}
+`)
+
+var _ = Schema.Add("AuthenticationFlowAccountLinkingLoginIDItem", `
+{
+	"type": "object",
+	"required": ["name"],
+	"properties": {
+		"name": { "type": "string" },
+		"action": { "$ref": "#/$defs/AccountLinkingAction" },
+		"login_flow": { "type": "string" }
+	}
+}
+`)
+
 type AuthenticationFlowObject interface {
 	IsFlowObject()
 }
@@ -632,6 +682,17 @@ type AuthenticationFlowObjectFlowRoot interface {
 	GetName() string
 	GetSteps() []AuthenticationFlowObject
 }
+
+type AuthenticationFlowType string
+
+const (
+	AuthenticationFlowTypeSignup          AuthenticationFlowType = "signup"
+	AuthenticationFlowTypePromote         AuthenticationFlowType = "promote"
+	AuthenticationFlowTypeLogin           AuthenticationFlowType = "login"
+	AuthenticationFlowTypeSignupLogin     AuthenticationFlowType = "signup_login"
+	AuthenticationFlowTypeReauth          AuthenticationFlowType = "reauth"
+	AuthenticationFlowTypeAccountRecovery AuthenticationFlowType = "account_recovery"
+)
 
 type AuthenticationFlowObjectFlowStep interface {
 	AuthenticationFlowObject
@@ -660,6 +721,7 @@ const (
 	AuthenticationFlowIdentificationOAuth    AuthenticationFlowIdentification = "oauth"
 	AuthenticationFlowIdentificationPasskey  AuthenticationFlowIdentification = "passkey"
 	AuthenticationFlowIdentificationIDToken  AuthenticationFlowIdentification = "id_token"
+	AuthenticationFlowIdentificationLDAP     AuthenticationFlowIdentification = "ldap"
 )
 
 func (m AuthenticationFlowIdentification) PrimaryAuthentications() []AuthenticationFlowAuthentication {
@@ -687,6 +749,9 @@ func (m AuthenticationFlowIdentification) PrimaryAuthentications() []Authenticat
 	case AuthenticationFlowIdentificationPasskey:
 		// Passkey does not require primary authentication.
 		return nil
+	case AuthenticationFlowIdentificationLDAP:
+		// LDAP does not require primary authentication.
+		return nil
 	default:
 		panic(fmt.Errorf("unknown identification: %v", m))
 	}
@@ -712,6 +777,8 @@ func (m AuthenticationFlowIdentification) SecondaryAuthentications() []Authentic
 	case AuthenticationFlowIdentificationPasskey:
 		// Passkey does not require secondary authentication.
 		return nil
+	case AuthenticationFlowIdentificationLDAP:
+		return all
 	default:
 		panic(fmt.Errorf("unknown identification: %v", m))
 	}
@@ -785,6 +852,8 @@ type AuthenticationFlowConfig struct {
 	SignupLoginFlows     []*AuthenticationFlowSignupLoginFlow     `json:"signup_login_flows,omitempty"`
 	ReauthFlows          []*AuthenticationFlowReauthFlow          `json:"reauth_flows,omitempty"`
 	AccountRecoveryFlows []*AuthenticationFlowAccountRecoveryFlow `json:"account_recovery_flows,omitempty"`
+
+	RateLimits *AuthenticationFlowRateLimitsConfig `json:"rate_limits,omitempty"`
 }
 
 type AuthenticationFlowSignupFlow struct {
@@ -828,13 +897,17 @@ type AuthenticationFlowSignupFlowStep struct {
 	UserProfile []*AuthenticationFlowSignupFlowUserProfile `json:"user_profile,omitempty"`
 }
 
-var _ AuthenticationFlowObjectFlowStep = &AuthenticationFlowSignupFlowStep{}
+var (
+	_ AuthenticationFlowObjectFlowStep                  = &AuthenticationFlowSignupFlowStep{}
+	_ AuthenticationFlowObjectSignupFlowOrLoginFlowStep = &AuthenticationFlowSignupFlowStep{}
+)
 
 func (s *AuthenticationFlowSignupFlowStep) IsFlowObject()   {}
 func (s *AuthenticationFlowSignupFlowStep) GetName() string { return s.Name }
 func (s *AuthenticationFlowSignupFlowStep) GetType() AuthenticationFlowStepType {
 	return AuthenticationFlowStepType(s.Type)
 }
+
 func (s *AuthenticationFlowSignupFlowStep) GetOneOf() []AuthenticationFlowObject {
 	switch s.Type {
 	case AuthenticationFlowSignupFlowStepTypeIdentify:
@@ -851,9 +924,27 @@ func (s *AuthenticationFlowSignupFlowStep) GetOneOf() []AuthenticationFlowObject
 	}
 }
 
+func (s *AuthenticationFlowSignupFlowStep) GetSignupFlowOrLoginFlowOneOf() []AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf {
+	switch s.Type {
+	case AuthenticationFlowSignupFlowStepTypeIdentify:
+		fallthrough
+	case AuthenticationFlowSignupFlowStepTypeCreateAuthenticator:
+		out := make([]AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf, len(s.OneOf))
+		for i, v := range s.OneOf {
+			v := v
+			out[i] = v
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 type AuthenticationFlowSignupFlowOneOf struct {
 	// Identification is specific to identify.
 	Identification AuthenticationFlowIdentification `json:"identification,omitempty"`
+	// AccountLinking is specific to identify.
+	AccountLinking *AuthenticationFlowAccountLinking `json:"account_linking,omitempty"`
 
 	// Authentication is specific to authenticate.
 	Authentication AuthenticationFlowAuthentication `json:"authentication,omitempty"`
@@ -862,11 +953,19 @@ type AuthenticationFlowSignupFlowOneOf struct {
 	// VerificationRequired is specific to OOB.
 	VerificationRequired *bool `json:"verification_required,omitempty"`
 
+	// BotProtection is specific to identify & create_authenticator
+	BotProtection *AuthenticationFlowBotProtection `json:"bot_protection,omitempty" nullable:"true"`
+
 	// Steps are common.
 	Steps []*AuthenticationFlowSignupFlowStep `json:"steps,omitempty"`
 }
 
-var _ AuthenticationFlowObjectFlowBranch = &AuthenticationFlowSignupFlowOneOf{}
+var (
+	_ AuthenticationFlowObjectFlowBranch                   = &AuthenticationFlowSignupFlowOneOf{}
+	_ AuthenticationFlowObjectAccountLinkingConfigProvider = &AuthenticationFlowSignupFlowOneOf{}
+	_ AuthenticationFlowObjectBotProtectionConfigProvider  = &AuthenticationFlowSignupFlowOneOf{}
+	_ AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf   = &AuthenticationFlowSignupFlowOneOf{}
+)
 
 func (f *AuthenticationFlowSignupFlowOneOf) IsFlowObject() {}
 
@@ -886,9 +985,25 @@ func (f *AuthenticationFlowSignupFlowOneOf) GetBranchInfo() AuthenticationFlowOb
 	}
 }
 
+func (f *AuthenticationFlowSignupFlowOneOf) GetAuthentication() AuthenticationFlowAuthentication {
+	return f.Authentication
+}
+
 func (f *AuthenticationFlowSignupFlowOneOf) IsVerificationRequired() bool {
 	// If it is unspecified (i.e. nil), then verification is required.
 	return f.VerificationRequired == nil || *f.VerificationRequired
+}
+
+func (f *AuthenticationFlowSignupFlowOneOf) GetTargetStepName() string {
+	return f.TargetStep
+}
+
+func (f *AuthenticationFlowSignupFlowOneOf) GetAccountLinkingConfig() *AuthenticationFlowAccountLinking {
+	return f.AccountLinking
+}
+
+func (f *AuthenticationFlowSignupFlowOneOf) GetBotProtectionConfig() *AuthenticationFlowBotProtection {
+	return f.BotProtection
 }
 
 type AuthenticationFlowSignupFlowUserProfile struct {
@@ -943,7 +1058,10 @@ type AuthenticationFlowLoginFlowStep struct {
 	TargetStep string `json:"target_step,omitempty"`
 }
 
-var _ AuthenticationFlowObjectFlowStep = &AuthenticationFlowLoginFlowStep{}
+var (
+	_ AuthenticationFlowObjectFlowStep                  = &AuthenticationFlowLoginFlowStep{}
+	_ AuthenticationFlowObjectSignupFlowOrLoginFlowStep = &AuthenticationFlowLoginFlowStep{}
+)
 
 func (s *AuthenticationFlowLoginFlowStep) IsFlowObject()   {}
 func (s *AuthenticationFlowLoginFlowStep) GetName() string { return s.Name }
@@ -957,6 +1075,22 @@ func (s *AuthenticationFlowLoginFlowStep) GetOneOf() []AuthenticationFlowObject 
 		fallthrough
 	case AuthenticationFlowLoginFlowStepTypeAuthenticate:
 		out := make([]AuthenticationFlowObject, len(s.OneOf))
+		for i, v := range s.OneOf {
+			v := v
+			out[i] = v
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func (s *AuthenticationFlowLoginFlowStep) GetSignupFlowOrLoginFlowOneOf() []AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf {
+	switch s.Type {
+	case AuthenticationFlowLoginFlowStepTypeIdentify:
+		fallthrough
+	case AuthenticationFlowLoginFlowStepTypeAuthenticate:
+		out := make([]AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf, len(s.OneOf))
 		for i, v := range s.OneOf {
 			v := v
 			out[i] = v
@@ -983,11 +1117,18 @@ type AuthenticationFlowLoginFlowOneOf struct {
 	// TargetStep is specific to authenticate.
 	TargetStep string `json:"target_step,omitempty"`
 
+	// BotProtection is common
+	BotProtection *AuthenticationFlowBotProtection `json:"bot_protection,omitempty" nullable:"true"`
+
 	// Steps are common.
 	Steps []*AuthenticationFlowLoginFlowStep `json:"steps,omitempty"`
 }
 
-var _ AuthenticationFlowObjectFlowBranch = &AuthenticationFlowLoginFlowOneOf{}
+var (
+	_ AuthenticationFlowObjectFlowBranch                  = &AuthenticationFlowLoginFlowOneOf{}
+	_ AuthenticationFlowObjectBotProtectionConfigProvider = &AuthenticationFlowLoginFlowOneOf{}
+	_ AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf  = &AuthenticationFlowLoginFlowOneOf{}
+)
 
 func (f *AuthenticationFlowLoginFlowOneOf) IsFlowObject() {}
 
@@ -1005,6 +1146,22 @@ func (f *AuthenticationFlowLoginFlowOneOf) GetBranchInfo() AuthenticationFlowObj
 		Identification: f.Identification,
 		Authentication: f.Authentication,
 	}
+}
+
+func (f *AuthenticationFlowLoginFlowOneOf) GetBotProtectionConfig() *AuthenticationFlowBotProtection {
+	return f.BotProtection
+}
+
+func (f *AuthenticationFlowLoginFlowOneOf) GetAuthentication() AuthenticationFlowAuthentication {
+	return f.Authentication
+}
+
+func (f *AuthenticationFlowLoginFlowOneOf) IsVerificationRequired() bool {
+	return true
+}
+
+func (f *AuthenticationFlowLoginFlowOneOf) GetTargetStepName() string {
+	return f.TargetStep
 }
 
 type AuthenticationFlowSignupLoginFlow struct {
@@ -1062,11 +1219,15 @@ const (
 
 type AuthenticationFlowSignupLoginFlowOneOf struct {
 	Identification AuthenticationFlowIdentification `json:"identification,omitempty"`
+	BotProtection  *AuthenticationFlowBotProtection `json:"bot_protection,omitempty" nullable:"true"`
 	SignupFlow     string                           `json:"signup_flow,omitempty"`
 	LoginFlow      string                           `json:"login_flow,omitempty"`
 }
 
-var _ AuthenticationFlowObjectFlowBranch = &AuthenticationFlowSignupLoginFlowOneOf{}
+var (
+	_ AuthenticationFlowObjectFlowBranch                  = &AuthenticationFlowSignupLoginFlowOneOf{}
+	_ AuthenticationFlowObjectBotProtectionConfigProvider = &AuthenticationFlowSignupLoginFlowOneOf{}
+)
 
 func (s *AuthenticationFlowSignupLoginFlowOneOf) IsFlowObject() {}
 
@@ -1078,6 +1239,10 @@ func (s *AuthenticationFlowSignupLoginFlowOneOf) GetBranchInfo() AuthenticationF
 	return AuthenticationFlowObjectFlowBranchInfo{
 		Identification: s.Identification,
 	}
+}
+
+func (s *AuthenticationFlowSignupLoginFlowOneOf) GetBotProtectionConfig() *AuthenticationFlowBotProtection {
+	return s.BotProtection
 }
 
 type AuthenticationFlowReauthFlow struct {
@@ -1142,6 +1307,9 @@ type AuthenticationFlowReauthFlowOneOf struct {
 	// Identification is specific to identify.
 	Identification AuthenticationFlowIdentification `json:"identification,omitempty"`
 
+	// BotProtection is specific to authenticate.
+	BotProtection *AuthenticationFlowBotProtection `json:"bot_protection,omitempty" nullable:"true"`
+
 	// Authentication is specific to authenticate.
 	Authentication AuthenticationFlowAuthentication `json:"authentication,omitempty"`
 
@@ -1149,7 +1317,10 @@ type AuthenticationFlowReauthFlowOneOf struct {
 	Steps []*AuthenticationFlowReauthFlowStep `json:"steps,omitempty"`
 }
 
-var _ AuthenticationFlowObjectFlowBranch = &AuthenticationFlowReauthFlowOneOf{}
+var (
+	_ AuthenticationFlowObjectFlowBranch                  = &AuthenticationFlowReauthFlowOneOf{}
+	_ AuthenticationFlowObjectBotProtectionConfigProvider = &AuthenticationFlowReauthFlowOneOf{}
+)
 
 func (f *AuthenticationFlowReauthFlowOneOf) IsFlowObject() {}
 
@@ -1167,6 +1338,10 @@ func (f *AuthenticationFlowReauthFlowOneOf) GetBranchInfo() AuthenticationFlowOb
 		Identification: f.Identification,
 		Authentication: f.Authentication,
 	}
+}
+
+func (f *AuthenticationFlowReauthFlowOneOf) GetBotProtectionConfig() *AuthenticationFlowBotProtection {
+	return f.BotProtection
 }
 
 type AuthenticationFlowAccountRecoveryFlow struct {
@@ -1254,6 +1429,7 @@ func (s *AuthenticationFlowAccountRecoveryFlowStep) GetName() string { return s.
 func (s *AuthenticationFlowAccountRecoveryFlowStep) GetType() AuthenticationFlowStepType {
 	return AuthenticationFlowStepType(s.Type)
 }
+
 func (s *AuthenticationFlowAccountRecoveryFlowStep) GetOneOf() []AuthenticationFlowObject {
 	switch s.Type {
 	case AuthenticationFlowAccountRecoveryFlowTypeIdentify:
@@ -1279,11 +1455,15 @@ const (
 
 type AuthenticationFlowAccountRecoveryFlowOneOf struct {
 	Identification AuthenticationFlowAccountRecoveryIdentification          `json:"identification,omitempty"`
+	BotProtection  *AuthenticationFlowBotProtection                         `json:"bot_protection,omitempty" nullable:"true"`
 	OnFailure      AuthenticationFlowAccountRecoveryIdentificationOnFailure `json:"on_failure,omitempty"`
 	Steps          []*AuthenticationFlowAccountRecoveryFlowStep             `json:"steps,omitempty"`
 }
 
-var _ AuthenticationFlowObjectFlowBranch = &AuthenticationFlowAccountRecoveryFlowOneOf{}
+var (
+	_ AuthenticationFlowObjectFlowBranch                  = &AuthenticationFlowAccountRecoveryFlowOneOf{}
+	_ AuthenticationFlowObjectBotProtectionConfigProvider = &AuthenticationFlowAccountRecoveryFlowOneOf{}
+)
 
 func (f *AuthenticationFlowAccountRecoveryFlowOneOf) IsFlowObject() {}
 func (f *AuthenticationFlowAccountRecoveryFlowOneOf) GetSteps() []AuthenticationFlowObject {
@@ -1294,10 +1474,15 @@ func (f *AuthenticationFlowAccountRecoveryFlowOneOf) GetSteps() []Authentication
 	}
 	return out
 }
+
 func (f *AuthenticationFlowAccountRecoveryFlowOneOf) GetBranchInfo() AuthenticationFlowObjectFlowBranchInfo {
 	return AuthenticationFlowObjectFlowBranchInfo{
 		Identification: AuthenticationFlowIdentification(f.Identification),
 	}
+}
+
+func (f *AuthenticationFlowAccountRecoveryFlowOneOf) GetBotProtectionConfig() *AuthenticationFlowBotProtection {
+	return f.BotProtection
 }
 
 type AuthenticationFlowAccountRecoveryIdentification AuthenticationFlowIdentification
@@ -1317,6 +1502,42 @@ const (
 	AuthenticationFlowAccountRecoveryIdentificationOnFailureError  = AuthenticationFlowAccountRecoveryIdentificationOnFailure("error")
 	AuthenticationFlowAccountRecoveryIdentificationOnFailureIgnore = AuthenticationFlowAccountRecoveryIdentificationOnFailure("ignore")
 )
+
+type AuthenticationFlowAccountLinking struct {
+	OAuth   []*AuthenticationFlowAccountLinkingOAuthItem   `json:"oauth,omitempty"`
+	LoginID []*AuthenticationFlowAccountLinkingLoginIDItem `json:"login_id,omitempty"`
+}
+
+type AuthenticationFlowAccountLinkingOAuthItem struct {
+	Name      string               `json:"name,omitempty"`
+	Action    AccountLinkingAction `json:"action,omitempty"`
+	LoginFlow string               `json:"login_flow,omitempty"`
+}
+
+type AuthenticationFlowAccountLinkingLoginIDItem struct {
+	Name      string               `json:"name,omitempty"`
+	Action    AccountLinkingAction `json:"action,omitempty"`
+	LoginFlow string               `json:"login_flow,omitempty"`
+}
+
+type AuthenticationFlowObjectAccountLinkingConfigProvider interface {
+	GetAccountLinkingConfig() *AuthenticationFlowAccountLinking
+}
+
+type AuthenticationFlowObjectBotProtectionConfigProvider interface {
+	GetBotProtectionConfig() *AuthenticationFlowBotProtection
+}
+
+type AuthenticationFlowObjectSignupFlowOrLoginFlowStep interface {
+	GetSignupFlowOrLoginFlowOneOf() []AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf
+}
+
+type AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf interface {
+	AuthenticationFlowObjectBotProtectionConfigProvider
+	GetAuthentication() AuthenticationFlowAuthentication
+	IsVerificationRequired() bool
+	GetTargetStepName() string
+}
 
 func init() {
 	accountRecoveryChannelsOneOf := ""
@@ -1347,5 +1568,5 @@ func init() {
 %s
 		]
 	}`, accountRecoveryChannelsOneOf)
-	var _ = Schema.Add("AccountRecoveryChannel", schema)
+	_ = Schema.Add("AccountRecoveryChannel", schema)
 }

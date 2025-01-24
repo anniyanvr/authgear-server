@@ -17,10 +17,9 @@ type CheckConfigSourcesOptions struct {
 	AppIDs         []string
 }
 
-func CheckConfigSources(opts *CheckConfigSourcesOptions) error {
+func CheckConfigSources(ctx context.Context, opts *CheckConfigSourcesOptions) error {
 	db := openDB(opts.DatabaseURL, opts.DatabaseSchema)
 
-	ctx := context.Background()
 	configSources, err := selectConfigSources(ctx, db, opts.AppIDs)
 	if err != nil {
 		log.Fatalf("failed to connect db: %s", err)
@@ -79,14 +78,16 @@ func checkConfigSource(cs *ConfigSource) error {
 		return fmt.Errorf("invalid secrets config: %w", err)
 	}
 
-	featuresYAML, err := base64.StdEncoding.DecodeString(cs.Data[configsource.AuthgearFeatureYAML])
-	if err != nil {
-		return fmt.Errorf("failed decode authgear.features.yaml: %w", err)
-	}
+	if _, ok := cs.Data[configsource.AuthgearFeatureYAML]; ok {
+		featuresYAML, err := base64.StdEncoding.DecodeString(cs.Data[configsource.AuthgearFeatureYAML])
+		if err != nil {
+			return fmt.Errorf("failed decode authgear.features.yaml: %w", err)
+		}
 
-	_, err = config.ParseFeatureConfig(featuresYAML)
-	if err != nil {
-		return fmt.Errorf("invalid features config: %w", err)
+		_, err = config.ParseFeatureConfig(featuresYAML)
+		if err != nil {
+			return fmt.Errorf("invalid features config: %w", err)
+		}
 	}
 
 	return nil

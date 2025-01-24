@@ -1,42 +1,12 @@
 package httputil
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-func TestIsNameHashed(t *testing.T) {
-	Convey("IsNameHashed", t, func() {
-		test := func(p string, expected bool) {
-			Convey(fmt.Sprintf("%v", p), func() {
-				actual := IsNameHashed(p)
-				So(actual, ShouldEqual, expected)
-			})
-		}
-
-		test("", false)
-		test("/", false)
-		test("/a", false)
-		test("/a.js", false)
-		test("/a.js.map", false)
-
-		test("/a.deadbeef.js", true)
-		test("/a.deadbeef.js.map", true)
-
-		test("/.deadbeef.js", false)
-		test("/.deadbeef.js.map", false)
-
-		test("/nested/a.deadbeef.js", true)
-		test("/nested/a.deadbeef.js.map", true)
-
-		test("/a.0123456.js", false)
-		test("/a.0123456.js.map", false)
-	})
-}
 
 func TestFileServer(t *testing.T) {
 	Convey("FileServer", t, func() {
@@ -48,7 +18,7 @@ func TestFileServer(t *testing.T) {
 				FallbackToIndexHTML: false,
 			}
 
-			r, _ := http.NewRequest("GET", "/a.deadbeef.js", nil)
+			r, _ := http.NewRequest("GET", "/a-deadbeef.js", nil)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			So(w.Code, ShouldEqual, 200)
@@ -70,10 +40,11 @@ func TestFileServer(t *testing.T) {
 
 			h := &FileServer{
 				FileSystem:          dir,
+				AssetsDir:           "shared-assets",
 				FallbackToIndexHTML: true,
 			}
 
-			r, _ := http.NewRequest("GET", "/a.deadbeef.js", nil)
+			r, _ := http.NewRequest("GET", "/shared-assets/a-deadbeef.js", nil)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			So(w.Code, ShouldEqual, 200)
@@ -81,7 +52,7 @@ func TestFileServer(t *testing.T) {
 			So(w.Result().Header.Get("content-type"), ShouldContainSubstring, "javascript")
 			So(w.Result().Header.Get("cache-control"), ShouldEqual, "public, max-age=604800")
 
-			r, _ = http.NewRequest("GET", "/b.deadbeef.js", nil)
+			r, _ = http.NewRequest("GET", "/shared-assets/b-deadbeef.js", nil)
 			w = httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			So(w.Code, ShouldEqual, 404)
@@ -104,6 +75,13 @@ func TestFileServer(t *testing.T) {
 			So(w.Result().Header.Get("cache-control"), ShouldEqual, "no-cache")
 
 			r, _ = http.NewRequest("GET", "/index.html", nil)
+			w = httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			So(w.Code, ShouldEqual, 200)
+			So(w.Result().Header.Get("content-type"), ShouldEqual, "text/html; charset=utf-8")
+			So(w.Result().Header.Get("cache-control"), ShouldEqual, "no-cache")
+
+			r, _ = http.NewRequest("GET", "/oauth-redirect?code=1234", nil)
 			w = httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			So(w.Code, ShouldEqual, 200)

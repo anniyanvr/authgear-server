@@ -1,8 +1,10 @@
 package intents
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/lib/interaction/nodes"
@@ -26,11 +28,20 @@ func NewIntentVerifyIdentity(userID string, identityType model.IdentityType, ide
 	}
 }
 
-func (i *IntentVerifyIdentity) InstantiateRootNode(ctx *interaction.Context, graph *interaction.Graph) (interaction.Node, error) {
-	identityInfo, err := ctx.Identities.Get(i.IdentityID)
+func (i *IntentVerifyIdentity) InstantiateRootNode(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) (interaction.Node, error) {
+	identityInfo, err := ctx.Identities.Get(goCtx, i.IdentityID)
 	if err != nil {
 		return nil, err
 	}
+
+	if identityInfo.UserID != i.UserID {
+		return nil, api.NewInvariantViolated(
+			"IdentityNotBelongToUser",
+			"identity does not belong to the user",
+			nil,
+		)
+	}
+
 	return &nodes.NodeEnsureVerificationBegin{
 		Identity:        identityInfo,
 		RequestedByUser: true,
@@ -38,7 +49,7 @@ func (i *IntentVerifyIdentity) InstantiateRootNode(ctx *interaction.Context, gra
 	}, nil
 }
 
-func (i *IntentVerifyIdentity) DeriveEdgesForNode(graph *interaction.Graph, node interaction.Node) ([]interaction.Edge, error) {
+func (i *IntentVerifyIdentity) DeriveEdgesForNode(goCtx context.Context, graph *interaction.Graph, node interaction.Node) ([]interaction.Edge, error) {
 	switch node := node.(type) {
 	case *nodes.NodeEnsureVerificationEnd:
 		return []interaction.Edge{

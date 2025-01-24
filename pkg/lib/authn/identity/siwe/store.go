@@ -1,12 +1,14 @@
 package siwe
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
-	"github.com/goccy/go-json"
 	"github.com/lib/pq"
 
+	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
@@ -48,7 +50,7 @@ func (s *Store) scan(scanner db.Scanner) (*identity.SIWE, error) {
 		&data,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, identity.ErrIdentityNotFound
+		return nil, api.ErrIdentityNotFound
 	} else if err != nil {
 		return nil, err
 	}
@@ -67,10 +69,10 @@ func (s *Store) scan(scanner db.Scanner) (*identity.SIWE, error) {
 	return i, nil
 }
 
-func (s *Store) GetMany(ids []string) ([]*identity.SIWE, error) {
+func (s *Store) GetMany(ctx context.Context, ids []string) ([]*identity.SIWE, error) {
 	builder := s.selectQuery().Where("i.id = ANY (?)", pq.Array(ids))
 
-	rows, err := s.SQLExecutor.QueryWith(builder)
+	rows, err := s.SQLExecutor.QueryWith(ctx, builder)
 	if err != nil {
 		return nil, err
 	}
@@ -88,10 +90,10 @@ func (s *Store) GetMany(ids []string) ([]*identity.SIWE, error) {
 	return is, nil
 }
 
-func (s *Store) List(userID string) ([]*identity.SIWE, error) {
+func (s *Store) List(ctx context.Context, userID string) ([]*identity.SIWE, error) {
 	q := s.selectQuery().Where("i.user_id = ?", userID)
 
-	rows, err := s.SQLExecutor.QueryWith(q)
+	rows, err := s.SQLExecutor.QueryWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -109,9 +111,9 @@ func (s *Store) List(userID string) ([]*identity.SIWE, error) {
 	return is, nil
 }
 
-func (s *Store) Get(userID, id string) (*identity.SIWE, error) {
+func (s *Store) Get(ctx context.Context, userID, id string) (*identity.SIWE, error) {
 	q := s.selectQuery().Where("i.user_id = ? AND i.id = ?", userID, id)
-	rows, err := s.SQLExecutor.QueryRowWith(q)
+	rows, err := s.SQLExecutor.QueryRowWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -119,20 +121,20 @@ func (s *Store) Get(userID, id string) (*identity.SIWE, error) {
 	return s.scan(rows)
 }
 
-func (s *Store) GetByAddress(chainID int, address web3.EIP55) (*identity.SIWE, error) {
+func (s *Store) GetByAddress(ctx context.Context, chainID int, address web3.EIP55) (*identity.SIWE, error) {
 	addrHex, err := address.ToHexstring()
 	if err != nil {
 		return nil, err
 	}
 	q := s.selectQuery().Where("s.chain_id = ? AND s.address = ?", chainID, addrHex.String())
-	rows, err := s.SQLExecutor.QueryRowWith(q)
+	rows, err := s.SQLExecutor.QueryRowWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	return s.scan(rows)
 }
 
-func (s *Store) Create(i *identity.SIWE) error {
+func (s *Store) Create(ctx context.Context, i *identity.SIWE) error {
 
 	builder := s.SQLBuilder.
 		Insert(s.SQLBuilder.TableName("_auth_identity")).
@@ -151,7 +153,7 @@ func (s *Store) Create(i *identity.SIWE) error {
 			i.UpdatedAt,
 		)
 
-	_, err := s.SQLExecutor.ExecWith(builder)
+	_, err := s.SQLExecutor.ExecWith(ctx, builder)
 	if err != nil {
 		return err
 	}
@@ -181,7 +183,7 @@ func (s *Store) Create(i *identity.SIWE) error {
 			data,
 		)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -189,12 +191,12 @@ func (s *Store) Create(i *identity.SIWE) error {
 	return nil
 }
 
-func (s *Store) Delete(i *identity.SIWE) error {
+func (s *Store) Delete(ctx context.Context, i *identity.SIWE) error {
 	q := s.SQLBuilder.
 		Delete(s.SQLBuilder.TableName("_auth_identity_siwe")).
 		Where("id = ?", i.ID)
 
-	_, err := s.SQLExecutor.ExecWith(q)
+	_, err := s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -203,7 +205,7 @@ func (s *Store) Delete(i *identity.SIWE) error {
 		Delete(s.SQLBuilder.TableName("_auth_identity")).
 		Where("id = ?", i.ID)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}

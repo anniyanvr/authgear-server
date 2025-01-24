@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -10,7 +11,7 @@ import (
 
 var TemplateWebReturnHTML = template.RegisterHTML(
 	"web/return.html",
-	components...,
+	Components...,
 )
 
 func ConfigureReturnRoute(route httproute.Route) httproute.Route {
@@ -38,9 +39,9 @@ func (h *ReturnHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		data, err := h.GetData(r, w)
 		if err != nil {
 			return err

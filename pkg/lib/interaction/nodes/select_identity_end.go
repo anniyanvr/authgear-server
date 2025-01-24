@@ -1,10 +1,9 @@
 package nodes
 
 import (
-	"errors"
+	"context"
 	"fmt"
 
-	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
@@ -21,7 +20,7 @@ type EdgeSelectIdentityEnd struct {
 	IsAuthentication bool
 }
 
-func (e *EdgeSelectIdentityEnd) Instantiate(ctx *interaction.Context, graph *interaction.Graph, input interface{}) (interaction.Node, error) {
+func (e *EdgeSelectIdentityEnd) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, input interface{}) (interaction.Node, error) {
 	bypassRateLimit := false
 	var bypassInput interface{ BypassInteractionIPRateLimit() bool }
 	if interaction.Input(input, &bypassInput) {
@@ -31,23 +30,28 @@ func (e *EdgeSelectIdentityEnd) Instantiate(ctx *interaction.Context, graph *int
 	var reservation *ratelimit.Reservation
 	if !bypassRateLimit {
 		spec := interaction.AccountEnumerationPerIPRateLimitBucketSpec(ctx.Config.Authentication, string(ctx.RemoteIP))
-		reservation = ctx.RateLimiter.Reserve(spec)
-		if err := reservation.Error(); err != nil {
+		var failedReservation *ratelimit.FailedReservation
+		var err error
+		reservation, failedReservation, err = ctx.RateLimiter.Reserve(goCtx, spec)
+		if err != nil {
+			return nil, err
+		}
+		if err := failedReservation.Error(); err != nil {
 			return nil, err
 		}
 	}
-	defer ctx.RateLimiter.Cancel(reservation)
+	defer ctx.RateLimiter.Cancel(goCtx, reservation)
 
 	var otherMatch *identity.Info
-	exactMatch, otherMatches, err := ctx.Identities.SearchBySpec(e.IdentitySpec)
+	exactMatch, otherMatches, err := ctx.Identities.SearchBySpec(goCtx, e.IdentitySpec)
 	if err != nil {
 		return nil, err
 	}
 
 	if exactMatch == nil {
-		// Exact match not found; consume account enumeration rate limit.
+		// Exact match not found; prevent canceling account enumeration rate limit.
 		if reservation != nil {
-			reservation.Consume()
+			reservation.PreventCancel()
 		}
 
 		// Take the first one as other match.
@@ -65,8 +69,8 @@ func (e *EdgeSelectIdentityEnd) Instantiate(ctx *interaction.Context, graph *int
 				break
 			case model.IdentityTypeLoginID:
 				loginIDValue := e.IdentitySpec.LoginID.Value
-				err = ctx.Events.DispatchEvent(&nonblocking.AuthenticationFailedLoginIDEventPayload{
-					LoginID: loginIDValue,
+				err = ctx.Events.DispatchEventOnCommit(goCtx, &nonblocking.AuthenticationFailedLoginIDEventPayload{
+					LoginID: loginIDValue.TrimSpace(),
 				})
 				if err != nil {
 					return nil, err
@@ -74,6 +78,8 @@ func (e *EdgeSelectIdentityEnd) Instantiate(ctx *interaction.Context, graph *int
 			case model.IdentityTypePasskey:
 				break
 			case model.IdentityTypeSIWE:
+				break
+			case model.IdentityTypeLDAP:
 				break
 			default:
 				panic(fmt.Errorf("interaction: unknown identity type: %v", e.IdentitySpec.Type))
@@ -85,7 +91,7 @@ func (e *EdgeSelectIdentityEnd) Instantiate(ctx *interaction.Context, graph *int
 	var oldIdentityInfo *identity.Info
 	if exactMatch != nil && exactMatch.Type == model.IdentityTypeOAuth {
 		oldIdentityInfo = exactMatch
-		exactMatch, err = ctx.Identities.UpdateWithSpec(exactMatch, e.IdentitySpec, identity.NewIdentityOptions{})
+		exactMatch, err = ctx.Identities.UpdateWithSpec(goCtx, exactMatch, e.IdentitySpec, identity.NewIdentityOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -106,23 +112,23 @@ type NodeSelectIdentityEnd struct {
 	OtherMatch      *identity.Info `json:"other_match"`
 }
 
-func (n *NodeSelectIdentityEnd) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeSelectIdentityEnd) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeSelectIdentityEnd) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeSelectIdentityEnd) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	// Update OAuth identity
-	eff := func(ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
+	eff := func(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
 		if n.OldIdentityInfo != nil && n.IdentityInfo != nil && n.IdentityInfo.Type == model.IdentityTypeOAuth {
-			_, err := ctx.Identities.CheckDuplicated(n.IdentityInfo)
+			_, err := ctx.Identities.CheckDuplicated(goCtx, n.IdentityInfo)
 			if err != nil {
-				if errors.Is(err, identity.ErrIdentityAlreadyExists) {
-					return n.FillDetails(api.ErrDuplicatedIdentity)
+				if identity.IsErrDuplicatedIdentity(err) {
+					return n.FillDetails(identity.Deprecated_ErrDuplicatedIdentity)
 				}
 				return err
 			}
 
-			err = ctx.Identities.Update(n.OldIdentityInfo, n.IdentityInfo)
+			err = ctx.Identities.Update(goCtx, n.OldIdentityInfo, n.IdentityInfo)
 			if err != nil {
 				return err
 			}
@@ -139,8 +145,8 @@ func (n *NodeSelectIdentityEnd) GetEffects() ([]interaction.Effect, error) {
 	}, nil
 }
 
-func (n *NodeSelectIdentityEnd) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
-	return graph.Intent.DeriveEdgesForNode(graph, n)
+func (n *NodeSelectIdentityEnd) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
+	return graph.Intent.DeriveEdgesForNode(goCtx, graph, n)
 }
 
 func (n *NodeSelectIdentityEnd) FillDetails(err error) error {

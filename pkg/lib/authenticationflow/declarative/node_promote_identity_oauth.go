@@ -7,8 +7,10 @@ import (
 
 	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
+	"github.com/authgear/authgear-server/pkg/api/model"
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
+	"github.com/authgear/authgear-server/pkg/util/slice"
 )
 
 func init() {
@@ -21,7 +23,7 @@ type NodePromoteIdentityOAuth struct {
 	SyntheticInput *InputStepIdentify `json:"synthetic_input,omitempty"`
 	Alias          string             `json:"alias,omitempty"`
 	RedirectURI    string             `json:"redirect_uri,omitempty"`
-	ResponseMode   sso.ResponseMode   `json:"response_mode,omitempty"`
+	ResponseMode   string             `json:"response_mode,omitempty"`
 }
 
 var _ authflow.NodeSimple = &NodePromoteIdentityOAuth{}
@@ -33,15 +35,20 @@ func (*NodePromoteIdentityOAuth) Kind() string {
 }
 
 func (n *NodePromoteIdentityOAuth) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
+	flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
 	return &InputSchemaTakeOAuthAuthorizationResponse{
-		JSONPointer: n.JSONPointer,
+		FlowRootObject: flowRootObject,
+		JSONPointer:    n.JSONPointer,
 	}, nil
 }
 
 func (n *NodePromoteIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
 	var inputOAuth inputTakeOAuthAuthorizationResponse
 	if authflow.AsInput(input, &inputOAuth) {
-		spec, err := handleOAuthAuthorizationResponse(deps, HandleOAuthAuthorizationResponseOptions{
+		spec, err := handleOAuthAuthorizationResponse(ctx, deps, HandleOAuthAuthorizationResponseOptions{
 			Alias:       n.Alias,
 			RedirectURI: n.RedirectURI,
 		}, inputOAuth)
@@ -57,11 +64,24 @@ func (n *NodePromoteIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.D
 			IdentitySpec:   spec,
 		}
 
-		_, err = findExactOneIdentityInfo(deps, spec)
+		_, err = findExactOneIdentityInfo(ctx, deps, spec)
 		if err != nil {
 			if apierrors.IsKind(err, api.UserNotFound) {
+				conflicts, err := n.checkConflictByAccountLinkings(ctx, deps, flows, spec)
+				if err != nil {
+					return nil, err
+				}
+				if len(conflicts) > 0 {
+					// In promote flow, always error if any conflicts occurs
+					conflictSpecs := slice.Map(conflicts, func(c *AccountLinkingConflict) *identity.Spec {
+						s := c.Identity.ToSpec()
+						return &s
+					})
+					return nil, identity.NewErrDuplicatedIdentityMany(spec, conflictSpecs)
+				}
+
 				// promote
-				info, err := newIdentityInfo(deps, n.UserID, spec)
+				info, err := newIdentityInfo(ctx, deps, n.UserID, spec)
 				if err != nil {
 					return nil, err
 				}
@@ -75,7 +95,7 @@ func (n *NodePromoteIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.D
 		}
 
 		// login
-		flowReference := authflow.GetFlowReference(ctx)
+		flowReference := authflow.FindCurrentFlowReference(flows.Root)
 		return nil, &authflow.ErrorSwitchFlow{
 			FlowReference: authflow.FlowReference{
 				Type: authflow.FlowTypeLogin,
@@ -100,4 +120,17 @@ func (n *NodePromoteIdentityOAuth) OutputData(ctx context.Context, deps *authflo
 	}
 
 	return data, nil
+}
+
+func (n *NodePromoteIdentityOAuth) checkConflictByAccountLinkings(
+	ctx context.Context,
+	deps *authflow.Dependencies,
+	flows authflow.Flows,
+	spec *identity.Spec) (conflicts []*AccountLinkingConflict, err error) {
+	switch spec.Type {
+	case model.IdentityTypeOAuth:
+		return linkByIncomingOAuthSpec(ctx, deps, flows, n.UserID, NewCreateOAuthIdentityRequest(n.Alias, spec).OAuth, n.JSONPointer)
+	default:
+		panic("unexpected spec type")
+	}
 }

@@ -3,6 +3,7 @@
 <meta charset="UTF-8">
 <title>{{ template "app.name" }}</title>
 <link rel="shortcut icon" href="{{ call $.StaticAssetURL "favicon" }}">
+<meta name="robots" content="noindex, nofollow">
 <meta name="x-authgear-page-loaded-at" content="{{ .PageLoadedAt }}">
 <meta name="x-intl-tel-input-only-countries" content="{{ $.AllowedPhoneCountryCodeJSON }}">
 <meta name="x-intl-tel-input-preferred-countries" content="{{ $.PinnedPhoneCountryCodeJSON }}">
@@ -23,11 +24,11 @@
 <!-- Our CSS have to override the tailwind.css in __generated_asset.html -->
 {{ template "__generated_asset.html" . }}
 {{ if call $.HasAppSpecificAsset "authgear-light-theme.css" }}
-<link rel="stylesheet" href="{{ call $.StaticAssetURL "authgear-light-theme.css" }}">
+<link nonce="{{ $.CSPNonce }}" rel="stylesheet" href="{{ call $.StaticAssetURL "authgear-light-theme.css" }}">
 {{ end }}
 {{ if call $.HasAppSpecificAsset "authgear-dark-theme.css" }}
 {{ if $.DarkThemeEnabled }}
-<link rel="stylesheet" href="{{ call $.StaticAssetURL "authgear-dark-theme.css" }}">
+<link nonce="{{ $.CSPNonce }}" rel="stylesheet" href="{{ call $.StaticAssetURL "authgear-dark-theme.css" }}">
 {{ end }}
 {{ end }}
 

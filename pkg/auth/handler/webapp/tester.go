@@ -1,11 +1,13 @@
 package webapp
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+
 	"net/url"
 	"strings"
 
@@ -23,7 +25,7 @@ import (
 
 var TemplateWebTesterHTML = template.RegisterHTML(
 	"web/tester.html",
-	components...,
+	Components...,
 )
 
 func ConfigureTesterRoute(route httproute.Route) httproute.Route {
@@ -39,15 +41,18 @@ type TesterViewModel struct {
 
 type TesterService interface {
 	GetToken(
+		ctx context.Context,
 		appID config.AppID,
 		tokenID string,
 		consume bool,
 	) (*tester.TesterToken, error)
 	CreateResult(
+		ctx context.Context,
 		appID config.AppID,
 		result *tester.TesterResult,
 	) (*tester.TesterResult, error)
 	GetResult(
+		ctx context.Context,
 		appID config.AppID,
 		resultID string,
 	) (*tester.TesterResult, error)
@@ -55,14 +60,15 @@ type TesterService interface {
 
 type TesterAuthTokensIssuer interface {
 	IssueTokensForAuthorizationCode(
+		ctx context.Context,
 		client *config.OAuthClientConfig,
 		r protocol.TokenRequest,
 	) (protocol.TokenResponse, error)
-	IssueAppSessionToken(refreshToken string) (string, *oauth.AppSessionToken, error)
+	IssueAppSessionToken(ctx context.Context, refreshToken string) (string, *oauth.AppSessionToken, error)
 }
 
 type TesterAppSessionTokenService interface {
-	Exchange(appSessionToken string) (string, error)
+	Exchange(ctx context.Context, appSessionToken string) (string, error)
 }
 
 type TesterCookieManager interface {
@@ -70,11 +76,11 @@ type TesterCookieManager interface {
 }
 
 type TesterUserInfoProvider interface {
-	GetUserInfo(userID string, clientLike *oauth.ClientLike) (map[string]interface{}, error)
+	GetUserInfo(ctx context.Context, userID string, clientLike *oauth.ClientLike) (map[string]interface{}, error)
 }
 
-type TesterOfflineGrantStore interface {
-	GetOfflineGrant(id string) (*oauth.OfflineGrant, error)
+type TesterOfflineGrantService interface {
+	GetOfflineGrant(ctx context.Context, id string) (*oauth.OfflineGrant, error)
 }
 
 type TesterHandler struct {
@@ -90,11 +96,11 @@ type TesterHandler struct {
 	Renderer                Renderer
 	BaseViewModel           *viewmodels.BaseViewModeler
 	UserInfoProvider        TesterUserInfoProvider
-	OfflineGrants           TesterOfflineGrantStore
+	OfflineGrants           TesterOfflineGrantService
 }
 
 var TesterScopes = []string{
-	"openid", "offline_access", oauth.FullAccessScope,
+	"openid", oauth.OfflineAccess, oauth.FullAccessScope,
 }
 
 type TesterState struct {
@@ -109,8 +115,8 @@ func (h *TesterHandler) notFound(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-func (h *TesterHandler) triggerAuth(token string, w http.ResponseWriter, r *http.Request) error {
-	testerToken, err := h.TesterService.GetToken(h.AppID, token, false)
+func (h *TesterHandler) triggerAuth(ctx context.Context, token string, w http.ResponseWriter, r *http.Request) error {
+	testerToken, err := h.TesterService.GetToken(ctx, h.AppID, token, false)
 	if errors.Is(err, tester.ErrTokenNotFound) {
 		h.notFound(w, r)
 		return nil
@@ -166,7 +172,7 @@ func (h *TesterHandler) getData(
 	return data, nil
 }
 
-func (h *TesterHandler) doCodeExchange(code string, stateb64 string, w http.ResponseWriter, r *http.Request) error {
+func (h *TesterHandler) doCodeExchange(ctx context.Context, code string, stateb64 string, w http.ResponseWriter, r *http.Request) error {
 	statejson, err := base64.RawURLEncoding.DecodeString(stateb64)
 	if err != nil {
 		return err
@@ -177,7 +183,7 @@ func (h *TesterHandler) doCodeExchange(code string, stateb64 string, w http.Resp
 		return err
 	}
 
-	testerToken, err := h.TesterService.GetToken(h.AppID, state.Token, true)
+	testerToken, err := h.TesterService.GetToken(ctx, h.AppID, state.Token, true)
 	if errors.Is(err, tester.ErrTokenNotFound) {
 		h.notFound(w, r)
 		return nil
@@ -189,6 +195,7 @@ func (h *TesterHandler) doCodeExchange(code string, stateb64 string, w http.Resp
 	tokenRequest["redirect_uri"] = h.TesterEndpointsProvider.TesterURL().String()
 
 	tokenResp, err := h.TesterTokenIssuer.IssueTokensForAuthorizationCode(
+		ctx,
 		client,
 		tokenRequest,
 	)
@@ -202,18 +209,18 @@ func (h *TesterHandler) doCodeExchange(code string, stateb64 string, w http.Resp
 		return fmt.Errorf("tester: refresh_token is not string")
 	}
 
-	appSessionToken, s, err := h.TesterTokenIssuer.IssueAppSessionToken(refreshToken)
+	appSessionToken, s, err := h.TesterTokenIssuer.IssueAppSessionToken(ctx, refreshToken)
 	if err != nil {
 		return err
 	}
 
-	offlineGrant, err := h.OfflineGrants.GetOfflineGrant(s.OfflineGrantID)
+	offlineGrant, err := h.OfflineGrants.GetOfflineGrant(ctx, s.OfflineGrantID)
 	if err != nil {
 		return err
 	}
 	userID := offlineGrant.GetAuthenticationInfo().UserID
 
-	appSession, err := h.AppSessionTokenService.Exchange(appSessionToken)
+	appSession, err := h.AppSessionTokenService.Exchange(ctx, appSessionToken)
 	if err != nil {
 		return err
 	}
@@ -221,13 +228,13 @@ func (h *TesterHandler) doCodeExchange(code string, stateb64 string, w http.Resp
 	cookie := h.CookieManager.ValueCookie(session.AppSessionTokenCookieDef, appSession)
 	httputil.UpdateCookie(w, cookie)
 
-	userInfo, err := h.UserInfoProvider.GetUserInfo(userID, oauth.ClientClientLike(client, TesterScopes))
+	userInfo, err := h.UserInfoProvider.GetUserInfo(ctx, userID, oauth.ClientClientLike(client, TesterScopes))
 	if err != nil {
 		return err
 	}
 
 	result := tester.NewTesterResultFromToken(testerToken, userInfo)
-	_, err = h.TesterService.CreateResult(h.AppID, result)
+	_, err = h.TesterService.CreateResult(ctx, h.AppID, result)
 	if err != nil {
 		return err
 	}
@@ -242,8 +249,8 @@ func (h *TesterHandler) doCodeExchange(code string, stateb64 string, w http.Resp
 	return nil
 }
 
-func (h *TesterHandler) renderResult(resultID string, w http.ResponseWriter, r *http.Request) error {
-	result, err := h.TesterService.GetResult(h.AppID, resultID)
+func (h *TesterHandler) renderResult(ctx context.Context, resultID string, w http.ResponseWriter, r *http.Request) error {
+	result, err := h.TesterService.GetResult(ctx, h.AppID, resultID)
 	if errors.Is(err, tester.ErrResultNotFound) {
 		h.notFound(w, r)
 		return nil
@@ -268,23 +275,23 @@ func (h *TesterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		token := r.URL.Query().Get("token")
 		if token != "" {
-			return h.triggerAuth(token, w, r)
+			return h.triggerAuth(ctx, token, w, r)
 		}
 
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 		if code != "" && state != "" {
-			return h.doCodeExchange(code, state, w, r)
+			return h.doCodeExchange(ctx, code, state, w, r)
 		}
 
 		resultID := r.URL.Query().Get("result")
 		if resultID != "" {
-			return h.renderResult(resultID, w, r)
+			return h.renderResult(ctx, resultID, w, r)
 		}
 
 		h.notFound(w, r)

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path"
+	"strings"
 
 	aferomem "github.com/spf13/afero/mem"
 
@@ -34,15 +34,17 @@ type AppStaticAssetsHandler struct {
 }
 
 func (h *AppStaticAssetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fileServer := http.StripPrefix("/"+web.AppAssetsURLDirname+"/", &httputil.FileServer{
+	fileServer := &httputil.FileServer{
 		FileSystem:          h,
+		AssetsDir:           web.AppAssetsURLDirname,
 		FallbackToIndexHTML: false,
-	})
+	}
 	fileServer.ServeHTTP(w, r)
 }
 
 func (h *AppStaticAssetsHandler) Open(name string) (http.File, error) {
-	p := path.Join(web.AppAssetsURLDirname, name)
+	// ResourceManager.Resolve does not expect a leading slash.
+	p := strings.TrimPrefix(name, "/")
 
 	filePath, hashInPath, ok := filepathutil.ParseHashedPath(p)
 	if !ok {

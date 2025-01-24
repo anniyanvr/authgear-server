@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/authgear/authgear-server/pkg/portal/session"
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
+
+	"github.com/authgear/authgear-server/pkg/portal/session"
 )
 
 type NodeResolver func(ctx context.Context, id string) (interface{}, error)
@@ -20,7 +22,7 @@ var nodeDefs = relay.NewNodeDefinitions(relay.NodeDefinitionsConfig{
 		// Access Control: authenticated user.
 		sessionInfo := session.GetValidSessionInfo(ctx)
 		if sessionInfo == nil {
-			return nil, nil
+			return nil, Unauthenticated.New("only authenticated users can query node")
 		}
 		// If the ID is invalid, we should return null instead of returning an error.
 		// This behavior conforms the schema.

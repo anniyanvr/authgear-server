@@ -1,12 +1,14 @@
 package hook
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/event"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/rolesgroups"
 	"github.com/authgear/authgear-server/pkg/util/accesscontrol"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/log"
@@ -19,23 +21,28 @@ type Logger struct{ *log.Logger }
 func NewLogger(lf *log.Factory) Logger { return Logger{lf.New("hook-sink")} }
 
 type StandardAttributesServiceNoEvent interface {
-	UpdateStandardAttributes(role accesscontrol.Role, userID string, stdAttrs map[string]interface{}) error
+	UpdateStandardAttributes(ctx context.Context, role accesscontrol.Role, userID string, stdAttrs map[string]interface{}) error
 }
 
 type CustomAttributesServiceNoEvent interface {
-	UpdateAllCustomAttributes(role accesscontrol.Role, userID string, reprForm map[string]interface{}) error
+	UpdateAllCustomAttributes(ctx context.Context, role accesscontrol.Role, userID string, reprForm map[string]interface{}) error
+}
+
+type RolesAndGroupsServiceNoEvent interface {
+	ResetUserRole(ctx context.Context, options *rolesgroups.ResetUserRoleOptions) error
+	ResetUserGroup(ctx context.Context, options *rolesgroups.ResetUserGroupOptions) error
 }
 
 type EventWebHook interface {
 	SupportURL(u *url.URL) bool
-	DeliverBlockingEvent(u *url.URL, e *event.Event) (*event.HookResponse, error)
-	DeliverNonBlockingEvent(u *url.URL, e *event.Event) error
+	DeliverBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) (*event.HookResponse, error)
+	DeliverNonBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) error
 }
 
 type EventDenoHook interface {
 	SupportURL(u *url.URL) bool
-	DeliverBlockingEvent(u *url.URL, e *event.Event) (*event.HookResponse, error)
-	DeliverNonBlockingEvent(u *url.URL, e *event.Event) error
+	DeliverBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) (*event.HookResponse, error)
+	DeliverNonBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) error
 }
 
 type Sink struct {
@@ -46,11 +53,12 @@ type Sink struct {
 	EventDenoHook      EventDenoHook
 	StandardAttributes StandardAttributesServiceNoEvent
 	CustomAttributes   CustomAttributesServiceNoEvent
+	RolesAndGroups     RolesAndGroupsServiceNoEvent
 }
 
-func (s *Sink) ReceiveBlockingEvent(e *event.Event) (err error) {
+func (s *Sink) ReceiveBlockingEvent(ctx context.Context, e *event.Event) (err error) {
 	if s.WillDeliverBlockingEvent(e.Type) {
-		err = s.DeliverBlockingEvent(e)
+		err = s.DeliverBlockingEvent(ctx, e)
 		if err != nil {
 			if !apierrors.IsKind(err, WebHookDisallowed) {
 				err = fmt.Errorf("failed to dispatch event: %w", err)
@@ -62,7 +70,7 @@ func (s *Sink) ReceiveBlockingEvent(e *event.Event) (err error) {
 	return
 }
 
-func (s *Sink) ReceiveNonBlockingEvent(e *event.Event) (err error) {
+func (s *Sink) ReceiveNonBlockingEvent(ctx context.Context, e *event.Event) (err error) {
 	// Skip events that are not for webhook.
 	payload := e.Payload.(event.NonBlockingPayload)
 	if !payload.ForHook() {
@@ -70,7 +78,7 @@ func (s *Sink) ReceiveNonBlockingEvent(e *event.Event) (err error) {
 	}
 
 	if s.WillDeliverNonBlockingEvent(e.Type) {
-		err = s.DeliverNonBlockingEvent(e)
+		err = s.DeliverNonBlockingEvent(ctx, e)
 		if err != nil {
 			return
 		}
@@ -79,7 +87,7 @@ func (s *Sink) ReceiveNonBlockingEvent(e *event.Event) (err error) {
 	return
 }
 
-func (s *Sink) DeliverBlockingEvent(e *event.Event) error {
+func (s *Sink) DeliverBlockingEvent(ctx context.Context, e *event.Event) error {
 	startTime := s.Clock.NowMonotonic()
 	totalTimeout := s.Config.SyncTotalTimeout.Duration()
 
@@ -97,7 +105,7 @@ func (s *Sink) DeliverBlockingEvent(e *event.Event) error {
 			})
 		}
 
-		resp, err := s.deliverBlockingEvent(hook, e)
+		resp, err := s.deliverBlockingEvent(ctx, hook, e)
 		if err != nil {
 			return err
 		}
@@ -113,16 +121,17 @@ func (s *Sink) DeliverBlockingEvent(e *event.Event) error {
 		}
 
 		var applied bool
-		applied = e.ApplyMutations(resp.Mutations)
+		applied = e.ApplyMutations(ctx, resp.Mutations)
 		if applied {
 			mutationsEverApplied = true
 		}
 	}
 
 	if mutationsEverApplied {
-		err := e.PerformEffects(event.MutationsEffectContext{
+		err := e.PerformEffects(ctx, event.MutationsEffectContext{
 			StandardAttributes: s.StandardAttributes,
 			CustomAttributes:   s.CustomAttributes,
+			RolesAndGroups:     s.RolesAndGroups,
 		})
 		if err != nil {
 			return err
@@ -132,7 +141,7 @@ func (s *Sink) DeliverBlockingEvent(e *event.Event) error {
 	return nil
 }
 
-func (s *Sink) DeliverNonBlockingEvent(e *event.Event) error {
+func (s *Sink) DeliverNonBlockingEvent(ctx context.Context, e *event.Event) error {
 	if !e.IsNonBlocking {
 		return nil
 	}
@@ -155,7 +164,7 @@ func (s *Sink) DeliverNonBlockingEvent(e *event.Event) error {
 			continue
 		}
 
-		errToIgnore := s.deliverNonBlockingEvent(hook, e)
+		errToIgnore := s.deliverNonBlockingEvent(ctx, hook, e)
 		if errToIgnore != nil {
 			s.Logger.WithError(errToIgnore).Error("failed to dispatch non blocking event")
 		}
@@ -187,31 +196,31 @@ func (s *Sink) WillDeliverNonBlockingEvent(eventType event.Type) bool {
 	return false
 }
 
-func (s *Sink) deliverBlockingEvent(cfg config.BlockingHandlersConfig, e *event.Event) (*event.HookResponse, error) {
+func (s *Sink) deliverBlockingEvent(ctx context.Context, cfg config.BlockingHandlersConfig, e *event.Event) (*event.HookResponse, error) {
 	u, err := url.Parse(cfg.URL)
 	if err != nil {
 		return nil, err
 	}
 	switch {
 	case s.EventWebHook.SupportURL(u):
-		return s.EventWebHook.DeliverBlockingEvent(u, e)
+		return s.EventWebHook.DeliverBlockingEvent(ctx, u, e)
 	case s.EventDenoHook.SupportURL(u):
-		return s.EventDenoHook.DeliverBlockingEvent(u, e)
+		return s.EventDenoHook.DeliverBlockingEvent(ctx, u, e)
 	default:
 		return nil, fmt.Errorf("unsupported hook URL: %v", u)
 	}
 }
 
-func (s *Sink) deliverNonBlockingEvent(cfg config.NonBlockingHandlersConfig, e *event.Event) error {
+func (s *Sink) deliverNonBlockingEvent(ctx context.Context, cfg config.NonBlockingHandlersConfig, e *event.Event) error {
 	u, err := url.Parse(cfg.URL)
 	if err != nil {
 		return err
 	}
 	switch {
 	case s.EventWebHook.SupportURL(u):
-		return s.EventWebHook.DeliverNonBlockingEvent(u, e)
+		return s.EventWebHook.DeliverNonBlockingEvent(ctx, u, e)
 	case s.EventDenoHook.SupportURL(u):
-		return s.EventDenoHook.DeliverNonBlockingEvent(u, e)
+		return s.EventDenoHook.DeliverNonBlockingEvent(ctx, u, e)
 	default:
 		return fmt.Errorf("unsupported hook URL: %v", u)
 	}

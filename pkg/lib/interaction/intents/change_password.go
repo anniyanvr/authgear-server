@@ -1,6 +1,7 @@
 package intents
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/authgear/authgear-server/pkg/lib/authn"
@@ -31,12 +32,12 @@ func NewIntentChangeSecondaryPassword(userID string) *IntentChangePassword {
 	}
 }
 
-func (i *IntentChangePassword) InstantiateRootNode(ctx *interaction.Context, graph *interaction.Graph) (interaction.Node, error) {
+func (i *IntentChangePassword) InstantiateRootNode(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) (interaction.Node, error) {
 	edge := nodes.EdgeDoUseUser{UseUserID: i.UserID}
-	return edge.Instantiate(ctx, graph, i)
+	return edge.Instantiate(goCtx, ctx, graph, i)
 }
 
-func (i *IntentChangePassword) DeriveEdgesForNode(graph *interaction.Graph, node interaction.Node) ([]interaction.Edge, error) {
+func (i *IntentChangePassword) DeriveEdgesForNode(goCtx context.Context, graph *interaction.Graph, node interaction.Node) ([]interaction.Edge, error) {
 	switch node := node.(type) {
 	case *nodes.NodeDoUseUser:
 		return []interaction.Edge{
@@ -45,9 +46,25 @@ func (i *IntentChangePassword) DeriveEdgesForNode(graph *interaction.Graph, node
 			},
 		}, nil
 	case *nodes.NodeChangePasswordEnd:
-		// Password was not changed, ends the interaction
-		return nil, nil
+		// We rely on NodeDoEnsureSession to write authentication info.
+		return []interaction.Edge{
+			&nodes.EdgeDoEnsureSession{
+				Mode: nodes.EnsureSessionModeNoop,
+			},
+		}, nil
 	case *nodes.NodeDoUpdateAuthenticator:
+		// We rely on NodeDoEnsureSession to write authentication info.
+		return []interaction.Edge{
+			&nodes.EdgeDoEnsureSession{
+				Mode: nodes.EnsureSessionModeNoop,
+			},
+		}, nil
+	case *nodes.NodeDoEnsureSession:
+		return []interaction.Edge{
+			&nodes.EdgeSettingsActionEnd{},
+		}, nil
+	case *nodes.NodeSettingsActionEnd:
+		// Intent is finished.
 		return nil, nil
 	default:
 		panic(fmt.Errorf("interaction: unexpected node: %T", node))

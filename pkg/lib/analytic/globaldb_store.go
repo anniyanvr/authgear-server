@@ -1,6 +1,8 @@
 package analytic
 
 import (
+	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
@@ -11,7 +13,7 @@ type GlobalDBStore struct {
 	SQLExecutor *globaldb.SQLExecutor
 }
 
-func (s *GlobalDBStore) GetAppOwners(rangeFrom *time.Time, rangeTo *time.Time) ([]*AppCollaborator, error) {
+func (s *GlobalDBStore) GetAppOwners(ctx context.Context, rangeFrom *time.Time, rangeTo *time.Time) ([]*AppCollaborator, error) {
 	builder := s.SQLBuilder.
 		Select(
 			"app_id",
@@ -29,7 +31,7 @@ func (s *GlobalDBStore) GetAppOwners(rangeFrom *time.Time, rangeTo *time.Time) (
 	builder = builder.
 		Where("role = ?", "owner")
 
-	rows, err := s.SQLExecutor.QueryWith(builder)
+	rows, err := s.SQLExecutor.QueryWith(ctx, builder)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +51,7 @@ func (s *GlobalDBStore) GetAppOwners(rangeFrom *time.Time, rangeTo *time.Time) (
 	return result, nil
 }
 
-func (s *GlobalDBStore) GetAppIDs() (appIDs []string, err error) {
+func (s *GlobalDBStore) GetAppIDs(ctx context.Context) (appIDs []string, err error) {
 	builder := s.SQLBuilder.
 		Select(
 			"app_id",
@@ -57,7 +59,7 @@ func (s *GlobalDBStore) GetAppIDs() (appIDs []string, err error) {
 		From(s.SQLBuilder.TableName("_portal_config_source")).
 		OrderBy("created_at ASC")
 
-	rows, e := s.SQLExecutor.QueryWith(builder)
+	rows, e := s.SQLExecutor.QueryWith(ctx, builder)
 	if e != nil {
 		err = e
 		return
@@ -74,4 +76,61 @@ func (s *GlobalDBStore) GetAppIDs() (appIDs []string, err error) {
 		appIDs = append(appIDs, appID)
 	}
 	return
+}
+
+func (s *GlobalDBStore) GetCollaboratorCount(ctx context.Context, appID string) (int, error) {
+	q := s.SQLBuilder.
+		Select(
+			"count(*)",
+		).
+		From(s.SQLBuilder.TableName("_portal_app_collaborator")).
+		Where("app_id = ?", appID)
+
+	row, err := s.SQLExecutor.QueryRowWith(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+
+	var count int
+	err = row.Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
+func (s *GlobalDBStore) GetAppConfigSource(ctx context.Context, appID string) (*AppConfigSource, error) {
+	q := s.SQLBuilder.
+		Select(
+			"app_id",
+			"data",
+			"plan_name",
+		).
+		From(s.SQLBuilder.TableName("_portal_config_source")).
+		Where("app_id = ?", appID)
+
+	row, err := s.SQLExecutor.QueryRowWith(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &AppConfigSource{}
+	var dataBytes []byte
+
+	err = row.Scan(
+		&out.AppID,
+		&dataBytes,
+		&out.PlanName,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(dataBytes, &out.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }

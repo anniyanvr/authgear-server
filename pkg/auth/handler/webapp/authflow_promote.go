@@ -1,13 +1,16 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
+
 	"net/url"
+
+	"github.com/authgear/oauthrelyingparty/pkg/api/oauthrelyingparty"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
 	"github.com/authgear/authgear-server/pkg/auth/webapp"
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 	"github.com/authgear/authgear-server/pkg/util/template"
 	"github.com/authgear/authgear-server/pkg/util/validation"
@@ -15,7 +18,7 @@ import (
 
 var TemplateWebAuthflowPromoteHTML = template.RegisterHTML(
 	"web/authflow_promote.html",
-	components...,
+	Components...,
 )
 
 var AuthflowPromoteLoginIDSchema = validation.NewSimpleSchema(`
@@ -47,27 +50,31 @@ type AuthflowPromoteHandler struct {
 	Endpoints         AuthflowPromoteEndpointsProvider
 }
 
-func (h *AuthflowPromoteHandler) GetData(w http.ResponseWriter, r *http.Request, screen *webapp.AuthflowScreenWithFlowResponse) (map[string]interface{}, error) {
+func (h *AuthflowPromoteHandler) GetData(
+	w http.ResponseWriter,
+	r *http.Request,
+	s *webapp.Session,
+	screen *webapp.AuthflowScreenWithFlowResponse,
+) (map[string]interface{}, error) {
 	data := make(map[string]interface{})
 
 	baseViewModel := h.BaseViewModel.ViewModelForAuthFlow(r, w)
 	viewmodels.Embed(data, baseViewModel)
 
-	authflowViewModel := h.AuthflowViewModel.NewWithAuthflow(screen.StateTokenFlowResponse, r)
+	authflowViewModel := h.AuthflowViewModel.NewWithAuthflow(s, screen.StateTokenFlowResponse, r)
 	viewmodels.Embed(data, authflowViewModel)
 
 	return data, nil
 }
 
 func (h *AuthflowPromoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	flowName := "default"
 	opts := webapp.SessionOptions{
 		RedirectURI: h.Controller.RedirectURI(r),
 	}
 
 	var handlers AuthflowControllerHandlers
-	handlers.Get(func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
-		data, err := h.GetData(w, r, screen)
+	handlers.Get(func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+		data, err := h.GetData(w, r, s, screen)
 		if err != nil {
 			return err
 		}
@@ -76,17 +83,17 @@ func (h *AuthflowPromoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return nil
 	})
 
-	handlers.PostAction("oauth", func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.PostAction("oauth", func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		providerAlias := r.Form.Get("x_provider_alias")
 		callbackURL := h.Endpoints.SSOCallbackURL(providerAlias).String()
 		input := map[string]interface{}{
 			"identification": "oauth",
 			"alias":          providerAlias,
 			"redirect_uri":   callbackURL,
-			"response_mode":  string(sso.ResponseModeFormPost),
+			"response_mode":  oauthrelyingparty.ResponseModeFormPost,
 		}
 
-		result, err := h.Controller.AdvanceWithInput(r, s, screen, input)
+		result, err := h.Controller.AdvanceWithInput(ctx, r, s, screen, input, nil)
 		if err != nil {
 			return err
 		}
@@ -95,7 +102,7 @@ func (h *AuthflowPromoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return nil
 	})
 
-	handlers.PostAction("login_id", func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.PostAction("login_id", func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		err := AuthflowPromoteLoginIDSchema.Validator().ValidateValue(FormToJSON(r.Form))
 		if err != nil {
 			return err
@@ -109,7 +116,7 @@ func (h *AuthflowPromoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			"login_id":       loginID,
 		}
 
-		result, err := h.Controller.AdvanceWithInput(r, s, screen, input)
+		result, err := h.Controller.AdvanceWithInput(ctx, r, s, screen, input, nil)
 		if err != nil {
 			return err
 		}
@@ -118,8 +125,5 @@ func (h *AuthflowPromoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return nil
 	})
 
-	h.Controller.HandleStartOfFlow(w, r, opts, authflow.FlowReference{
-		Type: authflow.FlowTypePromote,
-		Name: flowName,
-	}, &handlers, nil)
+	h.Controller.HandleStartOfFlow(r.Context(), w, r, opts, authflow.FlowTypePromote, &handlers, nil)
 }

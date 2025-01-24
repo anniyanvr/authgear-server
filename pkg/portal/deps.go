@@ -9,21 +9,22 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/analytic"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
+	"github.com/authgear/authgear-server/pkg/lib/config/plan"
 	"github.com/authgear/authgear-server/pkg/lib/hook"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/auditdb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
+	"github.com/authgear/authgear-server/pkg/lib/infra/mail"
 	"github.com/authgear/authgear-server/pkg/lib/tutorial"
 	"github.com/authgear/authgear-server/pkg/lib/usage"
 	appresource "github.com/authgear/authgear-server/pkg/portal/appresource/factory"
 	"github.com/authgear/authgear-server/pkg/portal/deps"
 	"github.com/authgear/authgear-server/pkg/portal/endpoint"
 	"github.com/authgear/authgear-server/pkg/portal/graphql"
-	"github.com/authgear/authgear-server/pkg/portal/lib/plan"
+	portallibplan "github.com/authgear/authgear-server/pkg/portal/lib/plan"
 	"github.com/authgear/authgear-server/pkg/portal/libstripe"
 	"github.com/authgear/authgear-server/pkg/portal/loader"
 	"github.com/authgear/authgear-server/pkg/portal/service"
 	"github.com/authgear/authgear-server/pkg/portal/smtp"
-	"github.com/authgear/authgear-server/pkg/portal/task"
 	"github.com/authgear/authgear-server/pkg/portal/transport"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
@@ -53,7 +54,7 @@ var denoDependencySet = wire.NewSet(
 
 var DependencySet = wire.NewSet(
 	deps.DependencySet,
-	deps.TaskDependencySet,
+	deps.MailDependencySet,
 
 	service.DependencySet,
 	adminauthz.DependencySet,
@@ -65,6 +66,7 @@ var DependencySet = wire.NewSet(
 	endpoint.DependencySet,
 
 	smtp.DependencySet,
+	wire.Bind(new(smtp.MailSender), new(*mail.Sender)),
 
 	auditdb.NewReadHandle,
 	auditdb.NewWriteHandle,
@@ -75,15 +77,18 @@ var DependencySet = wire.NewSet(
 	usage.DependencySet,
 
 	wire.Bind(new(service.AuthzAdder), new(*adminauthz.Adder)),
-	wire.Bind(new(service.CollaboratorServiceTaskQueue), new(*task.InProcessQueue)),
 	wire.Bind(new(service.CollaboratorServiceEndpointsProvider), new(*endpoint.EndpointsProvider)),
+	wire.Bind(new(service.CollaboratorServiceSMTPService), new(*smtp.Service)),
 	wire.Bind(new(service.CollaboratorServiceAdminAPIService), new(*service.AdminAPIService)),
 	wire.Bind(new(service.ResourceManager), new(*resource.Manager)),
-	wire.Bind(new(service.AppPlanService), new(*plan.Service)),
+	wire.Bind(new(service.AppPlanService), new(*portallibplan.Service)),
 	wire.Bind(new(service.AppResourceManagerFactory), new(*appresource.ManagerFactory)),
 	wire.Bind(new(service.SubscriptionConfigSourceStore), new(*configsource.Store)),
+	wire.Bind(new(service.AppConfigSourceStore), new(*configsource.Store)),
 	wire.Bind(new(service.SubscriptionPlanStore), new(*plan.Store)),
-	wire.Bind(new(service.UsageStore), new(*usage.GlobalDBStore)),
+	wire.Bind(new(service.SubscriptionUsageStore), new(*usage.GlobalDBStore)),
+	wire.Bind(new(service.UsageUsageStore), new(*usage.GlobalDBStore)),
+	wire.Bind(new(service.OnboardServiceAdminAPIService), new(*service.AdminAPIService)),
 
 	loader.DependencySet,
 	wire.Bind(new(loader.UserLoaderAdminAPIService), new(*service.AdminAPIService)),
@@ -110,9 +115,10 @@ var DependencySet = wire.NewSet(
 	wire.Bind(new(graphql.TutorialService), new(*tutorial.Service)),
 	wire.Bind(new(graphql.StripeService), new(*libstripe.Service)),
 	wire.Bind(new(graphql.SubscriptionService), new(*service.SubscriptionService)),
-	wire.Bind(new(graphql.NFTService), new(*service.NFTService)),
+	wire.Bind(new(graphql.UsageService), new(*service.UsageService)),
 	wire.Bind(new(graphql.DenoService), new(*hook.DenoClientImpl)),
 	wire.Bind(new(graphql.AuditService), new(*service.AuditService)),
+	wire.Bind(new(graphql.OnboardService), new(*service.OnboardService)),
 
 	transport.DependencySet,
 	wire.Bind(new(transport.AdminAPIService), new(*service.AdminAPIService)),
@@ -122,8 +128,8 @@ var DependencySet = wire.NewSet(
 	wire.Bind(new(transport.StripeService), new(*libstripe.Service)),
 	wire.Bind(new(transport.SubscriptionService), new(*service.SubscriptionService)),
 
-	plan.DependencySet,
-	wire.Bind(new(libstripe.PlanService), new(*plan.Service)),
+	portallibplan.DependencySet,
+	wire.Bind(new(libstripe.PlanService), new(*portallibplan.Service)),
 	wire.Bind(new(libstripe.EndpointsProvider), new(*endpoint.EndpointsProvider)),
 
 	appresource.DependencySet,

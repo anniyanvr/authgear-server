@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
@@ -24,10 +25,10 @@ type CreateAuthenticatorPhoneOTPNode interface {
 	GetSelectedPhoneNumberForPhoneOTP() string
 }
 
-// nolint: gocyclo
+// nolint: gocognit
 func handleAlternativeSteps(ctrl *Controller) {
-	ctrl.PostAction("choose_step", func() (err error) {
-		session, err := ctrl.InteractionSession()
+	ctrl.PostAction("choose_step", func(ctx context.Context) (err error) {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
@@ -50,7 +51,7 @@ func handleAlternativeSteps(ctrl *Controller) {
 
 		case webapp.SessionStepSetupOOBOTPEmail,
 			webapp.SessionStepSetupOOBOTPSMS:
-			graph, err := ctrl.InteractionGet()
+			graph, err := ctrl.InteractionGet(ctx)
 			if err != nil {
 				return err
 			}
@@ -92,7 +93,7 @@ func handleAlternativeSteps(ctrl *Controller) {
 			}
 
 		case webapp.SessionStepSetupLoginLinkOTP:
-			graph, err := ctrl.InteractionGet()
+			graph, err := ctrl.InteractionGet(ctx)
 			if err != nil {
 				return err
 			}
@@ -113,7 +114,7 @@ func handleAlternativeSteps(ctrl *Controller) {
 				panic(fmt.Sprintf("webapp: unexpected authentication stage: %s", node.GetCreateAuthenticatorStage()))
 			}
 		case webapp.SessionStepSetupWhatsappOTP:
-			graph, err := ctrl.InteractionGet()
+			graph, err := ctrl.InteractionGet(ctx)
 			if err != nil {
 				return err
 			}
@@ -270,19 +271,19 @@ func handleAlternativeSteps(ctrl *Controller) {
 				stepKind,
 				session.CurrentStep().GraphID,
 			))
-			if err = ctrl.Page.UpdateSession(session); err != nil {
+			if err = ctrl.Page.UpdateSession(ctx, session); err != nil {
 				return err
 			}
 			result = &webapp.Result{
 				RedirectURI:      session.CurrentStep().URL().String(),
-				NavigationAction: "replace",
+				NavigationAction: webapp.NavigationActionReplace,
 			}
 		} else {
-			result, err = ctrl.InteractionPost(inputFn)
+			result, err = ctrl.InteractionPost(ctx, inputFn)
 			if err != nil {
 				return err
 			}
-			result.NavigationAction = "replace"
+			result.NavigationAction = webapp.NavigationActionReplace
 		}
 
 		result.WriteResponse(ctrl.response, ctrl.request)

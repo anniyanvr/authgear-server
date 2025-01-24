@@ -68,29 +68,23 @@ type WriteSQLExecutor struct {
 	db.SQLExecutor
 }
 
-func NewReadSQLExecutor(c context.Context, handle *ReadHandle) *ReadSQLExecutor {
+func NewReadSQLExecutor(handle *ReadHandle) *ReadSQLExecutor {
 	if handle == nil {
 		return nil
 	}
 
 	return &ReadSQLExecutor{
-		db.SQLExecutor{
-			Context:  c,
-			Database: handle,
-		},
+		db.SQLExecutor{},
 	}
 }
 
-func NewWriteSQLExecutor(c context.Context, handle *WriteHandle) *WriteSQLExecutor {
+func NewWriteSQLExecutor(handle *WriteHandle) *WriteSQLExecutor {
 	if handle == nil {
 		return nil
 	}
 
 	return &WriteSQLExecutor{
-		db.SQLExecutor{
-			Context:  c,
-			Database: handle,
-		},
+		db.SQLExecutor{},
 	}
 }
 
@@ -99,7 +93,6 @@ type ReadHandle struct {
 }
 
 func NewReadHandle(
-	ctx context.Context,
 	pool *db.Pool,
 	cfg *config.DatabaseEnvironmentConfig,
 	credentials *config.AuditDatabaseCredentials,
@@ -109,20 +102,24 @@ func NewReadHandle(
 		return nil
 	}
 
+	info := db.ConnectionInfo{
+		Purpose:     db.ConnectionPurposeAuditReadOnly,
+		DatabaseURL: credentials.DatabaseURL,
+	}
+
 	opts := db.ConnectionOptions{
-		DatabaseURL:           credentials.DatabaseURL,
 		MaxOpenConnection:     cfg.MaxOpenConn,
 		MaxIdleConnection:     cfg.MaxIdleConn,
 		MaxConnectionLifetime: cfg.ConnMaxLifetimeSeconds.Duration(),
 		IdleConnectionTimeout: cfg.ConnMaxIdleTimeSeconds.Duration(),
 	}
 	return &ReadHandle{
-		db.NewHookHandle(ctx, pool, opts, lf),
+		db.NewHookHandle(pool, info, opts, lf),
 	}
 }
 
-func (h *ReadHandle) ReadOnly(do func() error) (err error) {
-	return h.HookHandle.ReadOnly(do)
+func (h *ReadHandle) ReadOnly(ctx context.Context, do func(ctx context.Context) error) (err error) {
+	return h.HookHandle.ReadOnly(ctx, do)
 }
 
 type WriteHandle struct {
@@ -130,7 +127,6 @@ type WriteHandle struct {
 }
 
 func NewWriteHandle(
-	ctx context.Context,
 	pool *db.Pool,
 	cfg *config.DatabaseEnvironmentConfig,
 	credentials *config.AuditDatabaseCredentials,
@@ -140,18 +136,22 @@ func NewWriteHandle(
 		return nil
 	}
 
+	info := db.ConnectionInfo{
+		Purpose:     db.ConnectionPurposeAuditReadWrite,
+		DatabaseURL: credentials.DatabaseURL,
+	}
+
 	opts := db.ConnectionOptions{
-		DatabaseURL:           credentials.DatabaseURL,
 		MaxOpenConnection:     cfg.MaxOpenConn,
 		MaxIdleConnection:     cfg.MaxIdleConn,
 		MaxConnectionLifetime: cfg.ConnMaxLifetimeSeconds.Duration(),
 		IdleConnectionTimeout: cfg.ConnMaxIdleTimeSeconds.Duration(),
 	}
 	return &WriteHandle{
-		db.NewHookHandle(ctx, pool, opts, lf),
+		db.NewHookHandle(pool, info, opts, lf),
 	}
 }
 
-func (h *WriteHandle) WithTx(do func() error) (err error) {
-	return h.HookHandle.WithTx(do)
+func (h *WriteHandle) WithTx(ctx context.Context, do func(ctx context.Context) error) (err error) {
+	return h.HookHandle.WithTx(ctx, do)
 }

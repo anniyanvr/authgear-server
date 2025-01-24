@@ -1,12 +1,14 @@
 package cloudstorage
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
+
 	"github.com/authgear/authgear-server/pkg/util/clock"
 )
 
@@ -18,7 +20,7 @@ type AzureStorage struct {
 	Clock          clock.Clock
 }
 
-var _ Storage = &AzureStorage{}
+var _ storage = &AzureStorage{}
 
 func NewAzureStorage(serviceURL string, storageAccount string, accessKey string, container string, c clock.Clock) *AzureStorage {
 	return &AzureStorage{
@@ -44,7 +46,7 @@ func (s *AzureStorage) getServiceURL() (*url.URL, error) {
 	return u, nil
 }
 
-func (s *AzureStorage) PresignPutObject(name string, header http.Header) (*http.Request, error) {
+func (s *AzureStorage) PresignPutObject(ctx context.Context, name string, header http.Header) (*http.Request, error) {
 	now := s.Clock.NowUTC()
 	u, err := s.SignedURL(name, now, PresignPutExpires, azblob.BlobSASPermissions{
 		Create: true,
@@ -66,19 +68,21 @@ func (s *AzureStorage) PresignPutObject(name string, header http.Header) (*http.
 	return &req, nil
 }
 
-func (s *AzureStorage) PresignGetObject(name string) (*url.URL, error) {
+func (s *AzureStorage) PresignGetObject(ctx context.Context, name string, expire time.Duration) (*url.URL, error) {
 	now := s.Clock.NowUTC()
-	return s.SignedURL(name, now, PresignGetExpires, azblob.BlobSASPermissions{
+
+	return s.SignedURL(name, now, expire, azblob.BlobSASPermissions{
 		Read: true,
 	})
 }
 
-func (s *AzureStorage) PresignHeadObject(name string) (*url.URL, error) {
-	return s.PresignGetObject(name)
+func (s *AzureStorage) PresignHeadObject(ctx context.Context, name string, expire time.Duration) (*url.URL, error) {
+	return s.PresignGetObject(ctx, name, expire)
 }
 
 func (s *AzureStorage) SignedURL(name string, now time.Time, duration time.Duration, perm azblob.BlobSASPermissions) (*url.URL, error) {
 	sigValues := azblob.BlobSASSignatureValues{
+		// local blob development need to use `azblob.SASProtocolHTTPSandHTTP`
 		Protocol:      azblob.SASProtocolHTTPS,
 		StartTime:     now,
 		ExpiryTime:    now.Add(duration),
@@ -103,8 +107,12 @@ func (s *AzureStorage) SignedURL(name string, now time.Time, duration time.Durat
 	}
 
 	parts := azblob.BlobURLParts{
-		Scheme:        serviceURL.Scheme,
-		Host:          serviceURL.Host,
+		Scheme: serviceURL.Scheme,
+		Host:   serviceURL.Host,
+		// Inject storage account to URL when testing on IP style host, eg: 127.0.0.1
+		// IPEndpointStyleInfo: azblob.IPEndpointStyleInfo{
+		// 	AccountName: s.StorageAccount,
+		// },
 		ContainerName: s.Container,
 		BlobName:      name,
 		SAS:           q,
@@ -114,10 +122,10 @@ func (s *AzureStorage) SignedURL(name string, now time.Time, duration time.Durat
 	return &u, nil
 }
 
-func (s *AzureStorage) MakeDirector(extractKey func(r *http.Request) string) func(r *http.Request) {
+func (s *AzureStorage) MakeDirector(extractKey func(r *http.Request) string, expire time.Duration) func(r *http.Request) {
 	return func(r *http.Request) {
 		key := extractKey(r)
-		u, err := s.PresignGetObject(key)
+		u, err := s.PresignGetObject(r.Context(), key, expire)
 		if err != nil {
 			panic(err)
 		}

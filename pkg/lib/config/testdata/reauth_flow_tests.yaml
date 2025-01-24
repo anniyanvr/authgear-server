@@ -7,6 +7,8 @@ value:
   - type: authenticate
     one_of:
     - authentication: primary_password
+      bot_protection:
+        mode: never
       steps:
       - type: authenticate
         one_of:
@@ -23,6 +25,9 @@ error: |-
     map[actual:foobar expected:[id_token]]
   /steps/2/one_of/0/authentication: enum
     map[actual:foobar expected:[primary_password primary_passkey primary_oob_otp_email primary_oob_otp_sms secondary_password secondary_totp secondary_oob_otp_email secondary_oob_otp_sms]]
+  /steps/2/one_of/0/bot_protection: required
+    map[actual:[foobar] expected:[mode] missing:[mode]]
+  /steps/2/one_of/0/bot_protection/foobar: 
 value:
   name: id
   steps:
@@ -33,3 +38,21 @@ value:
   - type: authenticate
     one_of:
     - authentication: foobar
+      bot_protection:
+        foobar: true
+---
+part: AuthenticationFlowReauthFlow
+name: bot-protection-mode-always
+error: null
+value:
+  name: id
+  steps:
+  - type: authenticate
+    one_of:
+    - authentication: primary_password
+      bot_protection:
+        mode: always
+      steps:
+      - type: authenticate
+        one_of:
+        - authentication: secondary_totp

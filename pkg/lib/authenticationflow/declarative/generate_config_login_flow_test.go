@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/google"
 )
 
 func TestGenerateLoginFlowConfig(t *testing.T) {
@@ -48,7 +49,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -58,8 +59,6 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_email
         - name: authenticate_secondary_email
           type: authenticate
           optional: true
@@ -67,6 +66,8 @@ steps:
           - authentication: secondary_totp
           - authentication: recovery_code
           - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_email
 - type: check_account_status
 - type: terminate_other_sessions
 `)
@@ -85,7 +86,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -94,7 +95,7 @@ steps:
       type: authenticate
       one_of:
       - authentication: primary_oob_otp_email
-        target_step: identify
+        target_step: login_identify
         steps:
         - name: authenticate_secondary_email
           type: authenticate
@@ -121,7 +122,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: phone
@@ -130,7 +131,7 @@ steps:
       type: authenticate
       one_of:
       - authentication: primary_oob_otp_sms
-        target_step: identify
+        target_step: login_identify
         steps:
         - name: authenticate_secondary_phone
           type: authenticate
@@ -157,7 +158,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: username
@@ -167,8 +168,6 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_username
         - name: authenticate_secondary_username
           type: authenticate
           optional: true
@@ -176,6 +175,8 @@ steps:
           - authentication: secondary_totp
           - authentication: recovery_code
           - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_username
 - type: check_account_status
 - type: terminate_other_sessions
 `)
@@ -197,7 +198,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -207,8 +208,6 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_email
         - name: authenticate_secondary_email
           type: authenticate
           optional: true
@@ -216,8 +215,10 @@ steps:
           - authentication: secondary_totp
           - authentication: recovery_code
           - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_email
       - authentication: primary_oob_otp_email
-        target_step: identify
+        target_step: login_identify
         steps:
         - name: authenticate_secondary_email
           type: authenticate
@@ -233,8 +234,6 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_phone
         - name: authenticate_secondary_phone
           type: authenticate
           optional: true
@@ -242,8 +241,10 @@ steps:
           - authentication: secondary_totp
           - authentication: recovery_code
           - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_phone
       - authentication: primary_oob_otp_sms
-        target_step: identify
+        target_step: login_identify
         steps:
         - name: authenticate_secondary_phone
           type: authenticate
@@ -273,7 +274,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -283,14 +284,14 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_email
         - name: authenticate_secondary_email
           type: authenticate
           one_of:
           - authentication: secondary_totp
           - authentication: recovery_code
           - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_email
 - type: check_account_status
 - type: terminate_other_sessions
 `)
@@ -313,7 +314,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -323,13 +324,13 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_email
         - name: authenticate_secondary_email
           type: authenticate
           optional: true
           one_of:
           - authentication: secondary_totp
+        - type: change_password
+          target_step: authenticate_primary_email
 - type: check_account_status
 - type: terminate_other_sessions
 `)
@@ -351,7 +352,7 @@ authenticator:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -368,6 +369,8 @@ steps:
           - authentication: secondary_totp
           - authentication: recovery_code
           - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_email
 - type: check_account_status
 - type: terminate_other_sessions
 `)
@@ -385,7 +388,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: oauth
@@ -419,7 +422,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -429,13 +432,62 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_email
         - name: authenticate_secondary_email
           type: authenticate
           one_of:
           - authentication: secondary_totp
+        - type: change_password
+          target_step: authenticate_primary_email
   - identification: oauth
+- type: check_account_status
+- type: terminate_other_sessions
+`)
+
+		// ldap, not 2fa
+		test(`
+authentication:
+  identities:
+  - ldap
+  secondary_authentication_mode: disabled
+identity:
+  ldap:
+    servers:
+    - name: ldap
+`, `
+name: default
+steps:
+- name: login_identify
+  type: identify
+  one_of:
+  - identification: ldap
+- type: check_account_status
+- type: terminate_other_sessions
+`)
+
+		// ldap, default 2fa options
+		test(`
+authentication:
+  identities:
+  - ldap
+identity:
+  ldap:
+    servers:
+    - name: ldap
+`, `
+name: default
+steps:
+- name: login_identify
+  type: identify
+  one_of:
+  - identification: ldap
+    steps:
+    - name: authenticate_secondary_ldap
+      type: authenticate
+      optional: true
+      one_of:
+      - authentication: secondary_totp
+      - authentication: recovery_code
+      - authentication: device_token
 - type: check_account_status
 - type: terminate_other_sessions
 `)
@@ -456,7 +508,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -466,8 +518,6 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_email
         - name: authenticate_secondary_email
           type: authenticate
           optional: true
@@ -475,6 +525,8 @@ steps:
           - authentication: secondary_totp
           - authentication: recovery_code
           - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_email
       - authentication: primary_passkey
   - identification: passkey
 - type: check_account_status
@@ -510,7 +562,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: login_identify
   type: identify
   one_of:
   - identification: email
@@ -520,18 +572,198 @@ steps:
       one_of:
       - authentication: primary_password
         steps:
-        - type: change_password
-          target_step: authenticate_primary_email
         - name: authenticate_secondary_email
           type: authenticate
           one_of:
           - authentication: secondary_totp
+        - type: change_password
+          target_step: authenticate_primary_email
       - authentication: primary_passkey
   - identification: oauth
   - identification: passkey
 - type: check_account_status
 - type: terminate_other_sessions
 - type: prompt_create_passkey
+`)
+		// bot_protection.requirements.signup_or_login=always
+		test(`
+authentication:
+  identities:
+  - login_id
+  primary_authenticators:
+  - password
+identity:
+  login_id:
+    keys:
+    - type: email
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+  requirements:
+    signup_or_login: 
+      mode: always
+`, `
+name: default
+steps:
+- name: login_identify
+  type: identify
+  one_of:
+  - identification: email
+    bot_protection:
+      mode: always
+    steps:
+    - name: authenticate_primary_email
+      type: authenticate
+      one_of:
+      - authentication: primary_password
+        steps:
+        - name: authenticate_secondary_email
+          type: authenticate
+          optional: true
+          one_of:
+          - authentication: secondary_totp
+          - authentication: recovery_code
+          - authentication: device_token
+        - type: change_password
+          target_step: authenticate_primary_email
+- type: check_account_status
+- type: terminate_other_sessions
+`)
+		// bot_protection, all always
+		test(`
+authentication:
+  identities:
+  - login_id
+  primary_authenticators:
+  - password
+  - oob_otp_email
+  - oob_otp_sms
+  secondary_authenticators:
+  - oob_otp_email
+  - oob_otp_sms
+  - password
+  secondary_authentication_mode: required
+identity:
+  login_id:
+    keys:
+    - type: email
+    - type: phone
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+  requirements:
+    signup_or_login: 
+      mode: always
+    password:
+      mode: never
+    oob_otp_email:
+      mode: always
+    oob_otp_sms:
+      mode: always
+`, `
+name: default
+steps:
+- name: login_identify
+  type: identify
+  one_of:
+  - bot_protection:
+      mode: always
+    identification: email
+    steps:
+    - name: authenticate_primary_email
+      type: authenticate
+      one_of:
+      - authentication: primary_password
+        bot_protection:
+          mode: never
+        steps:
+        - name: authenticate_secondary_email
+          one_of:
+          - authentication: secondary_oob_otp_email
+            bot_protection:
+              mode: always
+          - authentication: secondary_oob_otp_sms
+            bot_protection:
+              mode: always
+          - authentication: secondary_password
+            bot_protection:
+              mode: never
+          - authentication: recovery_code
+          - authentication: device_token
+          type: authenticate
+        - target_step: authenticate_primary_email
+          type: change_password
+      - authentication: primary_oob_otp_email
+        target_step: login_identify
+        bot_protection:
+          mode: always
+        steps:
+        - name: authenticate_secondary_email
+          type: authenticate
+          one_of:
+          - authentication: secondary_oob_otp_email
+            bot_protection:
+              mode: always
+          - authentication: secondary_oob_otp_sms
+            bot_protection:
+              mode: always
+          - authentication: secondary_password
+            bot_protection:
+              mode: never
+          - authentication: recovery_code
+          - authentication: device_token
+  - identification: phone
+    bot_protection:
+      mode: always
+    steps:
+    - name: authenticate_primary_phone
+      type: authenticate
+      one_of:
+      - authentication: primary_password
+        bot_protection:
+          mode: never
+        steps:
+        - name: authenticate_secondary_phone
+          type: authenticate
+          one_of:
+          - authentication: secondary_oob_otp_email
+            bot_protection:
+              mode: always
+          - authentication: secondary_oob_otp_sms
+            bot_protection:
+              mode: always
+          - authentication: secondary_password
+            bot_protection:
+              mode: never
+          - authentication: recovery_code
+          - authentication: device_token
+        - target_step: authenticate_primary_phone
+          type: change_password
+      - authentication: primary_oob_otp_sms
+        target_step: login_identify
+        bot_protection:
+          mode: always
+        steps:
+        - name: authenticate_secondary_phone
+          type: authenticate
+          one_of:
+          - authentication: secondary_oob_otp_email
+            bot_protection:
+              mode: always
+          - authentication: secondary_oob_otp_sms
+            bot_protection:
+              mode: always
+          - authentication: secondary_password
+            bot_protection:
+              mode: never
+          - authentication: recovery_code
+          - authentication: device_token
+- type: check_account_status
+- type: terminate_other_sessions
 `)
 	})
 }

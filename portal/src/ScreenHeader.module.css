@@ -4,7 +4,7 @@
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid gray;
-  height: 48px;
+  height: var(--screen-header-height);
   position: sticky;
   top: 0;
   z-index: 9999;
@@ -22,7 +22,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  height: 48px;
+  height: var(--screen-header-height);
 }
 
 .headerArrow {
@@ -59,4 +59,23 @@
 
 .hamburger {
   margin: 8px 20px 8px 16px;
+}
+
+.links {
+  @apply ml-auto mr-5 mobile:mr-4;
+  @apply flex;
+  @apply gap-10 tablet:gap-4;
+}
+
+.link {
+  @apply inline-flex;
+  @apply text-center;
+
+  &:hover {
+    text-decoration: none;
+  }
+
+  span {
+    @apply text-white;
+  }
 }

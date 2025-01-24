@@ -57,6 +57,20 @@ var nodeAuthenticator = node(
 			"id":        entityIDField(typeAuthenticator),
 			"createdAt": entityCreatedAtField(loadAuthenticator),
 			"updatedAt": entityUpdatedAtField(loadAuthenticator),
+			"expireAfter": &graphql.Field{
+				Type: graphql.DateTime,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					info := loadAuthenticator(p.Context, p.Source)
+					return info.Map(func(value interface{}) (interface{}, error) {
+						p := value.(*authenticator.Info).Password
+						if p == nil {
+							return nil, nil
+						}
+
+						return p.ExpireAfter, nil
+					}).Value, nil
+				},
+			},
 			"type": &graphql.Field{
 				Type: graphql.NewNonNull(authenticatorType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -112,8 +126,8 @@ var nodeAuthenticator = node(
 		},
 	}),
 	&authenticator.Info{},
-	func(ctx *Context, id string) (interface{}, error) {
-		return ctx.Authenticators.Load(id).Value, nil
+	func(ctx context.Context, gqlCtx *Context, id string) (interface{}, error) {
+		return gqlCtx.Authenticators.Load(ctx, id).Value, nil
 	},
 )
 
@@ -124,7 +138,7 @@ func loadAuthenticator(ctx context.Context, obj interface{}) *graphqlutil.Lazy {
 	case *authenticator.Info:
 		return graphqlutil.NewLazyValue(obj)
 	case *authenticator.Ref:
-		return GQLContext(ctx).Authenticators.Load(obj.ID)
+		return GQLContext(ctx).Authenticators.Load(ctx, obj.ID)
 	default:
 		panic(fmt.Sprintf("graphql: unknown authenticator type: %T", obj))
 	}

@@ -2,9 +2,7 @@ package latte
 
 import (
 	"context"
-	"errors"
 
-	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/event"
 	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -29,16 +27,16 @@ func (n *NodeDoUpdateIdentity) Kind() string {
 func (n *NodeDoUpdateIdentity) GetEffects(ctx context.Context, deps *workflow.Dependencies, workflows workflow.Workflows) (effs []workflow.Effect, err error) {
 	return []workflow.Effect{
 		workflow.RunEffect(func(ctx context.Context, deps *workflow.Dependencies) error {
-			if _, err := deps.Identities.CheckDuplicated(n.IdentityAfterUpdate); err != nil {
-				if errors.Is(err, identity.ErrIdentityAlreadyExists) {
+			if _, err := deps.Identities.CheckDuplicated(ctx, n.IdentityAfterUpdate); err != nil {
+				if identity.IsErrDuplicatedIdentity(err) {
 					s1 := n.IdentityBeforeUpdate.ToSpec()
 					s2 := n.IdentityAfterUpdate.ToSpec()
-					return identityFillDetails(api.ErrDuplicatedIdentity, &s2, &s1)
+					return identity.NewErrDuplicatedIdentity(&s2, &s1)
 				}
 				return err
 			}
 
-			if err := deps.Identities.Update(n.IdentityBeforeUpdate, n.IdentityAfterUpdate); err != nil {
+			if err := deps.Identities.Update(ctx, n.IdentityBeforeUpdate, n.IdentityAfterUpdate); err != nil {
 				s1 := n.IdentityBeforeUpdate.ToSpec()
 				s2 := n.IdentityAfterUpdate.ToSpec()
 				return identityFillDetails(err, &s2, &s1)
@@ -69,7 +67,7 @@ func (n *NodeDoUpdateIdentity) GetEffects(ctx context.Context, deps *workflow.De
 			}
 
 			if e != nil {
-				err := deps.Events.DispatchEvent(e)
+				err := deps.Events.DispatchEventOnCommit(ctx, e)
 				if err != nil {
 					return err
 				}

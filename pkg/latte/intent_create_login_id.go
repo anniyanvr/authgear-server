@@ -2,16 +2,15 @@ package latte
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/workflow"
 	"github.com/authgear/authgear-server/pkg/util/errorutil"
+	"github.com/authgear/authgear-server/pkg/util/stringutil"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
@@ -68,26 +67,20 @@ func (i *IntentCreateLoginID) ReactTo(ctx context.Context, deps *workflow.Depend
 				LoginID: &identity.LoginIDSpec{
 					Type:  i.LoginIDType,
 					Key:   i.LoginIDKey,
-					Value: loginID,
+					Value: stringutil.NewUserInputString(loginID),
 				},
 			}
 
-			info, err := deps.Identities.New(i.UserID, spec, identity.NewIdentityOptions{
+			info, err := deps.Identities.New(ctx, i.UserID, spec, identity.NewIdentityOptions{
 				LoginIDEmailByPassBlocklistAllowlist: false,
 			})
 			if err != nil {
 				return nil, err
 			}
 
-			duplicate, err := deps.Identities.CheckDuplicated(info)
-			if err != nil && !errors.Is(err, identity.ErrIdentityAlreadyExists) {
-				return nil, err
-			}
-			// Either err == nil, or err == ErrIdentityAlreadyExists and duplicate is non-nil.
+			_, err = deps.Identities.CheckDuplicated(ctx, info)
 			if err != nil {
-				spec := info.ToSpec()
-				otherSpec := duplicate.ToSpec()
-				return nil, identityFillDetails(api.ErrDuplicatedIdentity, &spec, &otherSpec)
+				return nil, err
 			}
 
 			return workflow.NewNodeSimple(&NodeDoCreateIdentity{

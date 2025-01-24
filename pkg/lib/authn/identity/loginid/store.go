@@ -1,6 +1,7 @@
 package loginid
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/lib/pq"
 
+	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
@@ -54,7 +56,7 @@ func (s *Store) scan(scn db.Scanner) (*identity.LoginID, error) {
 		&claims,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, identity.ErrIdentityNotFound
+		return nil, api.ErrIdentityNotFound
 	} else if err != nil {
 		return nil, err
 	}
@@ -66,10 +68,10 @@ func (s *Store) scan(scn db.Scanner) (*identity.LoginID, error) {
 	return i, nil
 }
 
-func (s *Store) GetMany(ids []string) ([]*identity.LoginID, error) {
+func (s *Store) GetMany(ctx context.Context, ids []string) ([]*identity.LoginID, error) {
 	builder := s.selectQuery().Where("p.id = ANY (?)", pq.Array(ids))
 
-	rows, err := s.SQLExecutor.QueryWith(builder)
+	rows, err := s.SQLExecutor.QueryWith(ctx, builder)
 	if err != nil {
 		return nil, err
 	}
@@ -87,10 +89,10 @@ func (s *Store) GetMany(ids []string) ([]*identity.LoginID, error) {
 	return is, nil
 }
 
-func (s *Store) List(userID string) ([]*identity.LoginID, error) {
+func (s *Store) List(ctx context.Context, userID string) ([]*identity.LoginID, error) {
 	q := s.selectQuery().Where("p.user_id = ?", userID)
 
-	rows, err := s.SQLExecutor.QueryWith(q)
+	rows, err := s.SQLExecutor.QueryWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -108,11 +110,11 @@ func (s *Store) List(userID string) ([]*identity.LoginID, error) {
 	return is, nil
 }
 
-func (s *Store) ListByClaim(name string, value string) ([]*identity.LoginID, error) {
+func (s *Store) ListByClaim(ctx context.Context, name string, value string) ([]*identity.LoginID, error) {
 	q := s.selectQuery().
 		Where("(l.claims ->> ?) = ?", name, value)
 
-	rows, err := s.SQLExecutor.QueryWith(q)
+	rows, err := s.SQLExecutor.QueryWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -130,9 +132,9 @@ func (s *Store) ListByClaim(name string, value string) ([]*identity.LoginID, err
 	return is, nil
 }
 
-func (s *Store) Get(userID, id string) (*identity.LoginID, error) {
+func (s *Store) Get(ctx context.Context, userID, id string) (*identity.LoginID, error) {
 	q := s.selectQuery().Where("p.user_id = ? AND p.id = ?", userID, id)
-	rows, err := s.SQLExecutor.QueryRowWith(q)
+	rows, err := s.SQLExecutor.QueryRowWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -140,19 +142,9 @@ func (s *Store) Get(userID, id string) (*identity.LoginID, error) {
 	return s.scan(rows)
 }
 
-func (s *Store) GetByLoginID(loginIDKey string, loginID string) (*identity.LoginID, error) {
-	q := s.selectQuery().Where(`l.login_id = ? AND l.login_id_key = ?`, loginID, loginIDKey)
-	rows, err := s.SQLExecutor.QueryRowWith(q)
-	if err != nil {
-		return nil, err
-	}
-
-	return s.scan(rows)
-}
-
-func (s *Store) GetByUniqueKey(uniqueKey string) (*identity.LoginID, error) {
+func (s *Store) GetByUniqueKey(ctx context.Context, uniqueKey string) (*identity.LoginID, error) {
 	q := s.selectQuery().Where(`l.unique_key = ?`, uniqueKey)
-	rows, err := s.SQLExecutor.QueryRowWith(q)
+	rows, err := s.SQLExecutor.QueryRowWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +152,7 @@ func (s *Store) GetByUniqueKey(uniqueKey string) (*identity.LoginID, error) {
 	return s.scan(rows)
 }
 
-func (s *Store) Create(i *identity.LoginID) (err error) {
+func (s *Store) Create(ctx context.Context, i *identity.LoginID) (err error) {
 	builder := s.SQLBuilder.
 		Insert(s.SQLBuilder.TableName("_auth_identity")).
 		Columns(
@@ -178,7 +170,7 @@ func (s *Store) Create(i *identity.LoginID) (err error) {
 			i.UpdatedAt,
 		)
 
-	_, err = s.SQLExecutor.ExecWith(builder)
+	_, err = s.SQLExecutor.ExecWith(ctx, builder)
 	if err != nil {
 		return err
 	}
@@ -209,7 +201,7 @@ func (s *Store) Create(i *identity.LoginID) (err error) {
 			claims,
 		)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -217,7 +209,7 @@ func (s *Store) Create(i *identity.LoginID) (err error) {
 	return nil
 }
 
-func (s *Store) Update(i *identity.LoginID) error {
+func (s *Store) Update(ctx context.Context, i *identity.LoginID) error {
 	claims, err := json.Marshal(i.Claims)
 	if err != nil {
 		return err
@@ -231,7 +223,7 @@ func (s *Store) Update(i *identity.LoginID) error {
 		Set("claims", claims).
 		Where("id = ?", i.ID)
 
-	result, err := s.SQLExecutor.ExecWith(q)
+	result, err := s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -242,7 +234,7 @@ func (s *Store) Update(i *identity.LoginID) error {
 	}
 
 	if rowsAffected == 0 {
-		return identity.ErrIdentityNotFound
+		return api.ErrIdentityNotFound
 	} else if rowsAffected > 1 {
 		panic(fmt.Sprintf("identity_oauth: want 1 row updated, got %v", rowsAffected))
 	}
@@ -252,7 +244,7 @@ func (s *Store) Update(i *identity.LoginID) error {
 		Set("updated_at", i.UpdatedAt).
 		Where("id = ?", i.ID)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -260,12 +252,12 @@ func (s *Store) Update(i *identity.LoginID) error {
 	return nil
 }
 
-func (s *Store) Delete(i *identity.LoginID) error {
+func (s *Store) Delete(ctx context.Context, i *identity.LoginID) error {
 	q := s.SQLBuilder.
 		Delete(s.SQLBuilder.TableName("_auth_identity_login_id")).
 		Where("id = ?", i.ID)
 
-	_, err := s.SQLExecutor.ExecWith(q)
+	_, err := s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -274,7 +266,7 @@ func (s *Store) Delete(i *identity.LoginID) error {
 		Delete(s.SQLBuilder.TableName("_auth_identity")).
 		Where("id = ?", i.ID)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}

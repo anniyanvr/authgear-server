@@ -1,8 +1,9 @@
 package graphql
 
 import (
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
@@ -47,20 +48,21 @@ var _ = registerMutationField(
 				return nil, apierrors.NewInvalid("invalid authorization ID")
 			}
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 
-			authz, err := gqlCtx.AuthorizationFacade.Get(resolvedNodeID.ID)
+			authz, err := gqlCtx.AuthorizationFacade.Get(ctx, resolvedNodeID.ID)
 			if err != nil {
 				return nil, err
 			}
 			userID := authz.UserID
 
-			err = gqlCtx.AuthorizationFacade.Delete(authz)
+			err = gqlCtx.AuthorizationFacade.Delete(ctx, authz)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.Events.DispatchEvent(&nonblocking.AdminAPIMutationDeleteAuthorizationExecutedEventPayload{
+			err = gqlCtx.Events.DispatchEventOnCommit(ctx, &nonblocking.AdminAPIMutationDeleteAuthorizationExecutedEventPayload{
 				Authorization: *authz.ToAPIModel(),
 			})
 			if err != nil {
@@ -68,7 +70,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"user": gqlCtx.Users.Load(userID),
+				"user": gqlCtx.Users.Load(ctx, userID),
 			}).Value, nil
 		},
 	},

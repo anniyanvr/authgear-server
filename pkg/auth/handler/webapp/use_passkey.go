@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -12,7 +13,7 @@ import (
 
 var TemplateWebUsePasskeyHTML = template.RegisterHTML(
 	"web/use_passkey.html",
-	components...,
+	Components...,
 )
 
 func ConfigureUsePasskeyRoute(route httproute.Route) httproute.Route {
@@ -49,15 +50,15 @@ func (h *UsePasskeyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -71,8 +72,8 @@ func (h *UsePasskeyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			assertionResponseStr := ctrl.request.Form.Get("x_assertion_response")
 			assertionResponse := []byte(assertionResponseStr)
 			stage := ctrl.request.Form.Get("x_stage")

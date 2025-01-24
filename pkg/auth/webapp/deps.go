@@ -7,13 +7,13 @@ import (
 var DependencySet = wire.NewSet(
 	wire.Struct(new(AnonymousUserPromotionService), "*"),
 
-	NewCSRFCookieDef,
 	NewSessionCookieDef,
-	NewErrorCookieDef,
+	NewErrorTokenCookieDef,
 	NewSignedUpCookieDef,
-	wire.Struct(new(ErrorCookie), "*"),
+	wire.Struct(new(ErrorService), "*"),
+	wire.Struct(new(AuthflowNavigator), "*"),
 
-	wire.Struct(new(CSRFMiddleware), "*"),
+	wire.Struct(new(CSRFDebugMiddleware), "*"),
 	wire.Struct(new(SessionMiddleware), "*"),
 	wire.Bind(new(SessionMiddlewareStore), new(*SessionStoreRedis)),
 	wire.Bind(new(SessionMiddlewareSessionService), new(*Service2)),
@@ -27,6 +27,8 @@ var DependencySet = wire.NewSet(
 	wire.Struct(new(SuccessPageMiddleware), "*"),
 	wire.Struct(new(TutorialMiddleware), "*"),
 	wire.Struct(new(DynamicCSPMiddleware), "*"),
+	NewContextHolderMiddlewareLogger,
+	wire.Struct(new(ContextHolderMiddleware), "*"),
 
 	NewPublicOriginMiddlewareLogger,
 	wire.Struct(new(PublicOriginMiddleware), "*"),

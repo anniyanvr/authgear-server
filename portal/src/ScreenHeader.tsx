@@ -1,7 +1,6 @@
 import React, { useCallback, useContext, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { Context } from "@oursky/react-messageformat";
-import authgear from "@authgear/web";
 import {
   Icon,
   Text,
@@ -20,6 +19,9 @@ import Link from "./Link";
 import styles from "./ScreenHeader.module.css";
 import { useSystemConfig } from "./context/SystemConfigContext";
 import { useBoolean } from "@fluentui/react-hooks";
+import ExternalLink from "./ExternalLink";
+import { useLogout } from "./graphql/portal/Authenticated";
+import { useCapture } from "./gtm_v2";
 
 interface LogoProps {
   isNavbarHeader?: boolean;
@@ -174,23 +176,47 @@ interface ScreenNavProps {
 const ScreenHeader: React.VFC<ScreenNavProps> = function ScreenHeader(props) {
   const { showHamburger = true } = props;
   const { renderToString } = useContext(Context);
+  const capture = useCapture();
   const { themes, authgearEndpoint } = useSystemConfig();
   const { appID } = useParams() as { appID: string };
   const { viewer } = useViewerQuery();
   const [isNavbarOpen, { setTrue: openNavbar, setFalse: dismissNavbar }] =
     useBoolean(false);
 
-  const redirectURI = window.location.origin + "/";
+  const logout = useLogout();
 
   const onClickLogout = useCallback(() => {
-    authgear
-      .logout({
-        redirectURI,
-      })
-      .catch((err) => {
-        console.error(err);
-      });
-  }, [redirectURI]);
+    logout().catch((err: unknown) => {
+      console.error(err);
+    });
+  }, [logout]);
+
+  const onClickCookiePreference = useCallback(() => {
+    if (window.Osano?.cm !== undefined) {
+      window.Osano.cm.showDrawer("osano-cm-dom-info-dialog-open");
+    } else {
+      console.error("Osano is not loaded");
+    }
+  }, []);
+
+  const onClickContactUs = useCallback(() => {
+    capture("header.clicked-contact_us");
+  }, [capture]);
+
+  const onClickDocs = useCallback(() => {
+    capture("header.clicked-docs");
+  }, [capture]);
+
+  const scheduleDemoLink = useMemo(() => {
+    const url = new URL("https://www.authgear.com/schedule-demo");
+    if (viewer?.email) {
+      url.searchParams.append("email", viewer.email);
+    }
+    if (viewer?.formattedName) {
+      url.searchParams.append("name", viewer.formattedName);
+    }
+    return url.toString();
+  }, [viewer?.email, viewer?.formattedName]);
 
   const headerStyle = useMemo(
     () => ({
@@ -200,27 +226,43 @@ const ScreenHeader: React.VFC<ScreenNavProps> = function ScreenHeader(props) {
   );
 
   const menuProps = useMemo(() => {
-    return {
-      items: [
-        {
-          key: "settings",
-          text: renderToString("ScreenHeader.settings"),
-          iconProps: {
-            iconName: "PlayerSettings",
-          },
-          href: authgearEndpoint + "/settings",
+    const items = [
+      {
+        key: "settings",
+        text: renderToString("ScreenHeader.settings"),
+        iconProps: {
+          iconName: "PlayerSettings",
         },
-        {
-          key: "logout",
-          text: renderToString("ScreenHeader.sign-out"),
-          iconProps: {
-            iconName: "SignOut",
-          },
-          onClick: onClickLogout,
+        href: authgearEndpoint + "/settings",
+      },
+      {
+        key: "logout",
+        text: renderToString("ScreenHeader.sign-out"),
+        iconProps: {
+          iconName: "SignOut",
         },
-      ],
-    };
-  }, [onClickLogout, renderToString, authgearEndpoint]);
+        onClick: onClickLogout,
+      },
+    ];
+
+    if (window.Osano !== undefined) {
+      items.splice(1, 0, {
+        key: "cookie",
+        text: renderToString("ScreenHeader.cookie-preference"),
+        iconProps: {
+          iconName: "Cookies",
+        },
+        onClick: onClickCookiePreference,
+      });
+    }
+
+    return { items };
+  }, [
+    onClickLogout,
+    onClickCookiePreference,
+    renderToString,
+    authgearEndpoint,
+  ]);
 
   return (
     <header className={styles.header} style={headerStyle}>
@@ -244,8 +286,29 @@ const ScreenHeader: React.VFC<ScreenNavProps> = function ScreenHeader(props) {
         <DesktopViewHeaderIconSection />
         {appID ? <DesktopViewHeaderAppSection appID={appID} /> : null}
       </div>
+      <div className={styles.links}>
+        <ExternalLink
+          href={scheduleDemoLink}
+          className={styles.link}
+          onClick={onClickContactUs}
+        >
+          <Text variant="small">
+            {renderToString("ScreenHeader.links.schedule-demo")}
+          </Text>
+        </ExternalLink>
+        <ExternalLink
+          href="https://docs.authgear.com/"
+          className={styles.link}
+          onClick={onClickDocs}
+        >
+          <Text variant="small">
+            {renderToString("ScreenHeader.links.documentation")}
+          </Text>
+        </ExternalLink>
+      </div>
       {viewer != null ? (
         <CommandButton
+          className={styles.desktopView}
           menuProps={menuProps}
           theme={themes.inverted}
           styles={commandButtonStyles}

@@ -9,9 +9,9 @@ const (
 )
 
 type EmailSentEventPayload struct {
-	Sender    string      `json:"sender"`
-	Recipient string      `json:"recipient"`
-	Type      MessageType `json:"type"`
+	Sender    string `json:"sender"`
+	Recipient string `json:"recipient"`
+	Type      string `json:"type"`
 }
 
 func (e *EmailSentEventPayload) NonBlockingEventType() event.Type {
@@ -37,12 +37,12 @@ func (e *EmailSentEventPayload) ForAudit() bool {
 	return true
 }
 
-func (e *EmailSentEventPayload) ReindexUserNeeded() bool {
-	return false
+func (e *EmailSentEventPayload) RequireReindexUserIDs() []string {
+	return nil
 }
 
-func (e *EmailSentEventPayload) IsUserDeleted() bool {
-	return false
+func (e *EmailSentEventPayload) DeletedUserIDs() []string {
+	return nil
 }
 
 var _ event.NonBlockingPayload = &EmailSentEventPayload{}

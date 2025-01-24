@@ -7,25 +7,24 @@
 package plan
 
 import (
-	"context"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
+	"github.com/authgear/authgear-server/pkg/lib/config/plan"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
-	"github.com/authgear/authgear-server/pkg/portal/lib/plan"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 )
 
 // Injectors from wire.go:
 
-func NewService(ctx context.Context, pool *db.Pool, databaseCredentials *config.DatabaseCredentials) *Service {
+func NewService(pool *db.Pool, databaseCredentials *config.DatabaseCredentials) *Service {
 	globalDatabaseCredentialsEnvironmentConfig := NewGlobalDatabaseCredentials(databaseCredentials)
 	databaseEnvironmentConfig := config.NewDefaultDatabaseEnvironmentConfig()
 	factory := NewLoggerFactory()
-	handle := globaldb.NewHandle(ctx, pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory)
+	handle := globaldb.NewHandle(pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory)
 	clock := _wireSystemClockValue
 	sqlBuilder := globaldb.NewSQLBuilder(globalDatabaseCredentialsEnvironmentConfig)
-	sqlExecutor := globaldb.NewSQLExecutor(ctx, handle)
+	sqlExecutor := globaldb.NewSQLExecutor(handle)
 	store := &plan.Store{
 		Clock:       clock,
 		SQLBuilder:  sqlBuilder,

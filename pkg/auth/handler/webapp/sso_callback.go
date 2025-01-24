@@ -1,8 +1,16 @@
 package webapp
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
+	"net/url"
+
+	"github.com/authgear/authgear-server/pkg/lib/accountmanagement"
+	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/session"
+	"github.com/authgear/authgear-server/pkg/lib/webappoauth"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 )
 
@@ -12,9 +20,16 @@ func ConfigureSSOCallbackRoute(route httproute.Route) httproute.Route {
 		WithPathPattern("/sso/oauth2/callback/:alias")
 }
 
+type SSOCallbackHandlerOAuthStateStore interface {
+	PopAndRecoverState(ctx context.Context, stateToken string) (state *webappoauth.WebappOAuthState, err error)
+}
+
 type SSOCallbackHandler struct {
 	AuthflowController *AuthflowController
 	ControllerFactory  ControllerFactory
+	ErrorRenderer      *ErrorRenderer
+	OAuthStateStore    SSOCallbackHandlerOAuthStateStore
+	AccountManagement  *accountmanagement.Service
 }
 
 func (h *SSOCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -23,45 +38,57 @@ func (h *SSOCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := r.Form.Get("state")
-	code := r.Form.Get("code")
-	error_ := r.Form.Get("error")
-	errorDescription := r.Form.Get("error_description")
-	errorURI := r.Form.Get("error_uri")
+	stateToken := r.FormValue("state")
+	state, err := h.OAuthStateStore.PopAndRecoverState(r.Context(), stateToken)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	switch {
-	case state != "":
-		// authflow
-		h.AuthflowController.HandleOAuthCallback(w, r, AuthflowOAuthCallbackResponse{
-			State:            state,
-			Code:             code,
-			Error:            error_,
-			ErrorDescription: errorDescription,
-			ErrorURI:         errorURI,
+	s := session.GetSession(r.Context())
+
+	if state.AccountManagementToken != "" {
+		redirectURL, err := url.Parse("/settings/identity/oauth")
+		if err != nil {
+			panic(err)
+		}
+
+		_, err = h.AccountManagement.FinishAddingIdentityOAuth(r.Context(), s, &accountmanagement.FinishAddingIdentityOAuthInput{
+			Token: state.AccountManagementToken,
+			Query: r.URL.Query().Encode(),
 		})
-	default:
+		if err != nil {
+			h.ErrorRenderer.MakeAuthflowErrorResult(r.Context(), w, r, *redirectURL, err).WriteResponse(w, r)
+			return
+		}
+
+		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
+		return
+	}
+
+	switch state.UIImplementation {
+	case config.UIImplementationAuthflowV2:
+		// authflow
+		h.AuthflowController.HandleOAuthCallback(r.Context(), w, r, AuthflowOAuthCallbackResponse{
+			Query: r.Form.Encode(),
+			State: state,
+		})
+	case config.UIImplementationInteraction:
 		// interaction
 		ctrl, err := h.ControllerFactory.New(r, w)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		defer ctrl.Serve()
+		defer ctrl.ServeWithDBTx(r.Context())
 
 		data := InputOAuthCallback{
 			ProviderAlias: httproute.GetParam(r, "alias"),
-
-			Code:             code,
-			Error:            error_,
-			ErrorDescription: errorDescription,
-			ErrorURI:         errorURI,
+			Query:         r.Form.Encode(),
 		}
 
-		handler := func() error {
-			result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
-				input = &data
-				return
-			})
+		handler := func(ctx context.Context) error {
+			result, err := ctrl.InteractionOAuthCallback(ctx, data, state)
 			if err != nil {
 				return err
 			}
@@ -70,5 +97,7 @@ func (h *SSOCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		ctrl.Get(handler)
 		ctrl.PostAction("", handler)
+	default:
+		panic(fmt.Errorf("expected ui implementation to be set in state"))
 	}
 }

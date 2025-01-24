@@ -35,6 +35,7 @@ func TestGenerateAccountRecoveryFlowConfig(t *testing.T) {
 			So(string(flowJSON), ShouldEqualJSON, string(expectedJSON))
 		}
 
+		// email, phone
 		test(
 			`
 identity:
@@ -65,7 +66,7 @@ steps:
 - type: verify_account_recovery_code
 - type: reset_password
 `)
-
+		// phone
 		test(
 			`
 identity:
@@ -88,7 +89,7 @@ steps:
 - type: verify_account_recovery_code
 - type: reset_password
 `)
-
+		// email
 		test(
 			`
 identity:
@@ -111,7 +112,7 @@ steps:
 - type: verify_account_recovery_code
 - type: reset_password
 `)
-
+		// email, phone, custom ui
 		test(
 			`
 identity:
@@ -150,6 +151,48 @@ steps:
 - type: verify_account_recovery_code
 - type: reset_password
 `)
-
+		// bot_protection, 2 branches, account_recovery=always
+		test(
+			`
+identity:
+  login_id:
+    keys:
+    - type: email
+    - type: phone
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+  requirements:
+    account_recovery:
+      mode: always
+`,
+			`
+name: default
+steps:
+- type: identify
+  one_of:
+  - identification: email
+    bot_protection:
+      mode: always
+    on_failure: ignore
+    steps:
+      - type: select_destination
+        allowed_channels:
+          - channel: email
+            otp_form: link
+  - identification: phone
+    bot_protection:
+      mode: always
+    on_failure: ignore
+    steps:
+      - type: select_destination
+        allowed_channels:
+          - channel: sms
+            otp_form: code
+- type: verify_account_recovery_code
+- type: reset_password
+`)
 	})
 }

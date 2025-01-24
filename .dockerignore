@@ -3,7 +3,36 @@
 **/vendor
 **/dist
 **/node_modules
+**/.DS_Store
 **/.parcel-cache
 **/parcel-bundle-reports
+**/__pycache__
+**/venv
 **/var
+
+# direnv
+**/.envrc
+**/.direnv
+
+resources/**/generated
+resources/portal/static/*
+!resources/portal/static/img/*
+
+**/__generated_asset.html
+pkg/lib/webparcel/parcel_gen.go
+.env
+e2e
+k6
+hack
 authgear
+tls-cert.pem
+tls-key.pem
+
+.editorconfig
+**/.vscode
+**/.eslintcache
+**/.stylelintcache
+
+# Ignore generated credentials from google-github-actions/auth
+# See https://github.com/google-github-actions/auth?tab=readme-ov-file#prerequisites
+**/gha-creds-*.json

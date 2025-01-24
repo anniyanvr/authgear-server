@@ -3,6 +3,7 @@ package authenticationflow
 import (
 	"context"
 
+	"github.com/authgear/authgear-server/pkg/lib/otelauthgear"
 	"github.com/authgear/authgear-server/pkg/lib/uiparam"
 	"github.com/authgear/authgear-server/pkg/util/intl"
 )
@@ -13,6 +14,7 @@ type Session struct {
 	FlowID string `json:"flow_id"`
 
 	OAuthSessionID string `json:"oauth_session_id,omitempty"`
+	SAMLSessionID  string `json:"saml_session_id,omitempty"`
 
 	ClientID    string   `json:"client_id,omitempty"`
 	RedirectURI string   `json:"redirect_uri,omitempty"`
@@ -21,10 +23,11 @@ type Session struct {
 	XState      string   `json:"x_state,omitempty"`
 	UILocales   string   `json:"ui_locales,omitempty"`
 
-	IDToken                  string `json:"id_token,omitempty"`
-	SuppressIDPSessionCookie bool   `json:"suppress_idp_session_cookie,omitempty"`
-	UserIDHint               string `json:"user_id_hint,omitempty"`
-	LoginHint                string `json:"login_hint,omitempty"`
+	BotProtectionVerificationResult *BotProtectionVerificationResult `json:"bot_protection_verification_result,omitempty"`
+	IDToken                         string                           `json:"id_token,omitempty"`
+	SuppressIDPSessionCookie        bool                             `json:"suppress_idp_session_cookie,omitempty"`
+	UserIDHint                      string                           `json:"user_id_hint,omitempty"`
+	LoginHint                       string                           `json:"login_hint,omitempty"`
 }
 
 type SessionOutput struct {
@@ -35,6 +38,7 @@ type SessionOutput struct {
 
 type SessionOptions struct {
 	OAuthSessionID string
+	SAMLSessionID  string
 
 	ClientID    string
 	RedirectURI string
@@ -43,16 +47,18 @@ type SessionOptions struct {
 	XState      string
 	UILocales   string
 
-	IDToken                  string
-	SuppressIDPSessionCookie bool
-	UserIDHint               string
-	LoginHint                string
+	BotProtectionVerificationResult *BotProtectionVerificationResult
+	IDToken                         string
+	SuppressIDPSessionCookie        bool
+	UserIDHint                      string
+	LoginHint                       string
 }
 
 func (s *SessionOptions) PartiallyMergeFrom(o *SessionOptions) *SessionOptions {
 	out := &SessionOptions{}
 	if s != nil {
 		out.OAuthSessionID = s.OAuthSessionID
+		out.SAMLSessionID = s.SAMLSessionID
 
 		out.ClientID = s.ClientID
 		out.RedirectURI = s.RedirectURI
@@ -61,6 +67,7 @@ func (s *SessionOptions) PartiallyMergeFrom(o *SessionOptions) *SessionOptions {
 		out.XState = s.XState
 		out.UILocales = s.UILocales
 
+		out.BotProtectionVerificationResult = s.BotProtectionVerificationResult
 		out.IDToken = s.IDToken
 		out.SuppressIDPSessionCookie = s.SuppressIDPSessionCookie
 		out.UserIDHint = s.UserIDHint
@@ -88,6 +95,7 @@ func NewSession(opts *SessionOptions) *Session {
 		FlowID: newFlowID(),
 
 		OAuthSessionID: opts.OAuthSessionID,
+		SAMLSessionID:  opts.SAMLSessionID,
 
 		ClientID:    opts.ClientID,
 		RedirectURI: opts.RedirectURI,
@@ -96,10 +104,11 @@ func NewSession(opts *SessionOptions) *Session {
 		XState:      opts.XState,
 		UILocales:   opts.UILocales,
 
-		IDToken:                  opts.IDToken,
-		SuppressIDPSessionCookie: opts.SuppressIDPSessionCookie,
-		UserIDHint:               opts.UserIDHint,
-		LoginHint:                opts.LoginHint,
+		BotProtectionVerificationResult: opts.BotProtectionVerificationResult,
+		IDToken:                         opts.IDToken,
+		SuppressIDPSessionCookie:        opts.SuppressIDPSessionCookie,
+		UserIDHint:                      opts.UserIDHint,
+		LoginHint:                       opts.LoginHint,
 	}
 }
 
@@ -111,8 +120,15 @@ func (s *Session) ToOutput() *SessionOutput {
 	}
 }
 
-func (s *Session) MakeContext(ctx context.Context, deps *Dependencies, publicFlow PublicFlow) (context.Context, error) {
+func (s *Session) MakeContext(ctx context.Context, deps *Dependencies) context.Context {
 	ctx = context.WithValue(ctx, contextKeyOAuthSessionID, s.OAuthSessionID)
+	ctx = context.WithValue(ctx, contextKeySAMLSessionID, s.SAMLSessionID)
+
+	if s.ClientID != "" {
+		key := otelauthgear.AttributeKeyClientID
+		val := key.String(s.ClientID)
+		ctx = context.WithValue(ctx, key, val)
+	}
 
 	ctx = uiparam.WithUIParam(ctx, &uiparam.T{
 		ClientID:  s.ClientID,
@@ -122,8 +138,16 @@ func (s *Session) MakeContext(ctx context.Context, deps *Dependencies, publicFlo
 		XState:    s.XState,
 	})
 
-	ctx = intl.WithPreferredLanguageTags(ctx, intl.ParseUILocales(s.UILocales))
+	if s.UILocales != "" {
+		tags := intl.ParseUILocales(s.UILocales)
+		ctx = intl.WithPreferredLanguageTags(ctx, tags)
+	} else {
+		acceptLanguage := deps.HTTPRequest.Header.Get("Accept-Language")
+		tags := intl.ParseAcceptLanguage(acceptLanguage)
+		ctx = intl.WithPreferredLanguageTags(ctx, tags)
+	}
 
+	ctx = context.WithValue(ctx, contextKeyBotProtectionVerificationResult, s.BotProtectionVerificationResult)
 	ctx = context.WithValue(ctx, contextKeyIDToken, s.IDToken)
 	ctx = context.WithValue(ctx, contextKeySuppressIDPSessionCookie, s.SuppressIDPSessionCookie)
 	ctx = context.WithValue(ctx, contextKeyUserIDHint, s.UserIDHint)
@@ -131,14 +155,9 @@ func (s *Session) MakeContext(ctx context.Context, deps *Dependencies, publicFlo
 
 	ctx = context.WithValue(ctx, contextKeyFlowID, s.FlowID)
 
-	flowReference := publicFlow.FlowFlowReference()
-	ctx = context.WithValue(ctx, contextKeyFlowReference, flowReference)
+	return ctx
+}
 
-	flowRootObject, err := publicFlow.FlowRootObject(deps)
-	if err != nil {
-		return nil, err
-	}
-	ctx = context.WithValue(ctx, contextKeyFlowRootObject, flowRootObject)
-
-	return ctx, nil
+func (s *Session) SetBotProtectionVerificationResult(result *BotProtectionVerificationResult) {
+	s.BotProtectionVerificationResult = result
 }

@@ -2,15 +2,15 @@ package declarative
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
-	"github.com/authgear/authgear-server/pkg/api/apierrors"
-	"github.com/authgear/authgear-server/pkg/api/model"
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
 	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
 )
 
 func init() {
@@ -18,43 +18,73 @@ func init() {
 }
 
 type IntentCreateAuthenticatorOOBOTP struct {
-	JSONPointer    jsonpointer.T                           `json:"json_pointer,omitempty"`
-	UserID         string                                  `json:"user_id,omitempty"`
-	Authentication config.AuthenticationFlowAuthentication `json:"authentication,omitempty"`
+	JSONPointer            jsonpointer.T                           `json:"json_pointer,omitempty"`
+	UserID                 string                                  `json:"user_id,omitempty"`
+	IsUpdatingExistingUser bool                                    `json:"is_updating_existing_user,omitempty"`
+	Authentication         config.AuthenticationFlowAuthentication `json:"authentication,omitempty"`
 }
 
 var _ authflow.Intent = &IntentCreateAuthenticatorOOBOTP{}
 var _ authflow.Milestone = &IntentCreateAuthenticatorOOBOTP{}
-var _ MilestoneAuthenticationMethod = &IntentCreateAuthenticatorOOBOTP{}
+var _ MilestoneFlowSelectAuthenticationMethod = &IntentCreateAuthenticatorOOBOTP{}
+var _ MilestoneDidSelectAuthenticationMethod = &IntentCreateAuthenticatorOOBOTP{}
+var _ MilestoneFlowCreateAuthenticator = &IntentCreateAuthenticatorOOBOTP{}
+var _ MilestoneSwitchToExistingUser = &IntentCreateAuthenticatorOOBOTP{}
 
 func (*IntentCreateAuthenticatorOOBOTP) Kind() string {
 	return "IntentCreateAuthenticatorOOBOTP"
 }
 
 func (*IntentCreateAuthenticatorOOBOTP) Milestone() {}
-func (n *IntentCreateAuthenticatorOOBOTP) MilestoneAuthenticationMethod() config.AuthenticationFlowAuthentication {
-	return n.Authentication
+func (*IntentCreateAuthenticatorOOBOTP) MilestoneFlowCreateAuthenticator(flows authflow.Flows) (MilestoneDoCreateAuthenticator, authflow.Flows, bool) {
+	return authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateAuthenticator](flows)
+}
+func (i *IntentCreateAuthenticatorOOBOTP) MilestoneFlowSelectAuthenticationMethod(flows authflow.Flows) (MilestoneDidSelectAuthenticationMethod, authflow.Flows, bool) {
+	return i, flows, true
+}
+
+func (i *IntentCreateAuthenticatorOOBOTP) MilestoneDidSelectAuthenticationMethod() config.AuthenticationFlowAuthentication {
+	return i.Authentication
+}
+
+func (i *IntentCreateAuthenticatorOOBOTP) MilestoneSwitchToExistingUser(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error {
+	i.UserID = newUserID
+	i.IsUpdatingExistingUser = true
+
+	// Skip creation was handled by the parent IntentSignupFlowStepCreateAuthenticator
+	// So don't need to do it here
+
+	milestoneVerifyClaim, milestoneVeriyClaimFlows, ok := authflow.FindMilestoneInCurrentFlow[MilestoneVerifyClaim](flows)
+	if ok {
+		return milestoneVerifyClaim.MilestoneVerifyClaimUpdateUserID(deps, milestoneVeriyClaimFlows, newUserID)
+	}
+
+	return nil
 }
 
 func (n *IntentCreateAuthenticatorOOBOTP) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
-	objectForOneOf, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), n.JSONPointer)
+	flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
+	objectForOneOf, err := authflow.FlowObject(flowRootObject, n.JSONPointer)
 	if err != nil {
 		return nil, err
 	}
 
 	oneOf := n.oneOf(objectForOneOf)
 	verificationRequired := oneOf.IsVerificationRequired()
-	targetStepName := oneOf.TargetStep
+	targetStepName := oneOf.GetTargetStepName()
 
-	m, authenticatorSelected := authflow.FindMilestone[MilestoneDidSelectAuthenticator](flows.Nearest)
+	m, _, authenticatorSelected := authflow.FindMilestoneInCurrentFlow[MilestoneDidSelectAuthenticator](flows)
 	claimVerifiedAlready := false
-	_, claimVerifiedInThisFlow := authflow.FindMilestone[MilestoneDoMarkClaimVerified](flows.Nearest)
-	_, created := authflow.FindMilestone[MilestoneDoCreateAuthenticator](flows.Nearest)
+	_, _, claimVerifiedInThisFlow := authflow.FindMilestoneInCurrentFlow[MilestoneVerifyClaim](flows)
+	_, _, created := authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateAuthenticator](flows)
 
 	if authenticatorSelected {
 		info := m.MilestoneDidSelectAuthenticator()
 		claimName, claimValue := info.OOBOTP.ToClaimPair()
-		claimStatus, err := deps.Verification.GetClaimStatus(n.UserID, claimName, claimValue)
+		claimStatus, err := deps.Verification.GetClaimStatus(ctx, n.UserID, claimName, claimValue)
 		if err != nil {
 			return nil, err
 		}
@@ -70,8 +100,16 @@ func (n *IntentCreateAuthenticatorOOBOTP) CanReactTo(ctx context.Context, deps *
 			return nil, nil
 		}
 
+		isBotProtectionRequired, err := IsBotProtectionRequired(ctx, deps, flows, n.JSONPointer)
+		if err != nil {
+			return nil, err
+		}
+
 		return &InputSchemaTakeOOBOTPTarget{
-			JSONPointer: n.JSONPointer,
+			FlowRootObject:          flowRootObject,
+			JSONPointer:             n.JSONPointer,
+			IsBotProtectionRequired: isBotProtectionRequired,
+			BotProtectionCfg:        deps.Config.BotProtection,
 		}, nil
 	case shouldVerifyInThisFlow && !claimVerifiedInThisFlow:
 		// Verify the claim
@@ -85,28 +123,32 @@ func (n *IntentCreateAuthenticatorOOBOTP) CanReactTo(ctx context.Context, deps *
 }
 
 func (n *IntentCreateAuthenticatorOOBOTP) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
-	objectForOneOf, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), n.JSONPointer)
+	rootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
+	objectForOneOf, err := authflow.FlowObject(rootObject, n.JSONPointer)
 	if err != nil {
 		return nil, err
 	}
 
 	oneOf := n.oneOf(objectForOneOf)
 	verificationRequired := oneOf.IsVerificationRequired()
-	targetStepName := oneOf.TargetStep
+	targetStepName := oneOf.GetTargetStepName()
 
-	m, authenticatorSelected := authflow.FindMilestone[MilestoneDidSelectAuthenticator](flows.Nearest)
+	m, _, authenticatorSelected := authflow.FindMilestoneInCurrentFlow[MilestoneDidSelectAuthenticator](flows)
 	claimVerifiedAlready := false
-	_, claimVerifiedInThisFlow := authflow.FindMilestone[MilestoneDoMarkClaimVerified](flows.Nearest)
-	_, created := authflow.FindMilestone[MilestoneDoCreateAuthenticator](flows.Nearest)
+	_, _, claimVerifiedInThisFlow := authflow.FindMilestoneInCurrentFlow[MilestoneVerifyClaim](flows)
+	_, _, created := authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateAuthenticator](flows)
 
 	if authenticatorSelected {
 		info := m.MilestoneDidSelectAuthenticator()
 		claimName, claimValue := info.OOBOTP.ToClaimPair()
-		claimStatus, err := deps.Verification.GetClaimStatus(n.UserID, claimName, claimValue)
+		verified, err := getCreateAuthenticatorOOBOTPTargetVerified(ctx, deps, n.UserID, claimName, claimValue)
 		if err != nil {
 			return nil, err
 		}
-		claimVerifiedAlready = claimStatus.Verified
+		claimVerifiedAlready = verified
 	}
 
 	shouldVerifyInThisFlow := !claimVerifiedAlready && verificationRequired
@@ -114,56 +156,26 @@ func (n *IntentCreateAuthenticatorOOBOTP) ReactTo(ctx context.Context, deps *aut
 	switch {
 	case !authenticatorSelected:
 		if targetStepName != "" {
-			// Find the target step from the root.
-			targetStepFlow, err := authflow.FindTargetStep(flows.Root, targetStepName)
+			oobOTPTarget, _, err := getCreateAuthenticatorOOBOTPTargetFromTargetStep(ctx, deps, flows, targetStepName)
 			if err != nil {
 				return nil, err
 			}
-
-			target, ok := targetStepFlow.Intent.(IntentSignupFlowStepCreateAuthenticatorTarget)
-			if !ok {
-				return nil, InvalidTargetStep.NewWithInfo("invalid target_step", apierrors.Details{
-					"target_step": targetStepName,
-				})
+			if oobOTPTarget == "" {
+				panic(fmt.Errorf("unexpected: oob otp target is empty"))
 			}
-
-			claims, err := target.GetOOBOTPClaims(ctx, deps, flows.Replace(targetStepFlow))
-			if err != nil {
-				return nil, err
-			}
-
-			var claimNames []model.ClaimName
-			for claimName := range claims {
-				claimNames = append(claimNames, claimName)
-			}
-
-			if len(claimNames) != 1 {
-				// TODO(authflow): support create more than 1 OOB OTP authenticator?
-				return nil, InvalidTargetStep.NewWithInfo("target_step does not contain exactly one claim for OOB-OTP", apierrors.Details{
-					"claims": claimNames,
-				})
-			}
-
-			claimName := claimNames[0]
-			switch claimName {
-			case model.ClaimEmail:
-				break
-			case model.ClaimPhoneNumber:
-				break
-			default:
-				return nil, InvalidTargetStep.NewWithInfo("target_step contains unsupported claim for OOB-OTP", apierrors.Details{
-					"claim_name": claimName,
-				})
-			}
-
-			oobOTPTarget := claims[claimName]
-			return n.newDidSelectAuthenticatorNode(deps, oobOTPTarget)
+			return n.newDidSelectAuthenticatorNode(ctx, deps, oobOTPTarget)
 		}
 
 		var inputTakeOOBOTPTarget inputTakeOOBOTPTarget
 		if authflow.AsInput(input, &inputTakeOOBOTPTarget) {
+			var bpSpecialErr error
+			bpSpecialErr, err := HandleBotProtection(ctx, deps, flows, n.JSONPointer, input)
+			if err != nil {
+				return nil, err
+			}
 			oobOTPTarget := inputTakeOOBOTPTarget.GetTarget()
-			return n.newDidSelectAuthenticatorNode(deps, oobOTPTarget)
+			node, err := n.newDidSelectAuthenticatorNode(ctx, deps, oobOTPTarget)
+			return node, errors.Join(bpSpecialErr, err)
 		}
 	case shouldVerifyInThisFlow && !claimVerifiedInThisFlow:
 		info := m.MilestoneDidSelectAuthenticator()
@@ -189,8 +201,8 @@ func (n *IntentCreateAuthenticatorOOBOTP) ReactTo(ctx context.Context, deps *aut
 	return nil, authflow.ErrIncompatibleInput
 }
 
-func (n *IntentCreateAuthenticatorOOBOTP) oneOf(o config.AuthenticationFlowObject) *config.AuthenticationFlowSignupFlowOneOf {
-	oneOf, ok := o.(*config.AuthenticationFlowSignupFlowOneOf)
+func (n *IntentCreateAuthenticatorOOBOTP) oneOf(o config.AuthenticationFlowObject) config.AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf {
+	oneOf, ok := o.(config.AuthenticationFlowObjectSignupFlowOrLoginFlowOneOf)
 	if !ok {
 		panic(fmt.Errorf("flow object is %T", o))
 	}
@@ -198,23 +210,23 @@ func (n *IntentCreateAuthenticatorOOBOTP) oneOf(o config.AuthenticationFlowObjec
 	return oneOf
 }
 
-func (i *IntentCreateAuthenticatorOOBOTP) otpMessageType() otp.MessageType {
+func (i *IntentCreateAuthenticatorOOBOTP) otpMessageType() translation.MessageType {
 	switch i.Authentication {
 	case config.AuthenticationFlowAuthenticationPrimaryOOBOTPEmail:
-		return otp.MessageTypeSetupPrimaryOOB
+		return translation.MessageTypeSetupPrimaryOOB
 	case config.AuthenticationFlowAuthenticationPrimaryOOBOTPSMS:
-		return otp.MessageTypeSetupPrimaryOOB
+		return translation.MessageTypeSetupPrimaryOOB
 	case config.AuthenticationFlowAuthenticationSecondaryOOBOTPEmail:
-		return otp.MessageTypeSetupSecondaryOOB
+		return translation.MessageTypeSetupSecondaryOOB
 	case config.AuthenticationFlowAuthenticationSecondaryOOBOTPSMS:
-		return otp.MessageTypeSetupSecondaryOOB
+		return translation.MessageTypeSetupSecondaryOOB
 	default:
 		panic(fmt.Errorf("unexpected authentication method: %v", i.Authentication))
 	}
 }
 
-func (n *IntentCreateAuthenticatorOOBOTP) newDidSelectAuthenticatorNode(deps *authflow.Dependencies, target string) (*authflow.Node, error) {
-	info, err := createAuthenticator(deps, n.UserID, n.Authentication, target)
+func (n *IntentCreateAuthenticatorOOBOTP) newDidSelectAuthenticatorNode(ctx context.Context, deps *authflow.Dependencies, target string) (*authflow.Node, error) {
+	info, err := createAuthenticator(ctx, deps, n.UserID, n.Authentication, target)
 	if err != nil {
 		return nil, err
 	}

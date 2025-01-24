@@ -11,12 +11,13 @@ import (
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
 	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
 )
 
 type IntentSignupFlowStepVerifyTarget interface {
 	GetVerifiableClaims(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (map[model.ClaimName]string, error)
 	GetPurpose(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) otp.Purpose
-	GetMessageType(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) otp.MessageType
+	GetMessageType(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) translation.MessageType
 }
 
 func init() {
@@ -30,9 +31,23 @@ type IntentSignupFlowStepVerify struct {
 }
 
 var _ authflow.Intent = &IntentSignupFlowStepVerify{}
+var _ authflow.Milestone = &IntentSignupFlowStepVerify{}
+var _ MilestoneSwitchToExistingUser = &IntentSignupFlowStepVerify{}
 
 func (*IntentSignupFlowStepVerify) Kind() string {
 	return "IntentSignupFlowStepVerify"
+}
+
+func (i *IntentSignupFlowStepVerify) Milestone() {}
+func (i *IntentSignupFlowStepVerify) MilestoneSwitchToExistingUser(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error {
+	i.UserID = newUserID
+
+	milestoneVerifyClaim, milestoneVerifyClaimFlows, ok := authflow.FindMilestoneInCurrentFlow[MilestoneVerifyClaim](flows)
+	if ok {
+		return milestoneVerifyClaim.MilestoneVerifyClaimUpdateUserID(deps, milestoneVerifyClaimFlows, newUserID)
+	}
+
+	return nil
 }
 
 func (*IntentSignupFlowStepVerify) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
@@ -44,7 +59,11 @@ func (*IntentSignupFlowStepVerify) CanReactTo(ctx context.Context, deps *authflo
 }
 
 func (i *IntentSignupFlowStepVerify) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, _ authflow.Input) (*authflow.Node, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	rootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
+	current, err := authflow.FlowObject(rootObject, i.JSONPointer)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +121,7 @@ func (i *IntentSignupFlowStepVerify) ReactTo(ctx context.Context, deps *authflow
 	claimValue := claims[claimName]
 
 	// Do not verify if the claim is verified already.
-	claimStatus, err := deps.Verification.GetClaimStatus(i.UserID, claimName, claimValue)
+	claimStatus, err := deps.Verification.GetClaimStatus(ctx, i.UserID, claimName, claimValue)
 	if err != nil {
 		return nil, err
 	}

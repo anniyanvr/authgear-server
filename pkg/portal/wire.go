@@ -40,15 +40,9 @@ func newSentryMiddleware(p *deps.RequestProvider) httproute.Middleware {
 
 func newSessionInfoMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	panic(wire.Build(
+		DependencySet,
 		session.DependencySet,
 		wire.Bind(new(httproute.Middleware), new(*session.SessionInfoMiddleware)),
-	))
-}
-
-func newSessionRequiredMiddleware(p *deps.RequestProvider) httproute.Middleware {
-	panic(wire.Build(
-		session.DependencySet,
-		wire.Bind(new(httproute.Middleware), new(*session.SessionRequiredMiddleware)),
 	))
 }
 
@@ -84,5 +78,12 @@ func newStripeWebhookHandler(p *deps.RequestProvider) http.Handler {
 	panic(wire.Build(
 		DependencySet,
 		wire.Bind(new(http.Handler), new(*transport.StripeWebhookHandler)),
+	))
+}
+
+func newOsanoHandler(p *deps.RequestProvider) http.Handler {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(http.Handler), new(*transport.OsanoHandler)),
 	))
 }

@@ -20,7 +20,9 @@ func WithSession(ctx context.Context, session *Session) context.Context {
 }
 
 type SessionOptions struct {
+	SAMLSessionID   string
 	OAuthSessionID  string
+	ClientID        string
 	RedirectURI     string
 	KeepAfterFinish bool
 	Prompt          []string
@@ -38,7 +40,9 @@ type SessionOptions struct {
 
 func NewSessionOptionsFromSession(s *Session) SessionOptions {
 	return SessionOptions{
+		SAMLSessionID:              s.SAMLSessionID,
 		OAuthSessionID:             s.OAuthSessionID,
+		ClientID:                   s.ClientID,
 		RedirectURI:                s.RedirectURI,
 		KeepAfterFinish:            s.KeepAfterFinish,
 		Prompt:                     s.Prompt,
@@ -61,7 +65,11 @@ type Session struct {
 	// Authflow keeps track of an authflow.
 	Authflow *Authflow `json:"authflow,omitempty"`
 
+	SAMLSessionID  string `json:"saml_session_id,omitempty"`
 	OAuthSessionID string `json:"oauth_session_id,omitempty"`
+
+	// ClientID is the client ID from SAMLSessionID or OAuthSessionID.
+	ClientID string `json:"client_id,omitempty"`
 
 	// RedirectURI is the URI to redirect to after the completion of session.
 	RedirectURI string `json:"redirect_uri,omitempty"`
@@ -113,6 +121,8 @@ func NewSession(options SessionOptions) *Session {
 	s := &Session{
 		ID:                         newSessionID(),
 		OAuthSessionID:             options.OAuthSessionID,
+		SAMLSessionID:              options.SAMLSessionID,
+		ClientID:                   options.ClientID,
 		RedirectURI:                options.RedirectURI,
 		KeepAfterFinish:            options.KeepAfterFinish,
 		Extra:                      make(map[string]interface{}),

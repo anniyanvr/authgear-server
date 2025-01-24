@@ -51,7 +51,6 @@ function SummaryText(props: { children: React.ReactNode; light?: boolean }) {
   );
 }
 
-// eslint-disable-next-line complexity
 const AuditLogEntryScreen: React.VFC = function AuditLogEntryScreen() {
   const { logID, appID } = useParams() as { logID: string; appID: string };
   const location = useLocation();
@@ -108,7 +107,11 @@ const AuditLogEntryScreen: React.VFC = function AuditLogEntryScreen() {
   }
 
   return (
-    <CommandBarContainer isLoading={loading} messageBar={messageBar}>
+    <CommandBarContainer
+      isLoading={loading}
+      messageBar={messageBar}
+      hideCommandBar={true}
+    >
       <ScreenContent>
         <NavBreadcrumb className={styles.widget} items={navBreadcrumbItems} />
         <Widget className={styles.widget}>

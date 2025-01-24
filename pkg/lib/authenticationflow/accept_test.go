@@ -11,7 +11,8 @@ import (
 )
 
 func TestAccept(t *testing.T) {
-	ctx := context.TODO()
+	ctx := context.Background()
+
 	deps := &Dependencies{}
 
 	Convey("Ignore incompatible input", t, func() {
@@ -21,7 +22,7 @@ func TestAccept(t *testing.T) {
 			PretendLoginIDExists: false,
 		})
 
-		err := Accept(ctx, deps, NewFlows(w), nil)
+		_, err := Accept(ctx, deps, NewFlows(w), nil)
 		So(errors.Is(err, ErrNoChange), ShouldBeTrue)
 	})
 
@@ -32,7 +33,7 @@ func TestAccept(t *testing.T) {
 			PretendLoginIDExists: false,
 		})
 
-		err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"login_id": "user@example.com"
 		}`))
 
@@ -150,7 +151,7 @@ func TestAccept(t *testing.T) {
 }
 		`
 
-		err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"login_id": "user@example.com"
 		}`))
 		So(err, ShouldBeNil)
@@ -159,7 +160,7 @@ func TestAccept(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(string(bytes), ShouldEqualJSON, jsonStr)
 
-		err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"otp": "nonsense"
 		}`))
 		So(errors.Is(err, ErrInvalidOTP), ShouldBeTrue)
@@ -175,12 +176,12 @@ func TestAccept(t *testing.T) {
 			PretendLoginIDExists: false,
 		})
 
-		err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"login_id": "user@example.com"
 		}`))
 		So(err, ShouldBeNil)
 
-		err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"resend": true
 		}`))
 		So(err, ShouldBeNil)
@@ -247,22 +248,22 @@ func TestAccept(t *testing.T) {
 			PretendLoginIDExists: false,
 		})
 
-		err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err := Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"login_id": "user@example.com"
 		}`))
 		So(err, ShouldBeNil)
 
-		err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"otp": "123456"
 		}`))
 		So(err, ShouldBeNil)
 
-		err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"create_password": true
 		}`))
 		So(err, ShouldBeNil)
 
-		err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
+		_, err = Accept(ctx, deps, NewFlows(w), json.RawMessage(`{
 			"new_password": "password"
 		}`))
 		So(errors.Is(err, ErrEOF), ShouldBeTrue)

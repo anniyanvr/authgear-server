@@ -1,0 +1,30 @@
+{{ template "authflowv2/__direct_access_disable_page_frame.html" . }}
+
+{{ define "page-content" }}
+
+{{- $brandingURIText := trimPrefix "http://www." .BrandPageURI -}}
+{{- $brandingURIText = trimPrefix "http://" $brandingURIText -}}
+{{- $brandingURIText = trimPrefix "https://www." $brandingURIText -}}
+{{- $brandingURIText = trimPrefix "https://" $brandingURIText -}}
+
+<div class="screen-logo-layout">
+  {{ template "authflowv2/__brand_logo.html"
+    (merge
+      (dict
+        "LogoClass" "brand-logo--default"
+      )
+      .
+    )
+  }}
+  <div class="screen-title-description text-center max-w-90">
+    <p class="screen-title">{{ translate "app.name" nil }}</p>
+    {{ if $.BrandPageURI }}
+      <p class="body-text--md">
+        <a href="{{ $.BrandPageURI }}">{{  $brandingURIText  }}</a>
+      </p>
+    {{ else }}
+      <p class="screen-description">{{ translate "configure-direct-access-description" nil }}</p>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

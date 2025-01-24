@@ -1,7 +1,7 @@
 package totp
 
 import (
-	"fmt"
+	"context"
 	"sort"
 
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
@@ -17,20 +17,20 @@ type Provider struct {
 	Clock  clock.Clock
 }
 
-func (p *Provider) Get(userID string, id string) (*authenticator.TOTP, error) {
-	return p.Store.Get(userID, id)
+func (p *Provider) Get(ctx context.Context, userID string, id string) (*authenticator.TOTP, error) {
+	return p.Store.Get(ctx, userID, id)
 }
 
-func (p *Provider) GetMany(ids []string) ([]*authenticator.TOTP, error) {
-	return p.Store.GetMany(ids)
+func (p *Provider) GetMany(ctx context.Context, ids []string) ([]*authenticator.TOTP, error) {
+	return p.Store.GetMany(ctx, ids)
 }
 
-func (p *Provider) Delete(a *authenticator.TOTP) error {
-	return p.Store.Delete(a.ID)
+func (p *Provider) Delete(ctx context.Context, a *authenticator.TOTP) error {
+	return p.Store.Delete(ctx, a.ID)
 }
 
-func (p *Provider) List(userID string) ([]*authenticator.TOTP, error) {
-	authenticators, err := p.Store.List(userID)
+func (p *Provider) List(ctx context.Context, userID string) ([]*authenticator.TOTP, error) {
+	authenticators, err := p.Store.List(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -39,36 +39,51 @@ func (p *Provider) List(userID string) ([]*authenticator.TOTP, error) {
 	return authenticators, nil
 }
 
-func (p *Provider) New(id string, userID string, displayName string, isDefault bool, kind string) *authenticator.TOTP {
-	totp, err := secretcode.NewTOTPFromRNG()
-	if err != nil {
-		panic(fmt.Errorf("totp: failed to generate secret: %w", err))
-	}
-
+func (p *Provider) New(id string, userID string, totpSpec *authenticator.TOTPSpec, isDefault bool, kind string) (*authenticator.TOTP, error) {
 	if id == "" {
 		id = uuid.New()
 	}
+
+	var secret string
+	switch {
+	case totpSpec.Secret != "":
+		totp, err := secretcode.NewTOTPFromSecret(totpSpec.Secret)
+		if err != nil {
+			return nil, TranslateTOTPError(err)
+		}
+		secret = totp.Secret
+	default:
+		totp, err := secretcode.NewTOTPFromRNG()
+		if err != nil {
+			return nil, err
+		}
+		secret = totp.Secret
+	}
+
 	a := &authenticator.TOTP{
 		ID:          id,
 		UserID:      userID,
-		Secret:      totp.Secret,
-		DisplayName: displayName,
+		Secret:      secret,
+		DisplayName: totpSpec.DisplayName,
 		IsDefault:   isDefault,
 		Kind:        kind,
 	}
-	return a
+	return a, nil
 }
 
-func (p *Provider) Create(a *authenticator.TOTP) error {
+func (p *Provider) Create(ctx context.Context, a *authenticator.TOTP) error {
 	now := p.Clock.NowUTC()
 	a.CreatedAt = now
 	a.UpdatedAt = now
-	return p.Store.Create(a)
+	return p.Store.Create(ctx, a)
 }
 
 func (p *Provider) Authenticate(a *authenticator.TOTP, code string) error {
 	now := p.Clock.NowUTC()
-	totp := secretcode.NewTOTPFromSecret(a.Secret)
+	totp, err := secretcode.NewTOTPFromSecret(a.Secret)
+	if err != nil {
+		return err
+	}
 	if totp.ValidateCode(now, code) {
 		return nil
 	}

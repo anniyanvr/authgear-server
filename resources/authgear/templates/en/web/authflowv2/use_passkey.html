@@ -1,0 +1,58 @@
+{{ template "authflowv2/__page_frame.html" . }}
+{{ define "page-content" }}
+
+  <div class="screen-icon-layout screen-icon-layout--compact flex-1-0-auto">
+    <i class="screen-icon material-icons">passkey</i>
+    <header class="screen-title-description">
+      <h1 class="screen-title">
+        {{ include "v2.page.use-passkey.default.title" nil }}
+      </h1>
+      <p class="screen-description">
+        {{ if eq $.FlowType "reauth" }}
+          {{ include "v2.page.use-passkey.reauth.description" nil }}
+        {{ else }}
+          {{ include "v2.page.use-passkey.default.description" nil }}
+        {{ end }}
+      </p>
+      {{ template "authflowv2/__alert_message.html"
+        (dict
+          "Type" "error"
+          "Classname" "mt-4"
+          "Message" (ternary (include "authflowv2/__error.html" .) nil (not (empty $.Error)))
+        )
+      }}
+    </header>
+    <footer
+      class="flex flex-col gap-y-8"
+      data-controller="authflow-passkey-request"
+      data-authflow-passkey-request-options-value="{{ $.PasskeyRequestOptionsJSON }}"
+      {{ if not $.Error }}
+        data-authflow-passkey-request-auto-value="{{ $.AutoExecute }}"
+      {{ end }}
+      >
+      <button
+        class="primary-btn w-full"
+        type="button"
+        data-action="click->authflow-passkey-request#use"
+        data-authgear-event="authgear.button.use_passkey"
+        data-authflow-passkey-request-target="button"
+        disabled
+      >
+        {{ include "v2.page.use-passkey.default.button-action-label" nil }}
+      </button>
+      <form
+        class="hidden"
+        method="post"
+        novalidate
+        data-controller="turbo-form"
+        data-action="submit->turbo-form#submitForm"
+      >
+        {{ $.CSRFField }}
+        <input type="hidden" name="x_assertion_response" data-authflow-passkey-request-target="input">
+        <button type="submit" class="hidden" name="x_action" value="" data-authflow-passkey-request-target="submit"></button>
+      </form>
+      {{ template "authflowv2/__authflow_branch.html" . }}
+    </footer>
+  </div>
+
+{{ end }}

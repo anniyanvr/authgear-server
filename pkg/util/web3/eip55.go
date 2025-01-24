@@ -5,7 +5,6 @@ import (
 	"regexp"
 
 	"github.com/authgear/authgear-server/pkg/util/hexstring"
-	"github.com/ethereum/go-ethereum/common"
 )
 
 // https://eips.ethereum.org/EIPS/eip-55
@@ -23,7 +22,7 @@ func NewEIP55(s string) (EIP55, error) {
 		return EIP55("0x0"), nil
 	}
 
-	address := common.HexToAddress(s)
+	address := HexToAddress(s)
 
 	return EIP55(address.Hex()), nil
 }

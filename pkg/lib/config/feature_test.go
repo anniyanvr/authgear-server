@@ -7,10 +7,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/authgear/authgear-server/pkg/lib/config"
 	. "github.com/smartystreets/goconvey/convey"
 	goyaml "gopkg.in/yaml.v2"
 	"sigs.k8s.io/yaml"
+
+	"github.com/authgear/authgear-server/pkg/lib/config"
 )
 
 func TestParseFeatureConfig(t *testing.T) {
@@ -26,6 +27,50 @@ func TestParseFeatureConfig(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		So(cfg, ShouldResemble, &defaultCfg)
+	})
+
+	Convey("merge feature config", t, func() {
+
+		type TestCase struct {
+			Configs []interface{} `yaml:"configs"`
+			Result  interface{}   `yaml:"result"`
+		}
+
+		f, err := os.Open("testdata/merge_feature.yaml")
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		decoder := goyaml.NewDecoder(f)
+		var testCase TestCase
+		err = decoder.Decode(&testCase)
+		if err != nil {
+			panic(err)
+		}
+
+		resultData, err := goyaml.Marshal(testCase.Result)
+		if err != nil {
+			panic(err)
+		}
+
+		expected, err := config.ParseFeatureConfig(resultData)
+		So(err, ShouldBeNil)
+
+		mergedConfig := &config.FeatureConfig{}
+		for _, cfgData := range testCase.Configs {
+			data, err := goyaml.Marshal(cfgData)
+			if err != nil {
+				panic(err)
+			}
+
+			cfg, err := config.ParseFeatureConfigWithoutDefaults(data)
+			So(err, ShouldBeNil)
+
+			mergedConfig = mergedConfig.Merge(cfg)
+		}
+		config.SetFieldDefaults(mergedConfig)
+
+		So(mergedConfig, ShouldResemble, expected)
 	})
 
 	Convey("ParseFeatureConfig", t, func() {

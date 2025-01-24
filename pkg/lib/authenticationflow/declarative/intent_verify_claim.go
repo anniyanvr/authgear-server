@@ -9,40 +9,44 @@ import (
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
 	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
 	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
 )
 
 func init() {
 	authflow.RegisterIntent(&IntentVerifyClaim{})
 }
 
-type IntentVerifyClaimData struct {
-	Channels         []model.AuthenticatorOOBChannel `json:"channels,omitempty"`
-	MaskedClaimValue string                          `json:"masked_claim_value,omitempty"`
-}
-
-func (IntentVerifyClaimData) Data() {}
-
 type IntentVerifyClaim struct {
-	JSONPointer jsonpointer.T   `json:"json_pointer,omitempty"`
-	UserID      string          `json:"user_id,omitempty"`
-	Purpose     otp.Purpose     `json:"purpose,omitempty"`
-	MessageType otp.MessageType `json:"message_type,omitempty"`
-	Form        otp.Form        `json:"form,omitempty"`
-	ClaimName   model.ClaimName `json:"claim_name,omitempty"`
-	ClaimValue  string          `json:"claim_value,omitempty"`
+	JSONPointer jsonpointer.T           `json:"json_pointer,omitempty"`
+	UserID      string                  `json:"user_id,omitempty"`
+	Purpose     otp.Purpose             `json:"purpose,omitempty"`
+	MessageType translation.MessageType `json:"message_type,omitempty"`
+	Form        otp.Form                `json:"form,omitempty"`
+	ClaimName   model.ClaimName         `json:"claim_name,omitempty"`
+	ClaimValue  string                  `json:"claim_value,omitempty"`
 }
 
 var _ authflow.Intent = &IntentVerifyClaim{}
 var _ authflow.DataOutputer = &IntentVerifyClaim{}
 var _ authflow.Milestone = &IntentVerifyClaim{}
-var _ MilestoneDoMarkClaimVerified = &IntentVerifyClaim{}
+var _ MilestoneVerifyClaim = &IntentVerifyClaim{}
 
 func (*IntentVerifyClaim) Kind() string {
 	return "IntentVerifyClaim"
 }
 
-func (*IntentVerifyClaim) Milestone()                    {}
-func (*IntentVerifyClaim) MilestoneDoMarkClaimVerified() {}
+func (*IntentVerifyClaim) Milestone()            {}
+func (*IntentVerifyClaim) MilestoneVerifyClaim() {}
+func (i *IntentVerifyClaim) MilestoneVerifyClaimUpdateUserID(deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error {
+	i.UserID = newUserID
+
+	milestone, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneDoMarkClaimVerified](flows)
+	if ok {
+		milestone.MilestoneDoMarkClaimVerifiedUpdateUserID(newUserID)
+	}
+
+	return nil
+}
 
 func (i *IntentVerifyClaim) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
 	if len(flows.Nearest.Nodes) == 0 {
@@ -54,9 +58,14 @@ func (i *IntentVerifyClaim) CanReactTo(ctx context.Context, deps *authflow.Depen
 		if len(channels) == 1 {
 			return nil, nil
 		}
+		flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+		if err != nil {
+			return nil, err
+		}
 		return &InputSchemaTakeOOBOTPChannel{
-			JSONPointer: i.JSONPointer,
-			Channels:    channels,
+			FlowRootObject: flowRootObject,
+			JSONPointer:    i.JSONPointer,
+			Channels:       channels,
 		}, nil
 	}
 
@@ -100,10 +109,10 @@ func (i *IntentVerifyClaim) ReactTo(ctx context.Context, deps *authflow.Dependen
 
 func (i *IntentVerifyClaim) OutputData(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.Data, error) {
 	channels := i.getChannels(deps)
-	return IntentVerifyClaimData{
+	return NewOOBData(SelectOOBOTPChannelsData{
 		Channels:         channels,
 		MaskedClaimValue: getMaskedOTPTarget(i.ClaimName, i.ClaimValue),
-	}, nil
+	}), nil
 }
 
 func (i *IntentVerifyClaim) getChannels(deps *authflow.Dependencies) []model.AuthenticatorOOBChannel {

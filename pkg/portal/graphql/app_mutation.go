@@ -1,13 +1,15 @@
 package graphql
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
 	"sigs.k8s.io/yaml"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
@@ -30,6 +32,10 @@ var appResourceUpdate = graphql.NewInputObject(graphql.InputObjectConfig{
 		"data": &graphql.InputObjectFieldConfig{
 			Type:        graphql.String,
 			Description: "New data of the resource file. Set to null to remove it.",
+		},
+		"checksum": &graphql.InputObjectFieldConfig{
+			Type:        graphql.String,
+			Description: "The checksum of the original resource file. If provided, it will be used to detect conflict.",
 		},
 	},
 })
@@ -94,6 +100,40 @@ var adminAPIAuthKeyDeleteDataInput = graphql.NewInputObject(graphql.InputObjectC
 	},
 })
 
+var samlIdpSigningSecretsDeleteDataInput = graphql.NewInputObject(graphql.InputObjectConfig{
+	Name: "SAMLIdpSigningSecretsDeleteDataInput",
+	Fields: graphql.InputObjectConfigFieldMap{
+		"keyIDs": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphql.String))),
+		},
+	},
+})
+
+var samlSpSigningSecretsSetDataInputItem = graphql.NewInputObject(graphql.InputObjectConfig{
+	Name: "SAMLSpSigningSecretsSetDataInputItem",
+	Fields: graphql.InputObjectConfigFieldMap{
+		"clientID": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.String),
+		},
+		"certificates": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.NewList(
+				graphql.NewNonNull(graphql.String),
+			)),
+		},
+	},
+})
+
+var samlSpSigningSecretsSetDataInput = graphql.NewInputObject(graphql.InputObjectConfig{
+	Name: "SAMLSpSigningSecretsSetDataInput",
+	Fields: graphql.InputObjectConfigFieldMap{
+		"items": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.NewList(
+				graphql.NewNonNull(samlSpSigningSecretsSetDataInputItem),
+			)),
+		},
+	},
+})
+
 var smtpSecretUpdateInstructionsInput = graphql.NewInputObject(graphql.InputObjectConfig{
 	Name: "SmtpSecretUpdateInstructionsInput",
 	Fields: graphql.InputObjectConfigFieldMap{
@@ -133,6 +173,30 @@ var oauthClientSecretsUpdateInstructionsInput = graphql.NewInputObject(graphql.I
 	},
 })
 
+var samlIdpSigningSecretsUpdateInstructionsInput = graphql.NewInputObject(graphql.InputObjectConfig{
+	Name: "SAMLIdpSigningSecretsUpdateInstructionsInput",
+	Fields: graphql.InputObjectConfigFieldMap{
+		"action": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.String),
+		},
+		"deleteData": &graphql.InputObjectFieldConfig{
+			Type: samlIdpSigningSecretsDeleteDataInput,
+		},
+	},
+})
+
+var samlSpSigningSecretsUpdateInstructionsInput = graphql.NewInputObject(graphql.InputObjectConfig{
+	Name: "SAMLSpSigningSecretsUpdateInstructionsInput",
+	Fields: graphql.InputObjectConfigFieldMap{
+		"action": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.String),
+		},
+		"setData": &graphql.InputObjectFieldConfig{
+			Type: samlSpSigningSecretsSetDataInput,
+		},
+	},
+})
+
 var adminAPIAuthKeyUpdateInstructionInput = graphql.NewInputObject(graphql.InputObjectConfig{
 	Name: "AdminAPIAuthKeyUpdateInstructionInput",
 	Fields: graphql.InputObjectConfigFieldMap{
@@ -141,6 +205,30 @@ var adminAPIAuthKeyUpdateInstructionInput = graphql.NewInputObject(graphql.Input
 		},
 		"deleteData": &graphql.InputObjectFieldConfig{
 			Type: adminAPIAuthKeyDeleteDataInput,
+		},
+	},
+})
+
+var botProtectionProviderSecretInput = graphql.NewInputObject(graphql.InputObjectConfig{
+	Name: "BotProtectionProviderSecretInput",
+	Fields: graphql.InputObjectConfigFieldMap{
+		"type": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.String),
+		},
+		"secretKey": &graphql.InputObjectFieldConfig{
+			Type: graphql.String,
+		},
+	},
+})
+
+var botProtectionProviderSecretUpdateInstructionsInput = graphql.NewInputObject(graphql.InputObjectConfig{
+	Name: "BotProtectionProviderSecretUpdateInstructionsInput",
+	Fields: graphql.InputObjectConfigFieldMap{
+		"action": &graphql.InputObjectFieldConfig{
+			Type: graphql.NewNonNull(graphql.String),
+		},
+		"data": &graphql.InputObjectFieldConfig{
+			Type: botProtectionProviderSecretInput,
 		},
 	},
 })
@@ -160,6 +248,15 @@ var secretConfigUpdateInstructionsInput = graphql.NewInputObject(graphql.InputOb
 		"adminAPIAuthKey": &graphql.InputObjectFieldConfig{
 			Type: adminAPIAuthKeyUpdateInstructionInput,
 		},
+		"botProtectionProviderSecret": &graphql.InputObjectFieldConfig{
+			Type: botProtectionProviderSecretUpdateInstructionsInput,
+		},
+		"samlIdpSigningSecrets": &graphql.InputObjectFieldConfig{
+			Type: samlIdpSigningSecretsUpdateInstructionsInput,
+		},
+		"samlSpSigningSecrets": &graphql.InputObjectFieldConfig{
+			Type: samlSpSigningSecretsUpdateInstructionsInput,
+		},
 	},
 })
 
@@ -178,9 +275,17 @@ var updateAppInput = graphql.NewInputObject(graphql.InputObjectConfig{
 			Type:        AppConfig,
 			Description: "authgear.yaml in JSON.",
 		},
+		"appConfigChecksum": &graphql.InputObjectFieldConfig{
+			Type:        graphql.String,
+			Description: "The checksum of appConfig. If provided, it will be used to detect conflict.",
+		},
 		"secretConfigUpdateInstructions": &graphql.InputObjectFieldConfig{
 			Type:        secretConfigUpdateInstructionsInput,
 			Description: "update secret config instructions.",
+		},
+		"secretConfigUpdateInstructionsChecksum": &graphql.InputObjectFieldConfig{
+			Type:        graphql.String,
+			Description: "The checksum of secretConfig. If provided, it will be used to detect conflict.",
 		},
 	},
 })
@@ -203,17 +308,20 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			ctx := p.Context
 			// Access Control: authenticated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can update app")
+				return nil, Unauthenticated.New("only authenticated users can update app")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
 			appNodeID := input["appID"].(string)
 			updates, _ := input["updates"].([]interface{})
 			appConfigJSONValue := input["appConfig"]
+			appConfigChecksum, _ := input["appConfigChecksum"].(string)
 			secretConfigUpdateInstructionsJSONValue := input["secretConfigUpdateInstructions"]
+			secretConfigUpdateInstructionsChecksum, _ := input["secretConfigUpdateInstructionsChecksum"].(string)
 
 			resolvedNodeID := relay.FromGlobalID(appNodeID)
 			if resolvedNodeID == nil || resolvedNodeID.Type != typeApp {
@@ -221,15 +329,15 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Get(appID)
+			app, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
@@ -241,9 +349,6 @@ var _ = registerMutationField(
 			for _, f := range updates {
 				f := f.(map[string]interface{})
 				path := f["path"].(string)
-				if path == configsource.AuthgearYAML {
-					return nil, errors.New("direct update on authgear.yaml is disallowed")
-				}
 				if path == configsource.AuthgearSecretYAML {
 					return nil, errors.New("direct update on authgear.secrets.yaml is disallowed")
 				}
@@ -256,9 +361,12 @@ var _ = registerMutationField(
 					}
 				}
 
+				checksum, _ := f["checksum"].(string)
+
 				resourceUpdates = append(resourceUpdates, appresource.Update{
-					Path: path,
-					Data: data,
+					Path:     path,
+					Data:     data,
+					Checksum: checksum,
 				})
 				auditedUpdatePaths = append(auditedUpdatePaths, path)
 			}
@@ -275,8 +383,9 @@ var _ = registerMutationField(
 				}
 
 				resourceUpdates = append(resourceUpdates, appresource.Update{
-					Path: configsource.AuthgearYAML,
-					Data: appConfigYAML,
+					Path:     configsource.AuthgearYAML,
+					Data:     appConfigYAML,
+					Checksum: appConfigChecksum,
 				})
 			}
 
@@ -288,17 +397,18 @@ var _ = registerMutationField(
 				}
 
 				resourceUpdates = append(resourceUpdates, appresource.Update{
-					Path: configsource.AuthgearSecretYAML,
-					Data: secretConfigUpdateInstructionsJSON,
+					Path:     configsource.AuthgearSecretYAML,
+					Data:     secretConfigUpdateInstructionsJSON,
+					Checksum: secretConfigUpdateInstructionsChecksum,
 				})
 			}
 
-			err = gqlCtx.AppService.UpdateResources(app, resourceUpdates)
+			err = gqlCtx.AppService.UpdateResources(ctx, app, resourceUpdates)
 			if err != nil {
 				return nil, err
 			}
 
-			newApp, err := gqlCtx.AppService.Get(appID)
+			newApp, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
@@ -316,7 +426,7 @@ var _ = registerMutationField(
 				}
 			}
 
-			err = gqlCtx.AuditService.Log(app, &nonblocking.ProjectAppUpdatedEventPayload{
+			err = gqlCtx.AuditService.Log(ctx, app, &nonblocking.ProjectAppUpdatedEventPayload{
 				AppConfigOld:     originalAppConfig,
 				AppConfigNew:     newAppConfig,
 				AppConfigDiff:    appConfigDiff,
@@ -328,7 +438,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"app": gqlCtx.Apps.Load(appID),
+				"app": gqlCtx.Apps.Load(ctx, appID),
 			}).Value, nil
 		},
 	},
@@ -367,27 +477,29 @@ var _ = registerMutationField(
 			input := p.Args["input"].(map[string]interface{})
 			appID := input["id"].(string)
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+
+			gqlCtx := GQLContext(ctx)
 
 			// Access Control: authenicated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can create app")
+				return nil, Unauthenticated.New("only authenticated users can create app")
 			}
 
 			actorID := sessionInfo.UserID
 
-			err := checkAppQuota(gqlCtx, actorID)
+			err := checkAppQuota(ctx, gqlCtx, actorID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Create(actorID, appID)
+			app, err := gqlCtx.AppService.Create(ctx, actorID, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.AuditService.Log(app, &nonblocking.ProjectAppCreatedEventPayload{
+			err = gqlCtx.AuditService.Log(ctx, app, &nonblocking.ProjectAppCreatedEventPayload{
 				AppConfig: app.Context.Config.AppConfig,
 			})
 			if err != nil {
@@ -395,7 +507,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"app": gqlCtx.Apps.Load(appID),
+				"app": gqlCtx.Apps.Load(ctx, appID),
 			}).Value, nil
 		},
 	},
@@ -431,10 +543,12 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			ctx := p.Context
+
 			// Access Control: authenicated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can create app")
+				return nil, Unauthenticated.New("only authenticated users can create app")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
@@ -446,20 +560,20 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.TutorialService.Skip(appID)
+			err = gqlCtx.TutorialService.Skip(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			appLazy := gqlCtx.Apps.Load(appID)
+			appLazy := gqlCtx.Apps.Load(ctx, appID)
 			return graphqlutil.NewLazyValue(map[string]interface{}{
 				"app": appLazy,
 			}).Value, nil
@@ -501,10 +615,11 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			ctx := p.Context
 			// Access Control: authenicated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can create app")
+				return nil, Unauthenticated.New("only authenticated users can create app")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
@@ -517,10 +632,10 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
@@ -530,12 +645,12 @@ var _ = registerMutationField(
 				return nil, apierrors.NewInvalid("invalid progress")
 			}
 
-			err = gqlCtx.TutorialService.RecordProgresses(appID, []tutorial.Progress{progress})
+			err = gqlCtx.TutorialService.RecordProgresses(ctx, appID, []tutorial.Progress{progress})
 			if err != nil {
 				return nil, err
 			}
 
-			appLazy := gqlCtx.Apps.Load(appID)
+			appLazy := gqlCtx.Apps.Load(ctx, appID)
 			return graphqlutil.NewLazyValue(map[string]interface{}{
 				"app": appLazy,
 			}).Value, nil
@@ -578,10 +693,11 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			ctx := p.Context
 			// Access Control: authenicated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can visit secrets")
+				return nil, Unauthenticated.New("only authenticated users can visit secrets")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
@@ -602,25 +718,25 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Get(appID)
+			app, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			token, err := gqlCtx.AppService.GenerateSecretVisitToken(app, sessionInfo, secrets)
+			token, err := gqlCtx.AppService.GenerateSecretVisitToken(ctx, app, sessionInfo, secrets)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.AuditService.Log(app, &nonblocking.ProjectAppSecretViewedEventPayload{
+			err = gqlCtx.AuditService.Log(ctx, app, &nonblocking.ProjectAppSecretViewedEventPayload{
 				Secrets: appSecretKeys,
 			})
 			if err != nil {
@@ -669,10 +785,12 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			ctx := p.Context
+
 			// Access Control: authenicated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can generate tester token")
+				return nil, Unauthenticated.New("only authenticated users can generate tester token")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
@@ -684,20 +802,20 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Get(appID)
+			app, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			token, err := gqlCtx.AppService.GenerateTesterToken(app, returnURI)
+			token, err := gqlCtx.AppService.GenerateTesterToken(ctx, app, returnURI)
 			if err != nil {
 				return nil, err
 			}
@@ -709,8 +827,8 @@ var _ = registerMutationField(
 	},
 )
 
-func checkAppQuota(ctx *Context, userID string) error {
-	quota, err := ctx.AppService.GetProjectQuota(userID)
+func checkAppQuota(ctx context.Context, gqlCtx *Context, userID string) error {
+	quota, err := gqlCtx.AppService.GetProjectQuota(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -720,7 +838,7 @@ func checkAppQuota(ctx *Context, userID string) error {
 		return nil
 	}
 
-	numOwnedApps, err := ctx.CollaboratorService.GetProjectOwnerCount(userID)
+	numOwnedApps, err := gqlCtx.CollaboratorService.GetProjectOwnerCount(ctx, userID)
 	if err != nil {
 		return err
 	}

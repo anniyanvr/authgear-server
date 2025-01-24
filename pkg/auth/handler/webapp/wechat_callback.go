@@ -1,11 +1,15 @@
 package webapp
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
 	"github.com/authgear/authgear-server/pkg/auth/webapp"
+	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/webappoauth"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 )
 
@@ -19,6 +23,10 @@ func ConfigureWechatCallbackRoute(route httproute.Route) httproute.Route {
 	return route.
 		WithMethods("OPTIONS", "POST", "GET").
 		WithPathPattern("/sso/wechat/callback")
+}
+
+type WechatCallbackHandlerOAuthStateStore interface {
+	PopAndRecoverState(ctx context.Context, stateToken string) (state *webappoauth.WebappOAuthState, err error)
 }
 
 // WechatCallbackHandler receives WeChat authorization result (code or error)
@@ -42,6 +50,7 @@ type WechatCallbackHandler struct {
 	ControllerFactory ControllerFactory
 	BaseViewModel     *viewmodels.BaseViewModeler
 	JSON              JSONResponseWriter
+	OAuthStateStore   WechatCallbackHandlerOAuthStateStore
 }
 
 func (h *WechatCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -50,64 +59,71 @@ func (h *WechatCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	state := r.Form.Get("state")
+	stateToken := r.Form.Get("state")
 	code := r.Form.Get("code")
 	error_ := r.Form.Get("error")
 	errorDescription := r.Form.Get("error_description")
 
-	updateWebSession := func() error {
-		if authflowOAuthState, err := webapp.DecodeAuthflowOAuthState(state); err == nil {
-			session, err := ctrl.GetSession(authflowOAuthState.WebSessionID)
+	updateWebSession := func(ctx context.Context) error {
+		state, err := h.OAuthStateStore.PopAndRecoverState(ctx, stateToken)
+		if err != nil {
+			return err
+		}
+
+		switch state.UIImplementation {
+		case config.UIImplementationAuthflowV2:
+			session, err := ctrl.GetSession(ctx, state.WebSessionID)
 			if err != nil {
 				return err
 			}
 
-			screen, ok := session.Authflow.AllScreens[authflowOAuthState.XStep]
+			screen, ok := session.Authflow.AllScreens[state.XStep]
 			if !ok {
 				return webapp.WebUIInvalidSession.New("x_step does not reference a valid screen")
 			}
 
 			screen.WechatCallbackData = &webapp.AuthflowWechatCallbackData{
-				State:            state,
+				State:            stateToken,
 				Code:             code,
 				Error:            error_,
 				ErrorDescription: errorDescription,
 			}
 
-			err = ctrl.UpdateSession(session)
+			err = ctrl.UpdateSession(ctx, session)
 			if err != nil {
 				return err
 			}
 
 			return nil
+		case config.UIImplementationInteraction:
+			webSessionID := state.WebSessionID
+			session, err := ctrl.GetSession(ctx, webSessionID)
+			if err != nil {
+				return err
+			}
+
+			step := session.CurrentStep()
+			step.FormData["x_action"] = WechatActionCallback
+			step.FormData["x_code"] = code
+			step.FormData["x_error"] = error_
+			step.FormData["x_error_description"] = errorDescription
+			session.Steps[len(session.Steps)-1] = step
+
+			err = ctrl.UpdateSession(ctx, session)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		default:
+			panic(fmt.Errorf("expected ui implementation to be set in state"))
 		}
-
-		// interaction
-		webSessionID := state
-		session, err := ctrl.GetSession(webSessionID)
-		if err != nil {
-			return err
-		}
-
-		step := session.CurrentStep()
-		step.FormData["x_action"] = WechatActionCallback
-		step.FormData["x_code"] = code
-		step.FormData["x_error"] = error_
-		step.FormData["x_error_description"] = errorDescription
-		session.Steps[len(session.Steps)-1] = step
-
-		err = ctrl.UpdateSession(session)
-		if err != nil {
-			return err
-		}
-
-		return nil
 	}
 
-	handler := func() error {
-		err := updateWebSession()
+	handler := func(ctx context.Context) error {
+		err := updateWebSession(ctx)
 		// serve api
 		baseViewModel := h.BaseViewModel.ViewModel(r, w)
 		if baseViewModel.IsNativePlatform {

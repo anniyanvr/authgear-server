@@ -2,7 +2,7 @@ import React, { useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { Text } from "@fluentui/react";
 import { FormattedMessage } from "@oursky/react-messageformat";
-import produce from "immer";
+import { produce } from "immer";
 import FormContainer from "../../FormContainer";
 import {
   AppConfigFormModel,
@@ -137,7 +137,7 @@ const StandardAttributesConfigurationScreenContent: React.VFC<StandardAttributes
     );
     return (
       <>
-        <ScreenContent>
+        <ScreenContent layout="list">
           <ScreenTitle className={styles.widget}>
             <FormattedMessage id="StandardAttributesConfigurationScreen.title" />
           </ScreenTitle>
@@ -171,7 +171,11 @@ const StandardAttributesConfigurationScreen: React.VFC =
     }
 
     return (
-      <FormContainer form={form}>
+      <FormContainer
+        form={form}
+        stickyFooterComponent={true}
+        showDiscardButton={true}
+      >
         <StandardAttributesConfigurationScreenContent form={form} />
       </FormContainer>
     );

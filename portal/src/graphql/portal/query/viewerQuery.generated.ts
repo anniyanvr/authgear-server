@@ -6,7 +6,7 @@ const defaultOptions = {} as const;
 export type ViewerQueryQueryVariables = Types.Exact<{ [key: string]: never; }>;
 
 
-export type ViewerQueryQuery = { __typename?: 'Query', viewer?: { __typename?: 'Viewer', id: string, email?: string | null, projectQuota?: number | null, projectOwnerCount: number } | null };
+export type ViewerQueryQuery = { __typename?: 'Query', viewer?: { __typename?: 'Viewer', id: string, email?: string | null, formattedName?: string | null, projectQuota?: number | null, projectOwnerCount: number, geoIPCountryCode?: string | null, isOnboardingSurveyCompleted?: boolean | null } | null };
 
 
 export const ViewerQueryDocument = gql`
@@ -14,8 +14,11 @@ export const ViewerQueryDocument = gql`
   viewer {
     id
     email
+    formattedName
     projectQuota
     projectOwnerCount
+    geoIPCountryCode
+    isOnboardingSurveyCompleted
   }
 }
     `;
@@ -43,6 +46,11 @@ export function useViewerQueryLazyQuery(baseOptions?: Apollo.LazyQueryHookOption
           const options = {...defaultOptions, ...baseOptions}
           return Apollo.useLazyQuery<ViewerQueryQuery, ViewerQueryQueryVariables>(ViewerQueryDocument, options);
         }
+export function useViewerQuerySuspenseQuery(baseOptions?: Apollo.SuspenseQueryHookOptions<ViewerQueryQuery, ViewerQueryQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<ViewerQueryQuery, ViewerQueryQueryVariables>(ViewerQueryDocument, options);
+        }
 export type ViewerQueryQueryHookResult = ReturnType<typeof useViewerQueryQuery>;
 export type ViewerQueryLazyQueryHookResult = ReturnType<typeof useViewerQueryLazyQuery>;
+export type ViewerQuerySuspenseQueryHookResult = ReturnType<typeof useViewerQuerySuspenseQuery>;
 export type ViewerQueryQueryResult = Apollo.QueryResult<ViewerQueryQuery, ViewerQueryQueryVariables>;

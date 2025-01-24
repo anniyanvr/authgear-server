@@ -1,0 +1,100 @@
+{{ template "authflowv2/__settings_page_frame.html" . }}
+
+{{ define "page-navbar" }}
+  {{ template "authflowv2/__navbar.html"
+     (dict
+        "BackTitle" (translate "v2.component.navbar.default.item-back-button-label" nil)
+        "BackHref" (call $.MakeURL "/settings" "q_login_id_key" $.LoginIDKey)
+        "Title" (translate "v2.page.settings-identity-email.default.title" nil)
+     )
+  }}
+{{ end }}
+
+{{ define "__settings_identity_email_verification_label.html" }}
+  {{ if $.Verified }}
+    <span class="body-text--md settings-text-color-success">
+      {{ translate "v2.page.settings-identity.default.verification-status-verified-label" . }}
+    </span>
+  {{ else }}
+    <span class="body-text--md settings-text-color-failure">
+      {{ translate "v2.page.settings-identity.default.verification-status-unverified-label" . }}
+    </span>
+  {{ end }}
+{{ end }}
+
+{{ define "page-content" }}
+
+<div class="flex flex-col gap-y-6">
+  <ol>
+    {{ range $.EmailIdentities }}
+      <li>
+        {{ $claims := index $.Verifications .ID }}
+        {{ if not (empty $claims) }}
+          {{ $claim := first $claims }}
+          {{ $href := (call $.MakeURL "/settings/identity/view_email" "q_login_id_key" $.LoginIDKey "q_identity_id" .ID )}}
+          <a class="contents" href="{{$href}}">
+            {{ template "authflowv2/__settings_item.html"
+              (dict
+                "MaterialIconName" "email"
+                "Label" .OriginalLoginID
+                "SupplementaryNote" (include "__settings_identity_email_verification_label.html"
+                  (dict "Verified" $claim.Verified)
+                )
+                "WithArrow" true
+              )
+            }}
+          </a>
+        {{ end }}
+      </li>
+    {{ end }}
+
+    {{ range $.OAuthEmailIdentities }}
+      <li>
+        {{ template "authflowv2/__settings_item.html"
+          (dict
+            "MaterialIconName" "email"
+            "Label" .Email
+            "SupplementaryNote" (translate (printf "v2.page.settings-identity-list-email.default.provider.%s" .ProviderType) nil)
+          )
+        }}
+      </li>
+    {{ end }}
+  </ol>
+
+  {{ if not $.CreateDisabled}}
+    {{ if not (ge (len $.EmailIdentities) (1)) }}
+      {{ $href := (call $.MakeURL "/settings/identity/add_email" "q_login_id_key" $.LoginIDKey ) }}
+      <a
+        class="settings-link-btn"
+        href="{{ $href }}"
+      >
+        {{ translate "v2.page.settings-identity-list-email.default.add-email-button-label" nil }}
+      </a>
+    {{ end }}
+  {{ end }}
+
+  {{ if and ($.PrimaryEmail) (gt (len $.AllEmails) (1)) }}
+    <div class="mt-5">
+      <div class="settings-title text-start">
+        {{ translate "v2.page.settings-identity-list-email.default.primary-email-label" . }}
+      </div>
+      {{ template "authflowv2/__settings_item.html"
+        (dict
+          "MaterialIconName" "email"
+          "Label" .PrimaryEmail
+          "ActionButton" (include "__settings_identity_email_change_button.html"
+            (dict "Href" (call $.MakeURL "/settings/identity/change_primary_email" "q_login_id_key" $.LoginIDKey))
+          )
+        )
+      }}
+    </div>
+  {{ end }}
+</div>
+
+{{ end }}
+
+{{ define "__settings_identity_email_change_button.html" }}
+  <a class="settings-link-btn" href="{{ $.Href }}">
+    {{ translate "v2.page.settings-identity-list-email.default.change-primary-email-button-label" . }}
+  </a>
+{{ end }}

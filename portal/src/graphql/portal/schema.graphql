@@ -67,19 +67,25 @@ type App implements Node {
   lastStripeError: StripeError
 
   """"""
-  nftCollections: [NFTCollection!]!
-
-  """"""
   planName: String!
 
   """"""
   rawAppConfig: AppConfig!
 
   """"""
+  rawAppConfigChecksum: AppConfig!
+
+  """"""
   resources(paths: [String!]): [AppResource!]!
 
   """"""
+  samlIdpEntityID: String!
+
+  """"""
   secretConfig(token: String): SecretConfig!
+
+  """"""
+  secretConfigChecksum: AppConfig!
 
   """"""
   subscription: Subscription
@@ -89,6 +95,9 @@ type App implements Node {
 
   """"""
   tutorialStatus: TutorialStatus!
+
+  """"""
+  usage(date: DateTime!): Usage
 
   """"""
   viewer: Collaborator!
@@ -108,6 +117,11 @@ type AppListItem {
 
 """Resource file for an app"""
 type AppResource {
+  """
+  The checksum of the resource file. It is an opaque string that will be used to detect conflict.
+  """
+  checksum: String
+
   """"""
   data: String
 
@@ -123,6 +137,11 @@ type AppResource {
 
 """Update to resource file."""
 input AppResourceUpdate {
+  """
+  The checksum of the original resource file. If provided, it will be used to detect conflict.
+  """
+  checksum: String
+
   """New data of the resource file. Set to null to remove it."""
   data: String
 
@@ -136,16 +155,52 @@ enum AppSecretKey {
   ADMIN_API_SECRETS
 
   """"""
+  BOT_PROTECTION_PROVIDER_SECRET
+
+  """"""
   OAUTH_CLIENT_SECRETS
 
   """"""
   OAUTH_SSO_PROVIDER_CLIENT_SECRETS
 
   """"""
+  SAML_IDP_SIGNING_SECRETS
+
+  """"""
+  SAML_SP_SIGNING_SECRETS
+
+  """"""
   SMTP_SECRET
 
   """"""
   WEBHOOK_SECRET
+}
+
+"""Bot protection provider secret"""
+type BotProtectionProviderSecret {
+  """"""
+  secretKey: String
+
+  """"""
+  type: String!
+}
+
+""""""
+input BotProtectionProviderSecretInput {
+  """"""
+  secretKey: String
+
+  """"""
+  type: String!
+}
+
+""""""
+input BotProtectionProviderSecretUpdateInstructionsInput {
+  """"""
+  action: String!
+
+  """"""
+  data: BotProtectionProviderSecretInput
 }
 
 """"""
@@ -450,11 +505,11 @@ type Mutation {
   """Preview update subscription"""
   previewUpdateSubscription(input: PreviewUpdateSubscriptionInput!): PreviewUpdateSubscriptionPayload!
 
-  """Probes a NFT Collection to see whether it is a large collection"""
-  probeNFTCollection(input: ProbeNFTCollectionInput!): ProbeNFTCollectionsPayload!
-
   """Reconcile the completed checkout session"""
   reconcileCheckoutSession(input: reconcileCheckoutSession!): reconcileCheckoutSessionPayload!
+
+  """Updates the current user's custom attribute with 'survey' key"""
+  saveOnboardingSurvey(input: SaveOnboardingSurveyInput!): Boolean
 
   """Send test STMP configuration email"""
   sendTestSMTPConfigurationEmail(input: sendTestSMTPConfigurationEmailInput!): Boolean
@@ -476,30 +531,6 @@ type Mutation {
 
   """Request verification of a domain of target app"""
   verifyDomain(input: VerifyDomainInput!): VerifyDomainPayload!
-}
-
-"""Web3 NFT Collection"""
-type NFTCollection {
-  """"""
-  blockchain: String!
-
-  """"""
-  contractAddress: String!
-
-  """"""
-  createdAt: DateTime!
-
-  """"""
-  name: String!
-
-  """"""
-  network: String!
-
-  """"""
-  tokenType: String!
-
-  """"""
-  totalSupply: String
 }
 
 """An object with an ID"""
@@ -590,18 +621,6 @@ type PreviewUpdateSubscriptionPayload {
 }
 
 """"""
-input ProbeNFTCollectionInput {
-  """"""
-  contractID: String!
-}
-
-""""""
-type ProbeNFTCollectionsPayload {
-  """"""
-  isLargeCollection: Boolean!
-}
-
-""""""
 type Query {
   """Active users chart dataset"""
   activeUserChart(
@@ -623,9 +642,6 @@ type Query {
 
   """Check whether the viewer can accept the collaboration invitation"""
   checkCollaboratorInvitation(code: String!): CheckCollaboratorInvitationPayload
-
-  """Fetch NFT Contract Metadata"""
-  nftContractMetadata(contractID: String!): NFTCollection
 
   """Fetches an object given its ID"""
   node(
@@ -682,6 +698,72 @@ type Query {
   viewer: Viewer
 }
 
+"""SAML Identity Provider signing certificate"""
+type SAMLIdpSigningCertificate {
+  """"""
+  certificateFingerprint: String!
+
+  """"""
+  certificatePEM: String!
+
+  """"""
+  keyID: String!
+}
+
+"""SAML Identity Provider signing secrets"""
+type SAMLIdpSigningSecrets {
+  """"""
+  certificates: [SAMLIdpSigningCertificate!]!
+}
+
+""""""
+input SAMLIdpSigningSecretsDeleteDataInput {
+  """"""
+  keyIDs: [String!]!
+}
+
+""""""
+input SAMLIdpSigningSecretsUpdateInstructionsInput {
+  """"""
+  action: String!
+
+  """"""
+  deleteData: SAMLIdpSigningSecretsDeleteDataInput
+}
+
+"""SAML Service Provider signing secrets"""
+type SAMLSpSigningSecrets {
+  """"""
+  certificates: [samlSpSigningCertificate!]!
+
+  """"""
+  clientID: String!
+}
+
+""""""
+input SAMLSpSigningSecretsSetDataInput {
+  """"""
+  items: [SAMLSpSigningSecretsSetDataInputItem!]!
+}
+
+""""""
+input SAMLSpSigningSecretsSetDataInputItem {
+  """"""
+  certificates: [String!]!
+
+  """"""
+  clientID: String!
+}
+
+""""""
+input SAMLSpSigningSecretsUpdateInstructionsInput {
+  """"""
+  action: String!
+
+  """"""
+  setData: SAMLSpSigningSecretsSetDataInput
+}
+
 """SMTP secret"""
 type SMTPSecret {
   """"""
@@ -712,16 +794,31 @@ input SMTPSecretInput {
   username: String!
 }
 
+""""""
+input SaveOnboardingSurveyInput {
+  """Onboarding survey result JSON."""
+  surveyJSON: String!
+}
+
 """The content of authgear.secrets.yaml"""
 type SecretConfig {
   """"""
   adminAPISecrets: [AdminAPISecret!]
 
   """"""
+  botProtectionProviderSecret: BotProtectionProviderSecret
+
+  """"""
   oauthClientSecrets: [oauthClientSecretItem!]
 
   """"""
   oauthSSOProviderClientSecrets: [OAuthSSOProviderClientSecret!]
+
+  """"""
+  samlIdpSigningSecrets: SAMLIdpSigningSecrets
+
+  """"""
+  samlSpSigningSecrets: [SAMLSpSigningSecrets!]
 
   """"""
   smtpSecret: SMTPSecret
@@ -736,10 +833,19 @@ input SecretConfigUpdateInstructionsInput {
   adminAPIAuthKey: AdminAPIAuthKeyUpdateInstructionInput
 
   """"""
+  botProtectionProviderSecret: BotProtectionProviderSecretUpdateInstructionsInput
+
+  """"""
   oauthClientSecrets: OAuthClientSecretsUpdateInstructionsInput
 
   """"""
   oauthSSOProviderClientSecrets: OAuthSSOProviderClientSecretsUpdateInstructionsInput
+
+  """"""
+  samlIdpSigningSecrets: SAMLIdpSigningSecretsUpdateInstructionsInput
+
+  """"""
+  samlSpSigningSecrets: SAMLSpSigningSecretsUpdateInstructionsInput
 
   """"""
   smtpSecret: SmtpSecretUpdateInstructionsInput
@@ -838,7 +944,7 @@ type SubscriptionItemPrice {
   freeQuantity: Int
 
   """"""
-  smsRegion: SubscriptionItemPriceSMSRegion!
+  smsRegion: UsageSMSRegion!
 
   """"""
   transformQuantityDivideBy: Int
@@ -853,22 +959,10 @@ type SubscriptionItemPrice {
   unitAmount: Int!
 
   """"""
-  usageType: SubscriptionItemPriceUsageType!
+  usageType: UsageType!
 
   """"""
-  whatsappRegion: SubscriptionItemPriceWhatsappRegion!
-}
-
-""""""
-enum SubscriptionItemPriceSMSRegion {
-  """"""
-  NONE
-
-  """"""
-  NORTH_AMERICA
-
-  """"""
-  OTHER_REGIONS
+  whatsappRegion: UsageWhatsappRegion!
 }
 
 """"""
@@ -878,33 +972,6 @@ enum SubscriptionItemPriceType {
 
   """"""
   USAGE
-}
-
-""""""
-enum SubscriptionItemPriceUsageType {
-  """"""
-  MAU
-
-  """"""
-  NONE
-
-  """"""
-  SMS
-
-  """"""
-  WHATSAPP
-}
-
-""""""
-enum SubscriptionItemPriceWhatsappRegion {
-  """"""
-  NONE
-
-  """"""
-  NORTH_AMERICA
-
-  """"""
-  OTHER_REGIONS
 }
 
 """"""
@@ -937,7 +1004,7 @@ type SubscriptionUsageItem {
   quantity: Int!
 
   """"""
-  smsRegion: SubscriptionItemPriceSMSRegion!
+  smsRegion: UsageSMSRegion!
 
   """"""
   totalAmount: Int
@@ -955,10 +1022,10 @@ type SubscriptionUsageItem {
   unitAmount: Int
 
   """"""
-  usageType: SubscriptionItemPriceUsageType!
+  usageType: UsageType!
 
   """"""
-  whatsappRegion: SubscriptionItemPriceWhatsappRegion!
+  whatsappRegion: UsageWhatsappRegion!
 }
 
 """"""
@@ -990,11 +1057,21 @@ input UpdateAppInput {
   """authgear.yaml in JSON."""
   appConfig: AppConfig
 
+  """
+  The checksum of appConfig. If provided, it will be used to detect conflict.
+  """
+  appConfigChecksum: String
+
   """App ID to update."""
   appID: ID!
 
   """update secret config instructions."""
   secretConfigUpdateInstructions: SecretConfigUpdateInstructionsInput
+
+  """
+  The checksum of secretConfig. If provided, it will be used to detect conflict.
+  """
+  secretConfigUpdateInstructionsChecksum: String
 
   """Resource file updates."""
   updates: [AppResourceUpdate!]
@@ -1019,6 +1096,66 @@ input UpdateSubscriptionInput {
 type UpdateSubscriptionPayload {
   """"""
   app: App!
+}
+
+""""""
+type Usage {
+  """"""
+  items: [UsageItem!]!
+}
+
+""""""
+type UsageItem {
+  """"""
+  quantity: Int!
+
+  """"""
+  smsRegion: UsageSMSRegion!
+
+  """"""
+  usageType: UsageType!
+
+  """"""
+  whatsappRegion: UsageWhatsappRegion!
+}
+
+""""""
+enum UsageSMSRegion {
+  """"""
+  NONE
+
+  """"""
+  NORTH_AMERICA
+
+  """"""
+  OTHER_REGIONS
+}
+
+""""""
+enum UsageType {
+  """"""
+  MAU
+
+  """"""
+  NONE
+
+  """"""
+  SMS
+
+  """"""
+  WHATSAPP
+}
+
+""""""
+enum UsageWhatsappRegion {
+  """"""
+  NONE
+
+  """"""
+  NORTH_AMERICA
+
+  """"""
+  OTHER_REGIONS
 }
 
 """Portal User"""
@@ -1053,8 +1190,17 @@ type Viewer implements Node {
   """"""
   email: String
 
+  """"""
+  formattedName: String
+
+  """"""
+  geoIPCountryCode: String
+
   """The ID of an object"""
   id: ID!
+
+  """"""
+  isOnboardingSurveyCompleted: Boolean
 
   """"""
   projectOwnerCount: Int!
@@ -1109,6 +1255,15 @@ input reconcileCheckoutSession {
 type reconcileCheckoutSessionPayload {
   """"""
   app: App!
+}
+
+"""SAML Identity Provider signing certificate"""
+type samlSpSigningCertificate {
+  """"""
+  certificateFingerprint: String!
+
+  """"""
+  certificatePEM: String!
 }
 
 """"""

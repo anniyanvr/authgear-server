@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -13,7 +14,7 @@ import (
 
 var TemplateWebAuthflowChangePasswordHTML = template.RegisterHTML(
 	"web/authflow_change_password.html",
-	components...,
+	Components...,
 )
 
 var AuthflowChangePasswordSchema = validation.NewSimpleSchema(`
@@ -33,9 +34,10 @@ func ConfigureAuthflowChangePasswordRoute(route httproute.Route) httproute.Route
 }
 
 type AuthflowChangePasswordHandler struct {
-	Controller    *AuthflowController
-	BaseViewModel *viewmodels.BaseViewModeler
-	Renderer      Renderer
+	Controller              *AuthflowController
+	BaseViewModel           *viewmodels.BaseViewModeler
+	ChangePasswordViewModel *viewmodels.ChangePasswordViewModeler
+	Renderer                Renderer
 }
 
 func (h *AuthflowChangePasswordHandler) GetData(w http.ResponseWriter, r *http.Request, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) (map[string]interface{}, error) {
@@ -44,7 +46,7 @@ func (h *AuthflowChangePasswordHandler) GetData(w http.ResponseWriter, r *http.R
 	baseViewModel := h.BaseViewModel.ViewModelForAuthFlow(r, w)
 	viewmodels.Embed(data, baseViewModel)
 
-	screenData := screen.StateTokenFlowResponse.Action.Data.(declarative.NodeLoginFlowChangePasswordData)
+	screenData := screen.StateTokenFlowResponse.Action.Data.(declarative.ForceChangePasswordData)
 
 	passwordPolicyViewModel := viewmodels.NewPasswordPolicyViewModelFromAuthflow(
 		screenData.PasswordPolicy,
@@ -53,14 +55,16 @@ func (h *AuthflowChangePasswordHandler) GetData(w http.ResponseWriter, r *http.R
 			IsNew: false,
 		},
 	)
+	changePasswordViewModel := h.ChangePasswordViewModel.NewWithAuthflow(screenData.ForceChangeReason)
 	viewmodels.Embed(data, passwordPolicyViewModel)
+	viewmodels.Embed(data, changePasswordViewModel)
 
 	return data, nil
 }
 
 func (h *AuthflowChangePasswordHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var handlers AuthflowControllerHandlers
-	handlers.Get(func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.Get(func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		data, err := h.GetData(w, r, s, screen)
 		if err != nil {
 			return err
@@ -69,7 +73,7 @@ func (h *AuthflowChangePasswordHandler) ServeHTTP(w http.ResponseWriter, r *http
 		h.Renderer.RenderHTML(w, r, TemplateWebAuthflowChangePasswordHTML, data)
 		return nil
 	})
-	handlers.PostAction("", func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.PostAction("", func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		err := AuthflowChangePasswordSchema.Validator().ValidateValue(FormToJSON(r.Form))
 		if err != nil {
 			return err
@@ -81,7 +85,7 @@ func (h *AuthflowChangePasswordHandler) ServeHTTP(w http.ResponseWriter, r *http
 			"new_password": newPlainPassword,
 		}
 
-		result, err := h.Controller.AdvanceWithInput(r, s, screen, input)
+		result, err := h.Controller.AdvanceWithInput(ctx, r, s, screen, input, nil)
 		if err != nil {
 			return err
 		}
@@ -89,5 +93,5 @@ func (h *AuthflowChangePasswordHandler) ServeHTTP(w http.ResponseWriter, r *http
 		result.WriteResponse(w, r)
 		return nil
 	})
-	h.Controller.HandleStep(w, r, &handlers)
+	h.Controller.HandleStep(r.Context(), w, r, &handlers)
 }

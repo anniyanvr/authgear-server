@@ -14,25 +14,27 @@ func init() {
 	authflow.RegisterIntent(&IntentSignupLoginFlowStepIdentify{})
 }
 
-type IntentSignupLoginFlowStepIdentifyData struct {
-	Options []IdentificationOption `json:"options"`
-}
-
-var _ authflow.Data = IntentSignupLoginFlowStepIdentifyData{}
-
-func (IntentSignupLoginFlowStepIdentifyData) Data() {}
+// IntentSignupLoginFlowStepIdentify
+//
+//   IntentLookupIdentityLoginID (MilestoneIdentificationMethod)
+//
+//   IntentLookupIdentityOAuth (MilestoneIdentificationMethod)
+//     NodeLookupIdentityOAuth
+//
+//   IntentLookupIdentityPasskey (MilestoneIdentificationMethod)
 
 type IntentSignupLoginFlowStepIdentify struct {
-	JSONPointer jsonpointer.T          `json:"json_pointer,omitempty"`
-	StepName    string                 `json:"step_name,omitempty"`
-	Options     []IdentificationOption `json:"options"`
+	FlowReference authflow.FlowReference `json:"flow_reference,omitempty"`
+	JSONPointer   jsonpointer.T          `json:"json_pointer,omitempty"`
+	StepName      string                 `json:"step_name,omitempty"`
+	Options       []IdentificationOption `json:"options"`
 }
 
 var _ authflow.Intent = &IntentSignupLoginFlowStepIdentify{}
 var _ authflow.DataOutputer = &IntentSignupLoginFlowStepIdentify{}
 
 func NewIntentSignupLoginFlowStepIdentify(ctx context.Context, deps *authflow.Dependencies, i *IntentSignupLoginFlowStepIdentify) (*IntentSignupLoginFlowStepIdentify, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	current, err := i.currentFlowObject(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -46,22 +48,28 @@ func NewIntentSignupLoginFlowStepIdentify(ctx context.Context, deps *authflow.De
 		case config.AuthenticationFlowIdentificationPhone:
 			fallthrough
 		case config.AuthenticationFlowIdentificationUsername:
-			c := NewIdentificationOptionLoginID(b.Identification)
+			c := NewIdentificationOptionLoginID(b.Identification, b.BotProtection, deps.Config.BotProtection)
 			options = append(options, c)
 		case config.AuthenticationFlowIdentificationOAuth:
 			oauthOptions := NewIdentificationOptionsOAuth(
 				deps.Config.Identity.OAuth,
 				deps.FeatureConfig.Identity.OAuth.Providers,
+				b.BotProtection,
+				deps.Config.BotProtection,
 			)
 			options = append(options, oauthOptions...)
 		case config.AuthenticationFlowIdentificationPasskey:
 			// Passkey is for login only.
-			requestOptions, err := deps.PasskeyRequestOptionsService.MakeModalRequestOptions()
+			requestOptions, err := deps.PasskeyRequestOptionsService.MakeModalRequestOptions(ctx)
 			if err != nil {
 				return nil, err
 			}
-			c := NewIdentificationOptionPasskey(requestOptions)
+			c := NewIdentificationOptionPasskey(requestOptions, b.BotProtection, deps.Config.BotProtection)
 			options = append(options, c)
+		case config.AuthenticationFlowIdentificationLDAP:
+			ldapOptions := NewIdentificationOptionLDAP(deps.Config.Identity.LDAP, b.BotProtection, deps.Config.BotProtection)
+			options = append(options, ldapOptions...)
+			break
 		}
 	}
 
@@ -76,9 +84,17 @@ func (*IntentSignupLoginFlowStepIdentify) Kind() string {
 func (i *IntentSignupLoginFlowStepIdentify) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
 	// Let the input to select which identification method to use.
 	if len(flows.Nearest.Nodes) == 0 {
+		flowRootObject, err := flowRootObject(deps, i.FlowReference)
+		if err != nil {
+			return nil, err
+		}
+		shouldBypassBotProtection := ShouldExistingResultBypassBotProtectionRequirement(ctx)
 		return &InputSchemaStepIdentify{
-			JSONPointer: i.JSONPointer,
-			Options:     i.Options,
+			FlowRootObject:            flowRootObject,
+			JSONPointer:               i.JSONPointer,
+			Options:                   i.Options,
+			ShouldBypassBotProtection: shouldBypassBotProtection,
+			BotProtectionCfg:          deps.Config.BotProtection,
 		}, nil
 	}
 
@@ -86,7 +102,7 @@ func (i *IntentSignupLoginFlowStepIdentify) CanReactTo(ctx context.Context, deps
 }
 
 func (i *IntentSignupLoginFlowStepIdentify) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	current, err := i.currentFlowObject(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +127,7 @@ func (i *IntentSignupLoginFlowStepIdentify) ReactTo(ctx context.Context, deps *a
 			case config.AuthenticationFlowIdentificationPhone:
 				fallthrough
 			case config.AuthenticationFlowIdentificationUsername:
-				return authflow.NewNodeSimple(&NodeLookupIdentityLoginID{
+				return authflow.NewSubFlow(&IntentLookupIdentityLoginID{
 					JSONPointer:    authflow.JSONPointerForOneOf(i.JSONPointer, idx),
 					Identification: identification,
 					SyntheticInput: syntheticInput,
@@ -123,10 +139,14 @@ func (i *IntentSignupLoginFlowStepIdentify) ReactTo(ctx context.Context, deps *a
 					SyntheticInput: syntheticInput,
 				}), nil
 			case config.AuthenticationFlowIdentificationPasskey:
-				return authflow.NewNodeSimple(&NodeLookupIdentityPasskey{
+				return authflow.NewSubFlow(&IntentLookupIdentityPasskey{
 					JSONPointer:    authflow.JSONPointerForOneOf(i.JSONPointer, idx),
 					Identification: identification,
 					SyntheticInput: syntheticInput,
+				}), nil
+			case config.AuthenticationFlowIdentificationLDAP:
+				return authflow.NewSubFlow(&IntentLookupIdentityLDAP{
+					JSONPointer: authflow.JSONPointerForOneOf(i.JSONPointer, idx),
 				}), nil
 			}
 		}
@@ -136,9 +156,9 @@ func (i *IntentSignupLoginFlowStepIdentify) ReactTo(ctx context.Context, deps *a
 }
 
 func (i *IntentSignupLoginFlowStepIdentify) OutputData(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.Data, error) {
-	return IntentSignupLoginFlowStepIdentifyData{
+	return NewIdentificationData(IdentificationData{
 		Options: i.Options,
-	}, nil
+	}), nil
 }
 
 func (i *IntentSignupLoginFlowStepIdentify) checkIdentificationMethod(deps *authflow.Dependencies, step *config.AuthenticationFlowSignupLoginFlowStep, im config.AuthenticationFlowIdentification) (idx int, err error) {
@@ -166,4 +186,16 @@ func (i *IntentSignupLoginFlowStepIdentify) step(o config.AuthenticationFlowObje
 	}
 
 	return step
+}
+
+func (i *IntentSignupLoginFlowStepIdentify) currentFlowObject(deps *authflow.Dependencies) (config.AuthenticationFlowObject, error) {
+	rootObject, err := flowRootObject(deps, i.FlowReference)
+	if err != nil {
+		return nil, err
+	}
+	current, err := authflow.FlowObject(rootObject, i.JSONPointer)
+	if err != nil {
+		return nil, err
+	}
+	return current, nil
 }

@@ -209,68 +209,6 @@ config:
         x_application_type: confidential
         redirect_uris:
           - "http://example.com/oauth-redirect"
----
-name: dupe-oauth-provider
-error: |-
-  invalid configuration:
-  /identity/oauth/providers/1: duplicated OAuth provider
-config:
-  id: test
-  http:
-    public_origin: http://test
-  identity:
-    oauth:
-      providers:
-        - alias: google_a
-          type: google
-          client_id: client_a
-        - alias: google_b
-          type: google
-          client_id: client_b
-
----
-name: dupe-wechat-oauth-provider
-error: |-
-  invalid configuration:
-  /identity/oauth/providers/1: duplicated OAuth provider
-config:
-  id: test
-  http:
-    public_origin: http://test
-  identity:
-    oauth:
-      providers:
-        - alias: wechat_a
-          type: wechat
-          client_id: client_id_a
-          account_id: gh_accountid
-          app_type: mobile
-        - alias: wechat_b
-          type: wechat
-          client_id: client_id_b
-          account_id: gh_accountid
-          app_type: mobile
-
----
-name: dupe-wechat-oauth-provider-different-app-type
-error: null
-config:
-  id: test
-  http:
-    public_origin: http://test
-  identity:
-    oauth:
-      providers:
-        - alias: wechat_a
-          type: wechat
-          client_id: client_id_a
-          account_id: gh_accountida
-          app_type: mobile
-        - alias: wechat_b
-          type: wechat
-          client_id: client_id_b
-          account_id: gh_accountidb
-          app_type: web
 
 ---
 name: invalid-wechat-oauth-provider-account-id
@@ -296,7 +234,7 @@ name: missing-oauth-provider-alias
 error: |-
   invalid configuration:
   /identity/oauth/providers/0: required
-    map[actual:[client_id type] expected:[alias client_id type] missing:[alias]]
+    map[actual:[claims client_id create_disabled delete_disabled type] expected:[alias client_id type] missing:[alias]]
 config:
   id: test
   http:
@@ -331,7 +269,7 @@ name: oauth-provider-apple
 error: |-
   invalid configuration:
   /identity/oauth/providers/0: required
-    map[actual:[alias client_id type] expected:[key_id team_id] missing:[key_id team_id]]
+    map[actual:[alias claims client_id create_disabled delete_disabled type] expected:[alias client_id key_id team_id type] missing:[key_id team_id]]
 config:
   id: test
   http:
@@ -348,7 +286,7 @@ name: oauth-provider-azureadv2
 error: |-
   invalid configuration:
   /identity/oauth/providers/0: required
-    map[actual:[alias client_id type] expected:[tenant] missing:[tenant]]
+    map[actual:[alias claims client_id create_disabled delete_disabled type] expected:[alias client_id tenant type] missing:[tenant]]
 config:
   id: test
   http:
@@ -364,7 +302,7 @@ name: oauth-provider-azureadb2c
 error: |-
   invalid configuration:
   /identity/oauth/providers/0: required
-    map[actual:[alias client_id type] expected:[policy tenant] missing:[policy tenant]]
+    map[actual:[alias claims client_id create_disabled delete_disabled type] expected:[alias client_id policy tenant type] missing:[policy tenant]]
 config:
   id: test
   http:
@@ -381,7 +319,7 @@ name: oauth-provider-adfs
 error: |-
   invalid configuration:
   /identity/oauth/providers/0: required
-    map[actual:[alias client_id type] expected:[discovery_document_endpoint] missing:[discovery_document_endpoint]]
+    map[actual:[alias claims client_id create_disabled delete_disabled type] expected:[alias client_id discovery_document_endpoint type] missing:[discovery_document_endpoint]]
 config:
   id: test
   http:
@@ -407,7 +345,7 @@ config:
         redirect_uris:
           - "https://example.com"
         x_max_concurrent_session: 1
-        
+
 
 ---
 name: dupe-authenticator-type
@@ -655,6 +593,8 @@ config:
 name: invalid-default-uris
 error: |-
   invalid configuration:
+  /ui/brand_page_uri: format
+    map[error:input URL must be absolute format:uri]
   /ui/default_client_uri: format
     map[error:input URL must be absolute format:uri]
   /ui/default_post_logout_redirect_uri: format
@@ -667,6 +607,7 @@ config:
     public_origin: http://test
   ui:
     default_client_uri: nonsense
+    brand_page_uri: nonsense
     default_redirect_uri: nonsense
     default_post_logout_redirect_uri: nonsense
 
@@ -1004,3 +945,288 @@ config:
     siwe:
       networks:
         - ethereum:0x1234@1
+---
+name: password-expiry
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authenticator:
+    password:
+      expiry:
+        force_change:
+          enabled: true
+          duration_since_last_update: 24h
+---
+name: password-expiry-disabled
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authenticator:
+    password:
+      expiry:
+        force_change:
+          enabled: false
+---
+name: password-expiry-invalid-format
+error: |-
+  invalid configuration:
+  /authenticator/password/expiry/force_change/duration_since_last_update: format
+    map[error:time: invalid duration "BCD" format:x_duration_string]
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authenticator:
+    password:
+      expiry:
+        force_change:
+          enabled: true
+          duration_since_last_update: "BCD"
+---
+name: password-expiry-missing-since-last-update
+error: |-
+  invalid configuration:
+  /authenticator/password/expiry/force_change: required
+    map[actual:[enabled] expected:[duration_since_last_update] missing:[duration_since_last_update]]
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authenticator:
+    password:
+      expiry:
+        force_change:
+          enabled: true
+---
+name: authentication-flow-group-not-defined
+error: |-
+  invalid configuration:
+  /oauth/clients/0/authentication_flow_allowlist/groups/0: invalid authentication flow group
+config:
+  id: test
+  http:
+    public_origin: http://test
+  oauth:
+    clients:
+    - client_id: client_1
+      name: Client 1
+      redirect_uris:
+      - http://example
+      x_authentication_flow_allowlist:
+        groups:
+        - name: missing
+---
+name: authentication-flow-group-allowlist-default
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  oauth:
+    clients:
+    - client_id: client_1
+      name: Client 1
+      redirect_uris:
+      - http://example
+      x_authentication_flow_allowlist:
+        groups:
+        - name: default
+---
+name: authentication-flow-group-valid-custom
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authentication_flow:
+    login_flows:
+      - name: custom_login_1
+        steps:
+        - type: terminate_other_sessions
+  ui:
+    authentication_flow:
+      groups:
+      - name: custom_1
+        flows:
+        - type: login
+          name: custom_login_1
+  oauth:
+    clients:
+    - client_id: client_1
+      name: Client 1
+      redirect_uris:
+      - http://example
+      x_authentication_flow_allowlist:
+        groups:
+        - name: default
+        - name: custom_1
+---
+name: authentication-flow-group-missing-login-flow
+error: |-
+  invalid configuration:
+  /ui/authentication_flow/groups/0: authentication flow group must contain one login flow
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authentication_flow:
+    signup_flows:
+      - name: custom_signup_1
+        steps:
+        - type: view_recovery_code
+  ui:
+    authentication_flow:
+      groups:
+      - name: custom_1
+        flows:
+        - type: signup
+          name: custom_signup_1
+  oauth:
+    clients:
+    - client_id: client_1
+      name: Client 1
+      redirect_uris:
+      - http://example
+      x_authentication_flow_allowlist:
+        groups:
+        - name: default
+        - name: custom_1
+---
+name: authentication-flow-invalid-allowlist-flow
+error: |-
+  invalid configuration:
+  /oauth/clients/0/authentication_flow_allowlist/flows/0: invalid authentication flow
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authentication_flow:
+    login_flows:
+    - name: custom_login_1
+      steps:
+      - type: identify
+        one_of:
+        - identification: oauth
+  oauth:
+    clients:
+    - client_id: client_1
+      name: Client 1
+      redirect_uris:
+      - http://example
+      x_authentication_flow_allowlist:
+        flows:
+        - type: login
+          name: missing
+---
+name: authentication-flow-valid-allowlist
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authentication_flow:
+    login_flows:
+    - name: custom_login_1
+      steps:
+      - type: identify
+        one_of:
+        - identification: oauth
+  oauth:
+    clients:
+    - client_id: client_1
+      name: Client 1
+      redirect_uris:
+      - http://example
+      x_authentication_flow_allowlist:
+        flows:
+        - type: login
+          name: custom_login_1
+        - type: login
+          name: default
+---
+name: secondary-authentication-grace-period-valid
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authentication:
+    secondary_authentication_grace_period:
+      enabled: true
+      end_at: "2024-07-25T05:54:32.221Z"
+---
+name: secondary-authentication-grace-period-invalid-since
+error: |-
+  invalid configuration:
+  /authentication/secondary_authentication_grace_period/end_at: format
+    map[error:date-time must be in rfc3999 format format:date-time]
+config:
+  id: test
+  http:
+    public_origin: http://test
+  authentication:
+    secondary_authentication_grace_period:
+      enabled: true
+      end_at: "not-rfc3339"
+---
+name: saml-service-provider
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  oauth:
+    clients:
+      - name: Test Client
+        client_id: testclient
+        redirect_uris:
+          - "https://example.com"
+  saml:
+    signing:
+      key_id: asdfasdf
+    service_providers:
+      - client_id: testclient
+        nameid_format: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+        nameid_attribute_pointer: /preferred_username
+        acs_urls:
+          - http://localhost:3000/acs
+        destination: http://localhost:3000/destination
+        recipient: http://localhost:3000/recipient
+        audience: http://localhost:3000/audience
+        assertion_valid_duration: 1h
+        slo_enabled: true
+        slo_callback_url: https://authgear.cloud/slo
+        slo_binding: urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect
+        signature_verification_enabled: true
+---
+name: saml-signing
+error: null
+config:
+  id: test
+  http:
+    public_origin: http://test
+  saml:
+    signing:
+      key_id: asdfasdf
+      signature_method: http://www.w3.org/2001/04/xmldsig-more#rsa-sha256
+---
+name: saml-service-provider-invalid-client-id
+error: |-
+  invalid configuration:
+  /saml/service_providers/0/client_id: client_id does not exist in /oauth/clients
+config:
+  id: test
+  http:
+    public_origin: http://test
+  saml:
+    signing:
+      key_id: asdfasdf
+    service_providers:
+      - client_id: notexist
+        nameid_format: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+        acs_urls:
+          - http://localhost:3000/acs

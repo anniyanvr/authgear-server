@@ -1,0 +1,207 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@layer base {
+  html,
+  body {
+    @apply h-full min-h-min flex flex-col flex-1-0-auto;
+    /* Reference font size */
+    font-size: 16px;
+    font-family: "Inter", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    appearance: none;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  input:focus {
+    @apply outline-none;
+  }
+
+  input::-ms-reveal,
+  input::-ms-clear {
+    @apply hidden;
+  }
+
+  /* Colors */
+  :root {
+    --color-success: #11c624;
+    --color-error: #ff295b;
+    --color-warning: #f39d17;
+
+    /* Primary colors is generated using fluent ui theme generator */
+    /* https://developer.microsoft.com/en-us/fluentui?fabricVer=5#/styles/themegenerator */
+    /* Parameters:
+      Primary color: #176df3
+    */
+
+    /* primary */
+    /* --color-primary-theme-darker: #0c3c88; */
+    --color-primary-theme-dark: #1151b8;
+    /* --color-primary-theme-dark-alt: #1460da; */
+    --color-primary-theme-primary: #176df3;
+    /* --color-primary-theme-secondary: #317bf4; */
+    --color-primary-theme-tertiary: #70a4f7;
+    /* --color-primary-theme-light: #b7d1fb; */
+    /* --color-primary-theme-lighter: #d8e6fd; */
+    /* --color-primary-theme-lighter-alt: #f5f9fe; */
+
+    /* destructive */
+    --color-destructive-primary: #ff295b;
+    --color-destructive-dark: #c4003d;
+
+    /* Neutral colors is tonal palette */
+    /* https://m3.material.io/styles/color/system/how-the-system-works#395813c8-b314-48d1-bb55-266f421eb3a4 */
+    /* neutral */
+    --color-neutral-100: #e7e7e9;
+    --color-neutral-200: #bfbfc3;
+    --color-neutral-300: #98999e;
+    --color-neutral-400: #73747b;
+    --color-neutral-500: #505157;
+    --color-neutral-600: #303135;
+    --color-neutral-700: #131315;
+
+    /* color */
+    --color-white: #ffffff;
+    --color-black: #000000;
+
+    /* background */
+    --color-surface-primary: var(--color-white);
+
+    /* Link style element color (link-btn, lable-btn, link text) */
+    --color-link: var(--color-primary-theme-primary);
+    --color-link--hover: var(--color-primary-theme-dark);
+    --color-link--active: var(--color-primary-theme-dark);
+    --color-link--disabled: var(--color-neutral-300);
+  }
+
+  :root.dark {
+    --color-success: #11c624;
+    --color-error: #c4003d;
+    --color-warning: #f39d17;
+
+    /* Primary colors is generated using fluent ui theme generator */
+    /* https://developer.microsoft.com/en-us/fluentui?fabricVer=5#/styles/themegenerator */
+    /* Parameters:
+      Primary color: #2f7bf4
+    */
+
+    /* primary */
+    /* --color-primary-theme-darker: #1a4589; */
+    --color-primary-theme-dark: #235dba;
+    /* --color-primary-theme-dark-alt: #2a6edc; */
+    --color-primary-theme-primary: #2f7bf4;
+    /* --color-primary-theme-secondary: #478af6; */
+    --color-primary-theme-tertiary: #80aef9;
+    /* --color-primary-theme-light: #bfd6fc; */
+    /* --color-primary-theme-lighter: #dde9fd; */
+    /* --color-primary-theme-lighter-alt: #f6faff; */
+
+    /* Neutral colors is tonal palette */
+    /* https://m3.material.io/styles/color/system/how-the-system-works#395813c8-b314-48d1-bb55-266f421eb3a4 */
+    /* neutral */
+    --color-neutral-100: #f0f1f1;
+    --color-neutral-200: #cacbce;
+    --color-neutral-300: #a3a4aa;
+    --color-neutral-400: #7d7f86;
+    --color-neutral-500: #5a5c61;
+    --color-neutral-600: #393a3e;
+    --color-neutral-700: #1c1c1e;
+
+    /* background */
+    --color-surface-primary: var(--color-neutral-700);
+
+    /* Link style element color (link-btn, lable-btn, link text) */
+    --color-link--disabled: var(--color-neutral-400);
+  }
+
+  /* Border Radius */
+  :root {
+    --border-radius-full: 9999px;
+    --border-radius-sqaure: initial;
+    --border-radius-rounded-large: 0.75em;
+    --border-radius-rounded-square: 0.875em;
+    --border-radius-large: 1.25rem;
+  }
+
+  /* Border Width */
+  :root {
+    --border-width-regular: 1.5px;
+    --border-width-regular--active: 2px;
+  }
+
+  /* Typography */
+  :root {
+    --typography-headline-small__font-family: inherit;
+    --typography-headline-small__font-size: 1.5rem;
+    --typography-headline-small__line-height: 2rem;
+    --typography-headline-small__letter-spacing: 0;
+    --typography-headline-small__font-weight: 700;
+
+    --typography-headline-medium__font-family: inherit;
+    --typography-headline-medium__font-size: 1.75rem;
+    --typography-headline-medium__line-height: 2.125rem;
+    --typography-headline-medium__letter-spacing: 0;
+    --typography-headline-medium__font-weight: 700;
+
+    --typography-title-medium__font-family: inherit;
+    --typography-title-medium__font-size: 1rem;
+    --typography-title-medium__line-height: 1.5rem;
+    --typography-title-medium__letter-spacing: 0.009375rem;
+    --typography-title-medium__font-weight: 500;
+
+    --typography-page-title__font-family: inherit;
+    --typography-page-title__font-size: 1.125rem;
+    --typography-page-title__line-height: 1.5rem;
+    --typography-page-title__letter-spacing: 0;
+    --typography-page-title__font-weight: 700;
+
+    --typography-title-large__font-family: inherit;
+    --typography-title-large__font-size: 1.25rem;
+    --typography-title-large__line-height: 1.75rem;
+    --typography-title-large__letter-spacing: 0;
+    --typography-title-large__font-weight: 700;
+
+    --typography-label-large__font-family: inherit;
+    --typography-label-large__font-size: 1rem;
+    --typography-label-large__line-height: 1.5rem;
+    --typography-label-large__letter-spacing: 0.00625rem;
+    --typography-label-large__font-weight: 600;
+
+    --typography-label-medium__font-family: inherit;
+    --typography-label-medium__font-size: 0.875rem;
+    --typography-label-medium__line-height: 1.25rem;
+    --typography-label-medium__letter-spacing: 0.03125rem;
+    --typography-label-medium__font-weight: 600;
+
+    --typography-body-small__font-family: inherit;
+    --typography-body-small__font-size: 0.75rem;
+    --typography-body-small__line-height: 1rem;
+    --typography-body-small__letter-spacing: 0.025rem;
+    --typography-body-small__font-weight: 500;
+
+    --typography-body-medium__font-family: inherit;
+    --typography-body-medium__font-size: 0.875rem;
+    --typography-body-medium__line-height: 1.25rem;
+    --typography-body-medium__letter-spacing: 0.015625rem;
+    --typography-body-medium__font-weight: 500;
+
+    --typography-body-large__font-family: inherit;
+    --typography-body-large__font-size: 1rem;
+    --typography-body-large__line-height: 1.5rem;
+    --typography-body-large__letter-spacing: 0.03125rem;
+    --typography-body-large__font-weight: 500;
+  }
+
+  /* Alignment */
+  :root {
+    --alignment-logo: center; /* center / start / end / hidden */
+    --alignment-card: center; /* center / start / end */
+    --alignment-content: center; /* center / start / end */
+  }
+}

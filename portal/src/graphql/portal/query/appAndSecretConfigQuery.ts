@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { QueryResult, useQuery } from "@apollo/client";
-import { client } from "../../portal/apollo";
+import { usePortalClient } from "../../portal/apollo";
 import {
   AppAndSecretConfigQueryQuery,
   AppAndSecretConfigQueryQueryVariables,
@@ -18,14 +18,18 @@ export interface AppAndSecretConfigQueryResult
     "loading" | "error" | "refetch"
   > {
   rawAppConfig: PortalAPIAppConfig | null;
+  rawAppConfigChecksum?: string;
   effectiveAppConfig: PortalAPIAppConfig | null;
   secretConfig: PortalAPISecretConfig | null;
+  secretConfigChecksum?: string;
   viewer: Collaborator | null;
+  samlIdpEntityID?: string;
 }
 export const useAppAndSecretConfigQuery = (
   appID: string,
   token: string | null = null
 ): AppAndSecretConfigQueryResult => {
+  const client = usePortalClient();
   const { data, loading, error, refetch } = useQuery<
     AppAndSecretConfigQueryQuery,
     AppAndSecretConfigQueryQueryVariables
@@ -41,9 +45,12 @@ export const useAppAndSecretConfigQuery = (
     const appConfigNode = data?.node?.__typename === "App" ? data.node : null;
     return {
       rawAppConfig: appConfigNode?.rawAppConfig ?? null,
+      rawAppConfigChecksum: appConfigNode?.rawAppConfigChecksum ?? undefined,
       effectiveAppConfig: appConfigNode?.effectiveAppConfig ?? null,
       secretConfig: appConfigNode?.secretConfig ?? null,
+      secretConfigChecksum: appConfigNode?.secretConfigChecksum ?? undefined,
       viewer: appConfigNode?.viewer ?? null,
+      samlIdpEntityID: appConfigNode?.samlIdpEntityID ?? undefined,
     };
   }, [data]);
 

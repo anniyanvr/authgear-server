@@ -1,9 +1,13 @@
 package template
 
 import (
+	"bytes"
 	"fmt"
+	"html/template"
+	"io"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Masterminds/sprig"
@@ -11,13 +15,31 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/messageformat"
 )
 
-func MakeTemplateFuncMap() map[string]interface{} {
+const (
+	templateTranslationMessageTemplateName = "__translation_message.html"
+)
+
+type tpl interface {
+	ExecuteTemplate(wr io.Writer, name string, data any) error
+}
+
+func MakeTemplateFuncMap(t tpl) map[string]interface{} {
+	templateFuncMap := makeTemplateFuncMap()
+	templateFuncMap["include"] = makeInclude(t)
+	templateFuncMap["translate"] = makeTranslate(t)
+	templateFuncMap["trimHTML"] = trimHTML
+	templateFuncMap["resolveError"] = ResolveError
+	return templateFuncMap
+}
+
+func makeTemplateFuncMap() map[string]interface{} {
 	var templateFuncMap = sprig.HermeticHtmlFuncMap()
 	templateFuncMap[messageformat.TemplateRuntimeFuncName] = messageformat.TemplateRuntimeFunc
 	templateFuncMap["rfc3339"] = RFC3339
 	templateFuncMap["ensureTime"] = EnsureTime
 	templateFuncMap["isNil"] = IsNil
 	templateFuncMap["showAttributeValue"] = ShowAttributeValue
+	templateFuncMap["htmlattr"] = HTMLAttr
 	return templateFuncMap
 }
 
@@ -84,4 +106,62 @@ func ShowAttributeValue(v interface{}) string {
 	}
 }
 
-var DefaultFuncMap = MakeTemplateFuncMap()
+func HTMLAttr(v string) template.HTMLAttr {
+	// Ignore gosec error because the app developer can actually write any template
+	// But we should be careful that do not pass any user input to this function
+	return template.HTMLAttr(v) // nolint:gosec
+}
+
+func makeInclude(t tpl) func(tplName string, data any) (template.HTML, error) {
+	return func(
+		tplName string,
+		data any,
+	) (template.HTML, error) {
+		buf := &bytes.Buffer{}
+		err := t.ExecuteTemplate(buf, tplName, data)
+		// Ignore gosec error because the app developer can actually write any template
+		// But we should be careful that do not pass any user input to this function
+		html := template.HTML(buf.String()) // nolint:gosec
+		return html, err
+	}
+}
+
+// `translate` is intended for `include` a translation message but wrapped it
+// in a span and set its translation key with data attribute
+// In theory it can be used with resources other than translation, but take your
+// own risks
+func makeTranslate(t tpl) func(tranlsationKey string, data any) (template.HTML, error) {
+	include := makeInclude(t)
+	return func(
+		tranlsationKey string,
+		data any,
+	) (template.HTML, error) {
+		included, err := include(tranlsationKey, data)
+		if err != nil {
+			return template.HTML(""), err
+		}
+		buf := &bytes.Buffer{}
+		d := make(map[string]interface{})
+		d["Key"] = tranlsationKey
+		d["Value"] = included
+		err = t.ExecuteTemplate(buf, templateTranslationMessageTemplateName, d)
+		// Ignore gosec error because the app developer can actually write any template
+		// But we should be careful that do not pass any user input to this function
+		html := template.HTML(buf.String()) // nolint:gosec
+		return html, err
+	}
+}
+
+func trimHTML(input interface{}) interface{} {
+	switch input := input.(type) {
+	case string:
+		return strings.TrimSpace(input)
+	case template.HTML:
+		// `Masterminds/sprig`'s `trimAll` cannot handle html type, so we need to convert it to string first
+		// Ignore gosec error because this function is intended to be used with trusted input (__alert_message.html)
+		// and the output is intended to be used as HTML
+		return template.HTML(strings.TrimSpace(string(input))) // nolint:gosec
+	default:
+		return ""
+	}
+}

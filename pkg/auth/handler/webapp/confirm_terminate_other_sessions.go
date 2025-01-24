@@ -1,7 +1,9 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
+
 	"net/url"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -15,7 +17,7 @@ import (
 
 var TemplateWebConfirmTerminateOtherSessionsHTML = template.RegisterHTML(
 	"web/confirm_terminate_other_sessions.html",
-	components...,
+	Components...,
 )
 
 var ConfirmTerminateOtherSessionsSchema = validation.NewSimpleSchema(`
@@ -34,10 +36,15 @@ func ConfigureConfirmTerminateOtherSessionsRoute(route httproute.Route) httprout
 		WithPathPattern("/flows/confirm_terminate_other_sessions")
 }
 
+type ConfirmTerminateOtherSessionsEndpointsProvider interface {
+	SelectAccountEndpointURL() *url.URL
+}
+
 type ConfirmTerminateOtherSessionsHandler struct {
 	ControllerFactory ControllerFactory
 	BaseViewModel     *viewmodels.BaseViewModeler
 	Renderer          Renderer
+	Endpoints         ConfirmTerminateOtherSessionsEndpointsProvider
 }
 
 func (h *ConfirmTerminateOtherSessionsHandler) GetData(r *http.Request, rw http.ResponseWriter, session *webapp.Session, graph *interaction.Graph) (map[string]interface{}, error) {
@@ -56,15 +63,15 @@ func (h *ConfirmTerminateOtherSessionsHandler) ServeHTTP(w http.ResponseWriter, 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -78,13 +85,13 @@ func (h *ConfirmTerminateOtherSessionsHandler) ServeHTTP(w http.ResponseWriter, 
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
+	ctrl.PostAction("", func(ctx context.Context) error {
 		err = ConfirmTerminateOtherSessionsSchema.Validator().ValidateValue(FormToJSON(r.Form))
 		if err != nil {
 			return err
 		}
 
-		session, err := ctrl.InteractionSession()
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
@@ -95,10 +102,10 @@ func (h *ConfirmTerminateOtherSessionsHandler) ServeHTTP(w http.ResponseWriter, 
 		if !isConfirmed {
 			// If cancelled, forget all existing steps
 			session.Steps = []webapp.SessionStep{}
-			if err = ctrl.Page.UpdateSession(session); err != nil {
+			if err = ctrl.Page.UpdateSession(ctx, session); err != nil {
 				return err
 			}
-			u := webapp.MakeRelativeURL("/flows/select_account", url.Values{})
+			u := h.Endpoints.SelectAccountEndpointURL()
 			result := &webapp.Result{
 				RedirectURI: u.String(),
 				RemoveQueries: setutil.Set[string]{
@@ -109,7 +116,7 @@ func (h *ConfirmTerminateOtherSessionsHandler) ServeHTTP(w http.ResponseWriter, 
 			return nil
 		}
 
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			input = &InputConfirmTerminateOtherSessions{
 				IsConfirm: isConfirmed,
 			}

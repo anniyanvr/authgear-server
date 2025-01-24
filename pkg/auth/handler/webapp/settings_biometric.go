@@ -1,7 +1,9 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
+
 	"time"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -17,7 +19,7 @@ import (
 
 var TemplateWebSettingsBiometricHTML = template.RegisterHTML(
 	"web/settings_biometric.html",
-	components...,
+	Components...,
 )
 
 func ConfigureSettingsBiometricRoute(route httproute.Route) httproute.Route {
@@ -43,13 +45,13 @@ type SettingsBiometricHandler struct {
 	Identities        SettingsIdentityService
 }
 
-func (h *SettingsBiometricHandler) GetData(r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
+func (h *SettingsBiometricHandler) GetData(ctx context.Context, r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
 	data := map[string]interface{}{}
 
 	baseViewModel := h.BaseViewModel.ViewModel(r, rw)
-	userID := session.GetUserID(r.Context())
+	userID := session.GetUserID(ctx)
 
-	identityInfos, err := h.Identities.ListByUser(*userID)
+	identityInfos, err := h.Identities.ListByUser(ctx, *userID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,12 +83,12 @@ func (h *SettingsBiometricHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	userID := ctrl.RequireUserID()
+	userID := ctrl.RequireUserID(r.Context())
 
-	ctrl.Get(func() error {
-		data, err := h.GetData(r, w)
+	ctrl.Get(func(ctx context.Context) error {
+		data, err := h.GetData(ctx, r, w)
 		if err != nil {
 			return err
 		}
@@ -97,14 +99,14 @@ func (h *SettingsBiometricHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 
 	redirectURI := httputil.HostRelative(r.URL).String()
 
-	ctrl.PostAction("remove", func() error {
+	ctrl.PostAction("remove", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
 		identityID := r.Form.Get("q_identity_id")
 		intent := intents.NewIntentRemoveIdentity(userID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			err = RemoveLoginIDSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return nil, err

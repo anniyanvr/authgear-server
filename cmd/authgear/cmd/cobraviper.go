@@ -25,10 +25,28 @@ var ArgDatabaseSchema = &cobraviper.StringArgument{
 	Usage:        "Database schema",
 }
 
+var ArgSearchDatabaseURL = &cobraviper.StringArgument{
+	ArgumentName: "search-database-url",
+	EnvName:      "SEARCH_DATABASE_URL",
+	Usage:        "Search Database URL",
+}
+
+var ArgSearchDatabaseSchema = &cobraviper.StringArgument{
+	ArgumentName: "search-database-schema",
+	EnvName:      "SEARCH_DATABASE_SCHEMA",
+	Usage:        "Search Database schema",
+}
+
 var ArgElasticsearchURL = &cobraviper.StringArgument{
 	ArgumentName: "elasticsearch-url",
 	EnvName:      "ELASTICSEARCH_URL",
 	Usage:        "Elasticsearch URL",
+}
+
+var ArgRedisURL = &cobraviper.StringArgument{
+	ArgumentName: "redis-url",
+	EnvName:      "REDIS_URL",
+	Usage:        "Redis URL",
 }
 
 var ArgAppID = &cobraviper.StringArgument{

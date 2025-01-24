@@ -4,9 +4,16 @@ import React, {
   useState,
   Suspense,
   lazy,
+  useCallback,
   useMemo,
 } from "react";
-import { init as sentryInit } from "@sentry/react";
+import {
+  Exception as SentryException,
+  ErrorEvent as SentryErrorEvent,
+  EventHint,
+  ErrorBoundary,
+  init as sentryInit,
+} from "@sentry/react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import {
   LocaleProvider,
@@ -14,13 +21,9 @@ import {
   Context,
 } from "@oursky/react-messageformat";
 import { ApolloProvider } from "@apollo/client";
-import authgear from "@authgear/web";
 import { Helmet, HelmetProvider } from "react-helmet-async";
 import AppRoot from "./AppRoot";
 import MESSAGES from "./locale-data/en.json";
-import { client } from "./graphql/portal/apollo";
-import { registerLocale } from "i18n-iso-countries";
-import i18nISOCountriesEnLocale from "i18n-iso-countries/langs/en.json";
 import styles from "./ReactApp.module.css";
 import { SystemConfigContext } from "./context/SystemConfigContext";
 import {
@@ -33,24 +36,39 @@ import {
 import { loadTheme, ILinkProps } from "@fluentui/react";
 import ExternalLink from "./ExternalLink";
 import Link from "./Link";
-import Authenticated from "./graphql/portal/Authenticated";
+import Authenticated, {
+  configureAuthgear,
+  AuthenticatedContextProvider,
+} from "./graphql/portal/Authenticated";
 import InternalRedirect from "./InternalRedirect";
 import { LoadingContextProvider } from "./hook/loading";
 import { ErrorContextProvider } from "./hook/error";
 import ShowLoading from "./ShowLoading";
-import GTMProvider, {
-  AuthgearGTMEvent,
-  AuthgearGTMEventType,
-  useMakeAuthgearGTMEventDataAttributes,
-  useGTMDispatch,
-  useAuthgearGTMEventBase,
-} from "./GTMProvider";
+import GTMProvider from "./GTMProvider";
+import { FallbackComponent } from "./FlavoredErrorBoundSuspense";
 import { useViewerQuery } from "./graphql/portal/query/viewerQuery";
 import { extractRawID } from "./util/graphql";
+import { useIdentify } from "./gtm_v2";
+import AppContextProvider from "./AppContextProvider";
+import {
+  PortalClientProvider,
+  createCache,
+  createClient,
+} from "./graphql/portal/apollo";
+import { ViewerQueryDocument } from "./graphql/portal/query/viewerQuery.generated";
+import { UnauthenticatedDialog } from "./components/auth/UnauthenticatedDialog";
+import {
+  UnauthenticatedDialogContext,
+  UnauthenticatedDialogContextValue,
+} from "./components/auth/UnauthenticatedDialogContext";
+import { isNetworkError } from "./util/error";
 
 const AppsScreen = lazy(async () => import("./graphql/portal/AppsScreen"));
 const CreateProjectScreen = lazy(
   async () => import("./graphql/portal/CreateProjectScreen")
+);
+const OnboardingSurveyScreen = lazy(
+  async () => import("./OnboardingSurveyScreen")
 );
 const ProjectWizardScreen = lazy(
   async () => import("./graphql/portal/ProjectWizardScreen")
@@ -61,6 +79,8 @@ const AcceptAdminInvitationScreen = lazy(
   async () => import("./graphql/portal/AcceptAdminInvitationScreen")
 );
 
+const StoryBookScreen = lazy(async () => import("./StoryBookScreen"));
+
 async function loadSystemConfig(): Promise<SystemConfig> {
   const resp = await fetch("/api/system-config.json");
   const config = (await resp.json()) as PartialSystemConfig;
@@ -68,20 +88,36 @@ async function loadSystemConfig(): Promise<SystemConfig> {
   return instantiateSystemConfig(mergedConfig);
 }
 
+function isPosthogResetGroupsException(ex: SentryException) {
+  return ex.type === "TypeError" && ex.value?.includes("posthog.resetGroups");
+}
+function isPosthogResetGroupsEvent(event: SentryErrorEvent) {
+  return event.exception?.values?.some(isPosthogResetGroupsException) ?? false;
+}
+
+// DEV-1767: Unknown cause on posthog error, silence for now
+function sentryBeforeSend(event: SentryErrorEvent, hint: EventHint) {
+  if (isPosthogResetGroupsEvent(event)) {
+    return null;
+  }
+  if (isNetworkError(hint.originalException)) {
+    console.warn("skip sending network error to Sentry");
+    console.warn(hint.originalException);
+    return null;
+  }
+  return event;
+}
+
 async function initApp(systemConfig: SystemConfig) {
   if (systemConfig.sentryDSN !== "") {
     sentryInit({
       dsn: systemConfig.sentryDSN,
       tracesSampleRate: 0.0,
+      beforeSend: sentryBeforeSend,
     });
   }
 
   loadTheme(systemConfig.themes.main);
-  await authgear.configure({
-    sessionType: "cookie",
-    clientID: systemConfig.authgearClientID,
-    endpoint: systemConfig.authgearEndpoint,
-  });
 }
 
 // ReactAppRoutes defines the routes.
@@ -97,6 +133,7 @@ const ReactAppRoutes: React.VFC = function ReactAppRoutes() {
             </Authenticated>
           }
         />
+
         <Route path="/projects">
           <Route
             index={true}
@@ -119,28 +156,46 @@ const ReactAppRoutes: React.VFC = function ReactAppRoutes() {
             }
           />
         </Route>
-
+        <Route path="onboarding-survey">
+          <Route
+            index={true}
+            // @ts-expect-error
+            path="*"
+            element={
+              <Authenticated>
+                <Suspense fallback={<ShowLoading />}>
+                  <OnboardingSurveyScreen />
+                </Suspense>
+              </Authenticated>
+            }
+          />
+        </Route>
         <Route path="/project">
+          <Route index={true} element={<Navigate to="/" />} />
           <Route path=":appID">
             <Route
-              // @ts-expect-error
               index={true}
+              // @ts-expect-error
               path="*"
               element={
                 <Authenticated>
-                  <AppRoot />
+                  <AppContextProvider>
+                    <AppRoot />
+                  </AppContextProvider>
                 </Authenticated>
               }
             />
             <Route path="wizard">
               <Route
-                // @ts-expect-error
                 index={true}
+                // @ts-expect-error
                 path="*"
                 element={
                   <Authenticated>
                     <Suspense fallback={<ShowLoading />}>
-                      <ProjectWizardScreen />
+                      <AppContextProvider>
+                        <ProjectWizardScreen />
+                      </AppContextProvider>
                     </Suspense>
                   </Authenticated>
                 }
@@ -177,6 +232,15 @@ const ReactAppRoutes: React.VFC = function ReactAppRoutes() {
             </Suspense>
           }
         />
+
+        <Route
+          path="/storybook"
+          element={
+            <Suspense fallback={<ShowLoading />}>
+              <StoryBookScreen />
+            </Suspense>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );
@@ -197,17 +261,7 @@ const PortalRoot = function PortalRoot() {
 };
 
 const DocLink: React.VFC<ILinkProps> = (props: ILinkProps) => {
-  const makeGTMEventDataAttributes = useMakeAuthgearGTMEventDataAttributes();
-  const gtmEventDataAttributes = useMemo(() => {
-    return makeGTMEventDataAttributes({
-      event: AuthgearGTMEventType.ClickedDocLink,
-      eventDataAttributes: {
-        "doc-link": props.href ?? "",
-      },
-    });
-  }, [makeGTMEventDataAttributes, props.href]);
-
-  return <ExternalLink {...gtmEventDataAttributes} {...props} />;
+  return <ExternalLink {...props} />;
 };
 
 const defaultComponents = {
@@ -224,21 +278,15 @@ const LoadCurrentUser: React.VFC<LoadCurrentUserProps> =
   function LoadCurrentUser({ children }: LoadCurrentUserProps) {
     const { loading, viewer } = useViewerQuery();
 
-    const gtmEvent = useAuthgearGTMEventBase();
-    const sendDataToGTM = useGTMDispatch();
+    const identify = useIdentify();
     useEffect(() => {
       if (viewer) {
-        const event: AuthgearGTMEvent = {
-          ...gtmEvent,
-          event: AuthgearGTMEventType.Identified,
-          event_data: {
-            user_id: extractRawID(viewer.id),
-            email: viewer.email ?? undefined,
-          },
-        };
-        sendDataToGTM(event);
+        const userID = extractRawID(viewer.id);
+        const email = viewer.email ?? undefined;
+
+        identify(userID, email);
       }
-    }, [viewer, gtmEvent, sendDataToGTM]);
+    }, [viewer, identify]);
 
     if (loading) {
       return (
@@ -255,12 +303,45 @@ const LoadCurrentUser: React.VFC<LoadCurrentUserProps> =
 const ReactApp: React.VFC = function ReactApp() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [displayUnauthenticatedDialog, setDisplayUnauthenticatedDialog] =
+    useState(false);
+
+  const [apolloClient] = useState(() => {
+    const cache = createCache();
+    return createClient({
+      cache: cache,
+      onLogout: () => {
+        setDisplayUnauthenticatedDialog(true);
+      },
+    });
+  });
+
+  const onUnauthenticatedDialogConfirm = useCallback(() => {
+    apolloClient.cache.writeQuery({
+      query: ViewerQueryDocument,
+      data: {
+        viewer: null,
+      },
+    });
+  }, [apolloClient.cache]);
+
+  const unauthenticatedDialogContextValue =
+    useMemo<UnauthenticatedDialogContextValue>(() => {
+      return {
+        setDisplayUnauthenticatedDialog,
+      };
+    }, []);
 
   useEffect(() => {
     if (!systemConfig && error == null) {
       loadSystemConfig()
         .then(async (cfg) => {
           await initApp(cfg);
+          await configureAuthgear({
+            clientID: cfg.authgearClientID,
+            endpoint: cfg.authgearEndpoint,
+            sessionType: cfg.authgearWebSDKSessionType,
+          });
           setSystemConfig(cfg);
         })
         .catch((err) => {
@@ -286,31 +367,42 @@ const ReactApp: React.VFC = function ReactApp() {
     return null;
   }
 
-  // register locale for country code translation
-  registerLocale(i18nISOCountriesEnLocale);
-
   return (
-    <GTMProvider containerID={systemConfig.gtmContainerID}>
-      <ErrorContextProvider>
-        <LoadingContextProvider>
-          <LocaleProvider
-            locale="en"
-            messageByID={systemConfig.translations.en}
-            defaultComponents={defaultComponents}
-          >
-            <HelmetProvider>
-              <ApolloProvider client={client}>
-                <SystemConfigContext.Provider value={systemConfig}>
-                  <LoadCurrentUser>
-                    <PortalRoot />
-                  </LoadCurrentUser>
-                </SystemConfigContext.Provider>
-              </ApolloProvider>
-            </HelmetProvider>
-          </LocaleProvider>
-        </LoadingContextProvider>
-      </ErrorContextProvider>
-    </GTMProvider>
+    <ErrorBoundary fallback={FallbackComponent}>
+      <GTMProvider containerID={systemConfig.gtmContainerID}>
+        <ErrorContextProvider>
+          <LoadingContextProvider>
+            <LocaleProvider
+              locale="en"
+              messageByID={systemConfig.translations.en}
+              defaultComponents={defaultComponents}
+            >
+              <HelmetProvider>
+                <PortalClientProvider value={apolloClient}>
+                  <ApolloProvider client={apolloClient}>
+                    <SystemConfigContext.Provider value={systemConfig}>
+                      <AuthenticatedContextProvider>
+                        <LoadCurrentUser>
+                          <UnauthenticatedDialogContext.Provider
+                            value={unauthenticatedDialogContextValue}
+                          >
+                            <PortalRoot />
+                          </UnauthenticatedDialogContext.Provider>
+                          <UnauthenticatedDialog
+                            isHidden={!displayUnauthenticatedDialog}
+                            onConfirm={onUnauthenticatedDialogConfirm}
+                          />
+                        </LoadCurrentUser>
+                      </AuthenticatedContextProvider>
+                    </SystemConfigContext.Provider>
+                  </ApolloProvider>
+                </PortalClientProvider>
+              </HelmetProvider>
+            </LocaleProvider>
+          </LoadingContextProvider>
+        </ErrorContextProvider>
+      </GTMProvider>
+    </ErrorBoundary>
   );
 };
 

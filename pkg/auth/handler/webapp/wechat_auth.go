@@ -1,8 +1,10 @@
 package webapp
 
 import (
+	"context"
 	htmltemplate "html/template"
 	"net/http"
+
 	"net/url"
 
 	"github.com/boombuler/barcode/qr"
@@ -21,7 +23,7 @@ import (
 
 var TemplateWebWechatAuthHandlerHTML = template.RegisterHTML(
 	"web/wechat_auth.html",
-	components...,
+	Components...,
 )
 
 func ConfigureWechatAuthRoute(route httproute.Route) httproute.Route {
@@ -41,7 +43,7 @@ type WechatAuthHandler struct {
 	Renderer          Renderer
 }
 
-func (h *WechatAuthHandler) GetData(r *http.Request, w http.ResponseWriter, session *webapp.Session, graph *interaction.Graph) (map[string]interface{}, error) {
+func (h *WechatAuthHandler) GetData(ctx context.Context, r *http.Request, w http.ResponseWriter, session *webapp.Session, graph *interaction.Graph) (map[string]interface{}, error) {
 	data := make(map[string]interface{})
 	baseViewModel := h.BaseViewModel.ViewModel(r, w)
 
@@ -50,7 +52,7 @@ func (h *WechatAuthHandler) GetData(r *http.Request, w http.ResponseWriter, sess
 		return nil, apierrors.NewInvalid("missing authorization url")
 	}
 
-	img, err := createQRCodeImage(authURL, 512, 512, qr.M)
+	img, err := CreateQRCodeImage(authURL, 512, 512, qr.M)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +69,7 @@ func (h *WechatAuthHandler) GetData(r *http.Request, w http.ResponseWriter, sess
 		ImageURI: htmltemplate.URL(dataURI),
 	}
 
-	weChatRedirectURIFromCtx := wechat.GetWeChatRedirectURI(r.Context())
+	weChatRedirectURIFromCtx := wechat.GetWeChatRedirectURI(ctx)
 	if weChatRedirectURIFromCtx != "" {
 		u, err := url.Parse(weChatRedirectURIFromCtx)
 		if err != nil {
@@ -89,21 +91,22 @@ func (h *WechatAuthHandler) GetData(r *http.Request, w http.ResponseWriter, sess
 	return data, nil
 }
 
+//nolint:gocognit
 func (h *WechatAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctrl, err := h.ControllerFactory.New(r, w)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -111,15 +114,19 @@ func (h *WechatAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if session != nil {
 			step := session.CurrentStep()
 			action, ok := step.FormData["x_action"].(string)
+
 			if ok && action == WechatActionCallback {
+				query := url.Values{}
+				query.Set("code", step.FormData["x_code"].(string))
+				query.Set("error", step.FormData["x_error"].(string))
+				query.Set("error_description", step.FormData["x_error_description"].(string))
+
 				data := InputOAuthCallback{
-					ProviderAlias:    httproute.GetParam(r, "alias"),
-					Code:             step.FormData["x_code"].(string),
-					Error:            step.FormData["x_error"].(string),
-					ErrorDescription: step.FormData["x_error_description"].(string),
+					ProviderAlias: httproute.GetParam(r, "alias"),
+					Query:         query.Encode(),
 				}
 
-				result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+				result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 					input = &data
 					return
 				})
@@ -132,7 +139,7 @@ func (h *WechatAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		data, err := h.GetData(r, w, session, graph)
+		data, err := h.GetData(ctx, r, w, session, graph)
 		if err != nil {
 			return err
 		}
@@ -141,8 +148,8 @@ func (h *WechatAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.PostAction("", func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
@@ -151,14 +158,17 @@ func (h *WechatAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			step := session.CurrentStep()
 			action, ok := step.FormData["x_action"].(string)
 			if ok && action == WechatActionCallback {
+				query := url.Values{}
+				query.Set("code", step.FormData["x_code"].(string))
+				query.Set("error", step.FormData["x_error"].(string))
+				query.Set("error_description", step.FormData["x_error_description"].(string))
+
 				data := InputOAuthCallback{
-					ProviderAlias:    httproute.GetParam(r, "alias"),
-					Code:             step.FormData["x_code"].(string),
-					Error:            step.FormData["x_error"].(string),
-					ErrorDescription: step.FormData["x_error_description"].(string),
+					ProviderAlias: httproute.GetParam(r, "alias"),
+					Query:         query.Encode(),
 				}
 
-				result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+				result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 					input = &data
 					return
 				})
@@ -174,7 +184,7 @@ func (h *WechatAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Otherwise redirect to the current page.
 		redirectURI := httputil.HostRelative(r.URL).String()
 		result := webapp.Result{
-			NavigationAction: "replace",
+			NavigationAction: webapp.NavigationActionReplace,
 			RedirectURI:      redirectURI,
 		}
 		result.WriteResponse(w, r)

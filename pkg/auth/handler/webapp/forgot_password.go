@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -14,7 +15,7 @@ import (
 
 var TemplateWebForgotPasswordHTML = template.RegisterHTML(
 	"web/forgot_password.html",
-	components...,
+	Components...,
 )
 
 var ForgotPasswordSchema = validation.NewSimpleSchema(`
@@ -72,7 +73,7 @@ func (h *ForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
 	opts := webapp.SessionOptions{
 		KeepAfterFinish: true,
@@ -81,8 +82,8 @@ func (h *ForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 	h.FormPrefiller.Prefill(r.Form)
 
-	ctrl.Get(func() error {
-		graph, err := ctrl.EntryPointGet(opts, intent)
+	ctrl.Get(func(ctx context.Context) error {
+		graph, err := ctrl.EntryPointGet(ctx, opts, intent)
 		if err != nil {
 			return err
 		}
@@ -96,8 +97,8 @@ func (h *ForgotPasswordHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+	ctrl.PostAction("", func(ctx context.Context) error {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			err = ForgotPasswordSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

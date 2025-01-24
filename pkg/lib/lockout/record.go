@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
-	goredis "github.com/go-redis/redis/v8"
+	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis"
 )
 
 type attemptResult struct {
@@ -90,7 +92,8 @@ redis.call("HSET", record_key, contributor, contributor_total)
 redis.call("EXPIREAT", record_key, expire_at)
 
 if locked_until_epoch then
-	redis.call("SET", lock_key, locked_until_epoch, "EXAT", locked_until_epoch)
+	redis.call("SET", lock_key, locked_until_epoch)
+	redis.call("EXPIREAT", lock_key, locked_until_epoch)
 end
 
 return {is_success, locked_until_epoch}
@@ -100,7 +103,11 @@ var clearAttemptsLuaScript = goredis.NewScript(constants + `
 redis.replicate_commands()
 
 local record_key = KEYS[1]
-local contributor = ARGV[1]
+local history_duration = tonumber(ARGV[1])
+local contributor = ARGV[2]
+
+local now = redis.call("TIME")
+local now_timestamp = tonumber(now[1])
 
 local global_total = 0
 local contributor_total = 0
@@ -124,15 +131,22 @@ pcall(read_existing_contributor_total)
 
 global_total = math.max(global_total - contributor_total, 0)
 
+local expire_at = now_timestamp + history_duration
 
 redis.call("HSET", record_key, GLOBAL_TOTAL_KEY, global_total)
 redis.call("HDEL", record_key, contributor)
+
+-- Redis 6.x does not support NX.
+local original_ttl = redis.call("TTL", record_key)
+if original_ttl < 0 then
+	redis.call("EXPIREAT", record_key, expire_at)
+end
 
 return 1
 `)
 
 func makeAttempts(
-	ctx context.Context, conn *goredis.Conn,
+	ctx context.Context, conn redis.Redis_6_0_Cmdable,
 	key string,
 	historyDuration time.Duration,
 	maxAttempts int,
@@ -165,7 +179,7 @@ func makeAttempts(
 	var lockedUntil *time.Time = nil
 
 	if len(result) > 1 {
-		lockedUntilT := time.Unix(result[1].(int64), 0)
+		lockedUntilT := time.Unix(result[1].(int64), 0).UTC()
 		lockedUntil = &lockedUntilT
 	}
 
@@ -176,11 +190,13 @@ func makeAttempts(
 }
 
 func clearAttempts(
-	ctx context.Context, conn *goredis.Conn,
+	ctx context.Context, conn redis.Redis_6_0_Cmdable,
 	key string,
+	historyDuration time.Duration,
 	contributor string) error {
 	_, err := clearAttemptsLuaScript.Run(ctx, conn,
 		[]string{key},
+		int(historyDuration.Seconds()),
 		contributor,
 	).Bool()
 	return err

@@ -10,6 +10,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/session"
 	"github.com/authgear/authgear-server/pkg/lib/workflow"
+	"github.com/authgear/authgear-server/pkg/util/stringutil"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
@@ -66,10 +67,10 @@ func (i *IntentChangeEmail) ReactTo(ctx context.Context, deps *workflow.Dependen
 				LoginID: &identity.LoginIDSpec{
 					Type:  model.LoginIDKeyTypeEmail,
 					Key:   string(model.LoginIDKeyTypeEmail),
-					Value: loginID,
+					Value: stringutil.NewUserInputString(loginID),
 				},
 			}
-			exactMatch, _, err := deps.Identities.SearchBySpec(spec)
+			exactMatch, _, err := deps.Identities.SearchBySpec(ctx, spec)
 			if err != nil {
 				return nil, err
 			}

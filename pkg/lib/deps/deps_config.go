@@ -16,23 +16,25 @@ var ConfigDeps = wire.NewSet(
 		"UI",
 		"Localization",
 		"Messaging",
+		"Search",
 		"Authentication",
 		"Session",
 		"OAuth",
+		"SAML",
 		"Identity",
 		"Authenticator",
 		"UserProfile",
 		"ForgotPassword",
-		"WelcomeMessage",
 		"Verification",
-		"OTP",
 		"AccountDeletion",
 		"AccountAnonymization",
-		"Web3",
+		"Deprecated_Web3",
 		"GoogleTagManager",
 		"AccountMigration",
 		"Captcha",
+		"BotProtection",
 		"TestMode",
+		"AuthenticationFlow",
 	),
 	wire.FieldsOf(new(*config.AuthenticationConfig),
 		"Lockout",
@@ -42,10 +44,11 @@ var ConfigDeps = wire.NewSet(
 		"OAuth",
 		"Biometric",
 		"OnConflict",
+		"LDAP",
 	),
 	wire.FieldsOf(new(*config.MessagingConfig),
-		"SMS",
-		"Email",
+		"SMSProvider",
+		"SMSGateway",
 		"Whatsapp",
 		"RateLimits",
 	),
@@ -64,7 +67,6 @@ var ConfigDeps = wire.NewSet(
 		"OAuth",
 		"AuditLog",
 		"Collaborator",
-		"RateLimit",
 		"RateLimits",
 		"Messaging",
 		"AdminAPI",
@@ -108,6 +110,7 @@ var secretDeps = wire.NewSet(
 	ProvideDatabaseCredentials,
 	ProvideAuditDatabaseCredentials,
 	ProvideElasticsearchCredentials,
+	ProvideSearchDatabaseCredentials,
 	ProvideRedisCredentials,
 	ProvideAnalyticRedisCredentials,
 	ProvideAdminAPIAuthKeyMaterials,
@@ -123,7 +126,11 @@ var secretDeps = wire.NewSet(
 	ProvideWATICredentials,
 	ProvideOAuthClientCredentials,
 	ProvideCaptchaCloudflareCredentials,
+	ProvideBotProtectionProvidersCredentials,
 	ProvideWhatsappOnPremisesCredentials,
+	ProvideLDAPServerUserCredentials,
+	ProvideSAMLIdpSigningMaterials,
+	ProvideSAMLSpSigningMaterials,
 )
 
 func ProvideDatabaseCredentials(c *config.SecretConfig) *config.DatabaseCredentials {
@@ -138,6 +145,11 @@ func ProvideAuditDatabaseCredentials(c *config.SecretConfig) *config.AuditDataba
 
 func ProvideElasticsearchCredentials(c *config.SecretConfig) *config.ElasticsearchCredentials {
 	s, _ := c.LookupData(config.ElasticsearchCredentialsKey).(*config.ElasticsearchCredentials)
+	return s
+}
+
+func ProvideSearchDatabaseCredentials(c *config.SecretConfig) *config.SearchDatabaseCredentials {
+	s, _ := c.LookupData(config.SearchDatabaseCredentialsKey).(*config.SearchDatabaseCredentials)
 	return s
 }
 
@@ -210,12 +222,32 @@ func ProvideOAuthClientCredentials(c *config.SecretConfig) *config.OAuthClientCr
 	return s
 }
 
-func ProvideCaptchaCloudflareCredentials(c *config.SecretConfig) *config.CaptchaCloudflareCredentials {
-	s, _ := c.LookupData(config.CaptchaCloudflareCredentialsKey).(*config.CaptchaCloudflareCredentials)
+func ProvideCaptchaCloudflareCredentials(c *config.SecretConfig) *config.Deprecated_CaptchaCloudflareCredentials {
+	s, _ := c.LookupData(config.Deprecated_CaptchaCloudflareCredentialsKey).(*config.Deprecated_CaptchaCloudflareCredentials)
+	return s
+}
+
+func ProvideBotProtectionProvidersCredentials(c *config.SecretConfig) *config.BotProtectionProviderCredentials {
+	s, _ := c.LookupData(config.BotProtectionProviderCredentialsKey).(*config.BotProtectionProviderCredentials)
 	return s
 }
 
 func ProvideWhatsappOnPremisesCredentials(c *config.SecretConfig) *config.WhatsappOnPremisesCredentials {
 	s, _ := c.LookupData(config.WhatsappOnPremisesCredentialsKey).(*config.WhatsappOnPremisesCredentials)
+	return s
+}
+
+func ProvideLDAPServerUserCredentials(c *config.SecretConfig) *config.LDAPServerUserCredentials {
+	s, _ := c.LookupData(config.LDAPServerUserCredentialsKey).(*config.LDAPServerUserCredentials)
+	return s
+}
+
+func ProvideSAMLIdpSigningMaterials(c *config.SecretConfig) *config.SAMLIdpSigningMaterials {
+	s, _ := c.LookupData(config.SAMLIdpSigningMaterialsKey).(*config.SAMLIdpSigningMaterials)
+	return s
+}
+
+func ProvideSAMLSpSigningMaterials(c *config.SecretConfig) *config.SAMLSpSigningMaterials {
+	s, _ := c.LookupData(config.SAMLSpSigningMaterialsKey).(*config.SAMLSpSigningMaterials)
 	return s
 }

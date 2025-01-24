@@ -14,25 +14,18 @@ func init() {
 	authflow.RegisterIntent(&IntentReauthFlowStepIdentify{})
 }
 
-type IntentReauthFlowStepIdentifyData struct {
-	Options []IdentificationOption `json:"options"`
-}
-
-var _ authflow.Data = IntentReauthFlowStepIdentifyData{}
-
-func (IntentReauthFlowStepIdentifyData) Data() {}
-
 type IntentReauthFlowStepIdentify struct {
-	JSONPointer jsonpointer.T          `json:"json_pointer,omitempty"`
-	StepName    string                 `json:"step_name,omitempty"`
-	Options     []IdentificationOption `json:"options"`
+	FlowReference authflow.FlowReference `json:"flow_reference,omitempty"`
+	JSONPointer   jsonpointer.T          `json:"json_pointer,omitempty"`
+	StepName      string                 `json:"step_name,omitempty"`
+	Options       []IdentificationOption `json:"options"`
 }
 
 var _ authflow.Intent = &IntentReauthFlowStepIdentify{}
 var _ authflow.DataOutputer = &IntentReauthFlowStepIdentify{}
 
 func NewIntentReauthFlowStepIdentify(ctx context.Context, deps *authflow.Dependencies, i *IntentReauthFlowStepIdentify) (*IntentReauthFlowStepIdentify, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	current, err := i.currentFlowObject(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +35,9 @@ func NewIntentReauthFlowStepIdentify(ctx context.Context, deps *authflow.Depende
 	for _, b := range step.OneOf {
 		switch b.Identification {
 		case config.AuthenticationFlowIdentificationIDToken:
-			c := NewIdentificationOptionIDToken(b.Identification)
+			// Reauth flow identify step has no user interaction. It's called by our own backend to identify user. Thus, no bot protection is needed.
+			var botProtection *config.AuthenticationFlowBotProtection = nil
+			c := NewIdentificationOptionIDToken(b.Identification, botProtection, deps.Config.BotProtection)
 			options = append(options, c)
 		}
 	}
@@ -56,8 +51,8 @@ func (*IntentReauthFlowStepIdentify) Kind() string {
 }
 
 func (i *IntentReauthFlowStepIdentify) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
-	_, userIdentified := authflow.FindMilestone[MilestoneDoUseUser](flows.Nearest)
-	_, nestedStepsHandled := authflow.FindMilestone[MilestoneNestedSteps](flows.Nearest)
+	_, _, userIdentified := authflow.FindMilestoneInCurrentFlow[MilestoneDoUseUser](flows)
+	_, _, nestedStepsHandled := authflow.FindMilestoneInCurrentFlow[MilestoneNestedSteps](flows)
 
 	switch {
 	case len(flows.Nearest.Nodes) == 0 && authflow.GetIDToken(ctx) != "":
@@ -65,9 +60,17 @@ func (i *IntentReauthFlowStepIdentify) CanReactTo(ctx context.Context, deps *aut
 		return nil, nil
 	case len(flows.Nearest.Nodes) == 0:
 		// Let the input to select which identification method to use.
+		flowRootObject, err := flowRootObject(deps, i.FlowReference)
+		if err != nil {
+			return nil, err
+		}
+		shouldBypassBotProtection := ShouldExistingResultBypassBotProtectionRequirement(ctx)
 		return &InputSchemaStepIdentify{
-			JSONPointer: i.JSONPointer,
-			Options:     i.Options,
+			FlowRootObject:            flowRootObject,
+			JSONPointer:               i.JSONPointer,
+			Options:                   i.Options,
+			ShouldBypassBotProtection: shouldBypassBotProtection,
+			BotProtectionCfg:          deps.Config.BotProtection,
 		}, nil
 	case userIdentified && !nestedStepsHandled:
 		// Handle nested steps.
@@ -78,14 +81,14 @@ func (i *IntentReauthFlowStepIdentify) CanReactTo(ctx context.Context, deps *aut
 }
 
 func (i *IntentReauthFlowStepIdentify) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	current, err := i.currentFlowObject(deps)
 	if err != nil {
 		return nil, err
 	}
 	step := i.step(current)
 
-	_, userIdentified := authflow.FindMilestone[MilestoneDoUseUser](flows.Nearest)
-	_, nestedStepsHandled := authflow.FindMilestone[MilestoneNestedSteps](flows.Nearest)
+	_, _, userIdentified := authflow.FindMilestoneInCurrentFlow[MilestoneDoUseUser](flows)
+	_, _, nestedStepsHandled := authflow.FindMilestoneInCurrentFlow[MilestoneNestedSteps](flows)
 
 	switch {
 	case len(flows.Nearest.Nodes) == 0 && authflow.GetIDToken(ctx) != "":
@@ -121,9 +124,10 @@ func (i *IntentReauthFlowStepIdentify) ReactTo(ctx context.Context, deps *authfl
 		}
 		return nil, authflow.ErrIncompatibleInput
 	case userIdentified && !nestedStepsHandled:
-		identification := i.identificationMethod(flows.Nearest)
+		identification := i.identificationMethod(flows)
 		return authflow.NewSubFlow(&IntentReauthFlowSteps{
-			JSONPointer: i.jsonPointer(step, identification),
+			FlowReference: i.FlowReference,
+			JSONPointer:   i.jsonPointer(step, identification),
 		}), nil
 	default:
 		return nil, authflow.ErrIncompatibleInput
@@ -133,9 +137,9 @@ func (i *IntentReauthFlowStepIdentify) ReactTo(ctx context.Context, deps *authfl
 }
 
 func (i *IntentReauthFlowStepIdentify) OutputData(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.Data, error) {
-	return IntentReauthFlowStepIdentifyData{
+	return NewIdentificationData(IdentificationData{
 		Options: i.Options,
-	}, nil
+	}), nil
 }
 
 func (*IntentReauthFlowStepIdentify) step(o config.AuthenticationFlowObject) *config.AuthenticationFlowReauthFlowStep {
@@ -165,8 +169,8 @@ func (*IntentReauthFlowStepIdentify) checkIdentificationMethod(deps *authflow.De
 	return
 }
 
-func (*IntentReauthFlowStepIdentify) identificationMethod(w *authflow.Flow) config.AuthenticationFlowIdentification {
-	m, ok := authflow.FindMilestone[MilestoneIdentificationMethod](w)
+func (*IntentReauthFlowStepIdentify) identificationMethod(flows authflow.Flows) config.AuthenticationFlowIdentification {
+	m, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneIdentificationMethod](flows)
 	if !ok {
 		panic(fmt.Errorf("identification method not yet selected"))
 	}
@@ -185,4 +189,16 @@ func (i *IntentReauthFlowStepIdentify) jsonPointer(step *config.AuthenticationFl
 	}
 
 	panic(fmt.Errorf("selected identification method is not allowed"))
+}
+
+func (i *IntentReauthFlowStepIdentify) currentFlowObject(deps *authflow.Dependencies) (config.AuthenticationFlowObject, error) {
+	rootObject, err := flowRootObject(deps, i.FlowReference)
+	if err != nil {
+		return nil, err
+	}
+	current, err := authflow.FlowObject(rootObject, i.JSONPointer)
+	if err != nil {
+		return nil, err
+	}
+	return current, nil
 }

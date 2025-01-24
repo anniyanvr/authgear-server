@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/util/log"
-	"github.com/lib/pq"
 )
 
 type Dumper struct {
-	Context        context.Context
-	DatabaseURL    string
+	ConnectionInfo db.ConnectionInfo
 	DatabaseSchema string
 	OutputDir      string
 	AppIDs         []string
@@ -29,8 +29,7 @@ type Dumper struct {
 }
 
 func NewDumper(
-	context context.Context,
-	databaseURL string,
+	connectionInfo db.ConnectionInfo,
 	databaseSchema string,
 	outputDir string,
 	appIDs []string,
@@ -42,10 +41,9 @@ func NewDumper(
 	logger := loggerFactory.New("dumper")
 	pool := db.NewPool()
 	handle := db.NewHookHandle(
-		context,
 		pool,
+		connectionInfo,
 		db.ConnectionOptions{
-			DatabaseURL:           databaseURL,
 			MaxOpenConnection:     1,
 			MaxIdleConnection:     1,
 			MaxConnectionLifetime: 1800 * time.Second,
@@ -53,14 +51,10 @@ func NewDumper(
 		},
 		loggerFactory,
 	)
-	sqlExecutor := &db.SQLExecutor{
-		Context:  context,
-		Database: handle,
-	}
+	sqlExecutor := &db.SQLExecutor{}
 	sqlBuilder := db.NewSQLBuilder(databaseSchema)
 	return &Dumper{
-		Context:        context,
-		DatabaseURL:    databaseURL,
+		ConnectionInfo: connectionInfo,
 		DatabaseSchema: databaseSchema,
 		OutputDir:      outputDir,
 		AppIDs:         appIDs,
@@ -73,8 +67,7 @@ func NewDumper(
 	}
 }
 
-func (d *Dumper) Dump() error {
-
+func (d *Dumper) Dump(ctx context.Context) error {
 	outputPathAbs, err := filepath.Abs(d.OutputDir)
 	if err != nil {
 		panic(err)
@@ -86,11 +79,11 @@ func (d *Dumper) Dump() error {
 		panic(err)
 	}
 
-	return d.dbHandle.ReadOnly(func() error {
+	return d.dbHandle.ReadOnly(ctx, func(ctx context.Context) error {
 		for _, tableName := range d.TableNames {
 			filePath := filepath.Join(d.OutputDir, fmt.Sprintf("%s.csv", tableName))
 			d.logger.Info(fmt.Sprintf("Dumping %s to %s", tableName, filePath))
-			columns, rows, err := d.queryTable(tableName)
+			columns, rows, err := d.queryTable(ctx, tableName)
 			if err != nil {
 				return err
 			}
@@ -113,12 +106,12 @@ func (d *Dumper) Dump() error {
 	})
 }
 
-func (d *Dumper) queryTable(tableName string) (columns []string, rows []map[string]string, err error) {
+func (d *Dumper) queryTable(ctx context.Context, tableName string) (columns []string, rows []map[string]string, err error) {
 	q := d.sqlBuilder.Select("*").
 		From(d.sqlBuilder.TableName(tableName)).
 		Where("app_id = ANY (?)", pq.Array(d.AppIDs))
 
-	qresult, err := d.sqlExecutor.QueryWith(q)
+	qresult, err := d.sqlExecutor.QueryWith(ctx, q)
 	if err != nil {
 		return
 	}

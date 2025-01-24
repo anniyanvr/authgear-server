@@ -4,6 +4,7 @@ import { handleAxiosError, showErrorMessage } from "./messageBar";
 import { base64DecToArr, base64EncArr } from "./base64";
 import { base64URLToBase64, trimNewline, base64ToBase64URL } from "./base64url";
 import { RetryEventTarget } from "./retry";
+import { setErrorMessage } from "./authflowv2/alert-message";
 
 function passkeyIsAvailable(): boolean {
   return (
@@ -45,8 +46,123 @@ function deserializeRequestOptions(
   return requestOptions;
 }
 
-function serializeAttestationResponse(credential: PublicKeyCredential) {
-  const response = credential.response as AuthenticatorAttestationResponse;
+// At runtime, we do not assume the return value of
+// window.navigator.credentials.get is instanceof PublicKeyCredential.
+// It is observed that on Firefox 133 (as of 2024-12-18), window.navigator.credentials.get
+// can return something of type Object, when 1Password extension is installed.
+//
+// Maybe this behavior is due to the fact that Firefox has no native support
+// for passkeys yet.
+// I have tried to search the issue list with
+// https://bugzilla.mozilla.org/buglist.cgi?product=Core&component=DOM%3A%20Web%20Authentication&resolution=---
+// but found no reported issues.
+//
+// Therefore, we use a type guard to assert the return value of
+// window.navigator.credentials.get looks like a PublicKeyCredential,
+// without checking the actual type.
+
+interface PublicKeyCredentialWithAttestationResponse {
+  id: string;
+  type: string;
+  response: AuthenticatorAttestationResponse;
+  getClientExtensionResults(): AuthenticationExtensionsClientOutputs;
+}
+
+function isPublicKeyCredentialWithAttestationResponse(
+  credential: unknown
+): credential is PublicKeyCredentialWithAttestationResponse {
+  // For browsers that behave correctly, just use instanceof.
+  if (credential instanceof PublicKeyCredential) {
+    return true;
+  }
+
+  // Otherwise, we fallback to checking the required properties.
+
+  if (credential == null) {
+    return false;
+  }
+  if (typeof credential !== "object") {
+    return false;
+  }
+  // I know it is better to write Object.prototype.hasOwnProperty.call(credential, "id"),
+  // but TypeScript is not smart enough to type-inference it has .id afterwards.
+  if (!("id" in credential) || typeof credential.id !== "string") {
+    return false;
+  }
+  if (!("type" in credential) || typeof credential.type !== "string") {
+    return false;
+  }
+  if (
+    !("response" in credential) ||
+    typeof credential.response !== "object" ||
+    credential.response == null
+  ) {
+    return false;
+  }
+  // Since getClientExtensionResults is a function, it is probably not a own property on credential.
+  // So it is legit (and correct) to use the in operator here.
+  if (
+    !("getClientExtensionResults" in credential) ||
+    typeof credential.getClientExtensionResults !== "function"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+interface PublicKeyCredentialWithAssertionResponse {
+  id: string;
+  type: string;
+  response: AuthenticatorAssertionResponse;
+  getClientExtensionResults(): AuthenticationExtensionsClientOutputs;
+}
+
+function isPublicKeyCredentialWithAssertionResponse(
+  credential: unknown
+): credential is PublicKeyCredentialWithAssertionResponse {
+  // For browsers that behave correctly, just use instanceof.
+  if (credential instanceof PublicKeyCredential) {
+    return true;
+  }
+
+  // Otherwise, we fallback to checking the required properties.
+
+  if (credential == null) {
+    return false;
+  }
+  if (typeof credential !== "object") {
+    return false;
+  }
+  // I know it is better to write Object.prototype.hasOwnProperty.call(credential, "id"),
+  // but TypeScript is not smart enough to type-inference it has .id afterwards.
+  if (!("id" in credential) || typeof credential.id !== "string") {
+    return false;
+  }
+  if (!("type" in credential) || typeof credential.type !== "string") {
+    return false;
+  }
+  if (
+    !("response" in credential) ||
+    typeof credential.response !== "object" ||
+    credential.response == null
+  ) {
+    return false;
+  }
+  // Since getClientExtensionResults is a function, it is probably not a own property on credential.
+  // So it is legit (and correct) to use the in operator here.
+  if (
+    !("getClientExtensionResults" in credential) ||
+    typeof credential.getClientExtensionResults !== "function"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function serializeAttestationResponse(
+  credential: PublicKeyCredentialWithAttestationResponse
+) {
+  const response = credential.response;
 
   const attestationObject = trimNewline(
     base64ToBase64URL(base64EncArr(new Uint8Array(response.attestationObject)))
@@ -75,8 +191,10 @@ function serializeAttestationResponse(credential: PublicKeyCredential) {
   };
 }
 
-function serializeAssertionResponse(credential: PublicKeyCredential) {
-  const response = credential.response as AuthenticatorAssertionResponse;
+function serializeAssertionResponse(
+  credential: PublicKeyCredentialWithAssertionResponse
+) {
+  const response = credential.response;
   const authenticatorData = trimNewline(
     base64ToBase64URL(base64EncArr(new Uint8Array(response.authenticatorData)))
   );
@@ -129,11 +247,13 @@ function isSafariTimeout(err: unknown) {
   );
 }
 
-function isSafariAndroidError(err: unknown) {
+function isOperationFailError(err: unknown) {
   // This happens when the user chooses to use Android phone to scan QR code.
   // And the passkey is not found on that Android phone.
   // If security key is used, the error message is shown in the modal dialog and the dialog will not close.
   // Thus we cannot detect security key error.
+
+  // This error also happens when using passkey api in webview
   return (
     err instanceof DOMException &&
     err.name === "NotAllowedError" &&
@@ -208,7 +328,7 @@ function handleError(err: unknown) {
     }
   }
 
-  if (isSafariAndroidError(err)) {
+  if (isOperationFailError(err)) {
     showErrorMessage("error-message-no-passkey");
     return;
   }
@@ -262,7 +382,7 @@ export class PasskeyCreationController extends Controller {
       const options = deserializeCreationOptions(resp.data.result);
       try {
         const rawResponse = await window.navigator.credentials.create(options);
-        if (rawResponse instanceof PublicKeyCredential) {
+        if (isPublicKeyCredentialWithAttestationResponse(rawResponse)) {
           const response = serializeAttestationResponse(rawResponse);
           const responseString = JSON.stringify(response);
           this.inputTarget.value = responseString;
@@ -328,7 +448,7 @@ export class PasskeyRequestController extends Controller {
       const options = deserializeRequestOptions(resp.data.result);
       try {
         const rawResponse = await window.navigator.credentials.get(options);
-        if (rawResponse instanceof PublicKeyCredential) {
+        if (isPublicKeyCredentialWithAssertionResponse(rawResponse)) {
           const response = serializeAssertionResponse(rawResponse);
           const responseString = JSON.stringify(response);
           this.inputTarget.value = responseString;
@@ -347,6 +467,60 @@ export class PasskeyRequestController extends Controller {
   }
 }
 
+export class AuthflowPasskeyErrorController extends Controller {
+  connect(): void {
+    document.addEventListener("passkey:error", this.onPasskeyError);
+  }
+
+  disconnect(): void {
+    document.removeEventListener("passkey:error", this.onPasskeyError);
+  }
+
+  onPasskeyError = (e: Event) => {
+    handleError((e as CustomEvent).detail);
+  };
+}
+
+export class AuthflowV2PasskeyErrorController extends Controller {
+  connect(): void {
+    document.addEventListener("passkey:error", this.onPasskeyError);
+  }
+
+  disconnect(): void {
+    document.removeEventListener("passkey:error", this.onPasskeyError);
+  }
+
+  onPasskeyError = (event: Event) => {
+    const err: unknown = (event as CustomEvent).detail;
+    const errorThatCanSimplyBeIgnored = [
+      isSafariCancel,
+      isSafariTimeout,
+      isChromeCancelOrTimeout,
+      isFirefoxCancel,
+      // Firefox timeout was not observed.
+      isAbortControllerError,
+    ];
+    for (const p of errorThatCanSimplyBeIgnored) {
+      if (p(err)) {
+        return;
+      }
+    }
+    let errMessage = "data-passkey-not-supported";
+    if (isOperationFailError(err)) {
+      errMessage = "data-invalid-passkey-or-not-supported";
+    }
+
+    if (isFirefoxSecurityKeyError(err)) {
+      errMessage = "data-no-passkey";
+    }
+
+    if (isSafariDuplicateError(err) || isChromeDuplicateError(err)) {
+      errMessage = "data-passkey-duplicate";
+    }
+    setErrorMessage(errMessage);
+  };
+}
+
 export class AuthflowPasskeyRequestController extends Controller {
   static targets = ["button", "submit", "input"];
   static values = {
@@ -360,12 +534,16 @@ export class AuthflowPasskeyRequestController extends Controller {
 
   declare optionsValue: string;
   declare autoValue: string;
+  declare hasButtonTarget: boolean;
 
   connect() {
-    // Disable the button if PublicKeyCredential is unavailable.
-    if (!passkeyIsAvailable()) {
-      this.buttonTarget.disabled = true;
-      return;
+    if (this.hasButtonTarget) {
+      this.buttonTarget.disabled = false;
+      // Disable the button if PublicKeyCredential is unavailable.
+      if (!passkeyIsAvailable()) {
+        this.buttonTarget.disabled = true;
+        return;
+      }
     }
 
     if (this.autoValue === "true") {
@@ -381,11 +559,19 @@ export class AuthflowPasskeyRequestController extends Controller {
   }
 
   async _use() {
+    if (!passkeyIsAvailable()) {
+      document.dispatchEvent(
+        new CustomEvent("passkey:error", {
+          detail: new Error("passkey is not available"),
+        })
+      );
+      return;
+    }
     try {
       const optionsJSON = JSON.parse(this.optionsValue);
       const options = deserializeRequestOptions(optionsJSON);
       const rawResponse = await window.navigator.credentials.get(options);
-      if (rawResponse instanceof PublicKeyCredential) {
+      if (isPublicKeyCredentialWithAssertionResponse(rawResponse)) {
         const response = serializeAssertionResponse(rawResponse);
         const responseString = JSON.stringify(response);
         this.inputTarget.value = responseString;
@@ -396,7 +582,11 @@ export class AuthflowPasskeyRequestController extends Controller {
         this.submitTarget.click();
       }
     } catch (e: unknown) {
-      handleError(e);
+      document.dispatchEvent(
+        new CustomEvent("passkey:error", {
+          detail: e,
+        })
+      );
     }
   }
 }
@@ -410,14 +600,18 @@ export class AuthflowPasskeyCreationController extends Controller {
   declare buttonTarget: HTMLButtonElement;
   declare submitTarget: HTMLButtonElement;
   declare inputTarget: HTMLInputElement;
+  declare hasButtonTarget: boolean;
 
   declare optionsValue: string;
 
   connect() {
-    // Disable the button if PublicKeyCredential is unavailable.
-    if (!passkeyIsAvailable()) {
-      this.buttonTarget.disabled = true;
-      return;
+    if (this.hasButtonTarget) {
+      this.buttonTarget.disabled = false;
+      // Disable the button if PublicKeyCredential is unavailable.
+      if (!passkeyIsAvailable()) {
+        this.buttonTarget.disabled = true;
+        return;
+      }
     }
   }
 
@@ -429,11 +623,19 @@ export class AuthflowPasskeyCreationController extends Controller {
   }
 
   async _create() {
+    if (!passkeyIsAvailable()) {
+      document.dispatchEvent(
+        new CustomEvent("passkey:error", {
+          detail: new Error("passkey is not available"),
+        })
+      );
+      return;
+    }
     try {
       const optionsJSON = JSON.parse(this.optionsValue);
       const options = deserializeCreationOptions(optionsJSON);
       const rawResponse = await window.navigator.credentials.create(options);
-      if (rawResponse instanceof PublicKeyCredential) {
+      if (isPublicKeyCredentialWithAttestationResponse(rawResponse)) {
         const response = serializeAttestationResponse(rawResponse);
         const responseString = JSON.stringify(response);
         this.inputTarget.value = responseString;
@@ -444,7 +646,11 @@ export class AuthflowPasskeyCreationController extends Controller {
         this.submitTarget.click();
       }
     } catch (e: unknown) {
-      handleError(e);
+      document.dispatchEvent(
+        new CustomEvent("passkey:error", {
+          detail: e,
+        })
+      );
     }
   }
 }
@@ -495,11 +701,9 @@ export class PasskeyAutofillController extends Controller {
 
   async setupAutofill() {
     if (
-      // @ts-expect-error
       typeof PublicKeyCredential.isConditionalMediationAvailable === "function"
     ) {
       const available =
-        // @ts-expect-error
         await PublicKeyCredential.isConditionalMediationAvailable();
 
       if (available) {
@@ -519,7 +723,7 @@ export class PasskeyAutofillController extends Controller {
               ...options,
               signal,
             });
-            if (rawResponse instanceof PublicKeyCredential) {
+            if (isPublicKeyCredentialWithAssertionResponse(rawResponse)) {
               const response = serializeAssertionResponse(rawResponse);
               const responseString = JSON.stringify(response);
               this.inputTarget.value = responseString;

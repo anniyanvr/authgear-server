@@ -2,17 +2,17 @@ package sms
 
 import (
 	"github.com/google/wire"
+
+	"github.com/authgear/authgear-server/pkg/lib/infra/sms/custom"
 )
 
 var DependencySet = wire.NewSet(
-	NewNexmoClient,
-	NewTwilioClient,
-	NewCustomClient,
 	NewLogger,
-	NewSMSHookTimeout,
-	NewHookHTTPClient,
-	NewHookDenoClient,
-	wire.Struct(new(Client), "*"),
-	wire.Struct(new(SMSWebHook), "*"),
-	wire.Struct(new(SMSDenoHook), "*"),
+	custom.NewSMSHookTimeout,
+	custom.NewHookHTTPClient,
+	custom.NewHookDenoClient,
+	wire.Struct(new(ClientResolver), "*"),
+	wire.Struct(new(Sender), "*"),
+	wire.Struct(new(custom.SMSWebHook), "*"),
+	wire.Struct(new(custom.SMSDenoHook), "*"),
 )

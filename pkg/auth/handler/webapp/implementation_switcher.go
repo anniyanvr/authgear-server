@@ -2,13 +2,18 @@ package webapp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
 )
 
+type ImplementationSwitcherMiddlewareUIImplementationService interface {
+	GetUIImplementation() config.UIImplementation
+}
+
 type ImplementationSwitcherMiddleware struct {
-	UIConfig *config.UIConfig
+	UIImplementationService ImplementationSwitcherMiddlewareUIImplementationService
 }
 
 type implementationSwitcherContextKeyType struct{}
@@ -34,28 +39,32 @@ func WithUIImplementation(ctx context.Context, impl config.UIImplementation) con
 func GetUIImplementation(ctx context.Context) config.UIImplementation {
 	v, ok := ctx.Value(implementationSwitcherContextKey).(*implementationSwitcherContext)
 	if !ok {
-		return ""
+		return config.UIImplementationAuthflowV2
 	}
 	return v.UIImplementation
 }
 
 func (m *ImplementationSwitcherMiddleware) Handle(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = r.WithContext(WithUIImplementation(r.Context(), m.UIConfig.Implementation))
+		uiImpl := m.UIImplementationService.GetUIImplementation()
+		r = r.WithContext(WithUIImplementation(r.Context(), uiImpl))
 		next.ServeHTTP(w, r)
 	})
 }
 
 type ImplementationSwitcherHandler struct {
 	Interaction http.Handler
-	Authflow    http.Handler
+	AuthflowV2  http.Handler
 }
 
 func (h *ImplementationSwitcherHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch GetUIImplementation(r.Context()) {
-	case config.UIImplementationAuthflow:
-		h.Authflow.ServeHTTP(w, r)
-	default:
+	impl := GetUIImplementation(r.Context())
+	switch impl {
+	case config.UIImplementationAuthflowV2:
+		h.AuthflowV2.ServeHTTP(w, r)
+	case config.UIImplementationInteraction:
 		h.Interaction.ServeHTTP(w, r)
+	default:
+		panic(fmt.Errorf("unknown ui implementation %s", impl))
 	}
 }

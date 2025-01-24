@@ -16,6 +16,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator/totp"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/anonymous"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/biometric"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity/ldap"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/loginid"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/oauth"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/passkey"
@@ -23,6 +24,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/siwe"
 	"github.com/authgear/authgear-server/pkg/lib/authn/mfa"
 	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
+	"github.com/authgear/authgear-server/pkg/lib/authn/stdattrs"
 	"github.com/authgear/authgear-server/pkg/lib/authn/user"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
@@ -34,26 +36,38 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/feature/accountanonymization"
 	"github.com/authgear/authgear-server/pkg/lib/feature/accountdeletion"
 	"github.com/authgear/authgear-server/pkg/lib/feature/customattrs"
+	"github.com/authgear/authgear-server/pkg/lib/feature/forgotpassword"
 	passkey2 "github.com/authgear/authgear-server/pkg/lib/feature/passkey"
-	siwe2 "github.com/authgear/authgear-server/pkg/lib/feature/siwe"
-	"github.com/authgear/authgear-server/pkg/lib/feature/stdattrs"
+	stdattrs2 "github.com/authgear/authgear-server/pkg/lib/feature/stdattrs"
 	"github.com/authgear/authgear-server/pkg/lib/feature/verification"
-	"github.com/authgear/authgear-server/pkg/lib/feature/web3"
 	"github.com/authgear/authgear-server/pkg/lib/hook"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/auditdb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
+	"github.com/authgear/authgear-server/pkg/lib/infra/db/searchdb"
+	"github.com/authgear/authgear-server/pkg/lib/infra/mail"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis/analyticredis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/appredis"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redisqueue"
+	"github.com/authgear/authgear-server/pkg/lib/infra/sms"
+	"github.com/authgear/authgear-server/pkg/lib/infra/sms/custom"
+	"github.com/authgear/authgear-server/pkg/lib/infra/whatsapp"
 	"github.com/authgear/authgear-server/pkg/lib/lockout"
+	"github.com/authgear/authgear-server/pkg/lib/messaging"
+	"github.com/authgear/authgear-server/pkg/lib/meter"
 	oauth2 "github.com/authgear/authgear-server/pkg/lib/oauth"
 	"github.com/authgear/authgear-server/pkg/lib/oauth/pq"
 	"github.com/authgear/authgear-server/pkg/lib/oauth/redis"
 	"github.com/authgear/authgear-server/pkg/lib/oauthclient"
 	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
+	"github.com/authgear/authgear-server/pkg/lib/rolesgroups"
+	"github.com/authgear/authgear-server/pkg/lib/search/pgsearch"
+	"github.com/authgear/authgear-server/pkg/lib/search/reindex"
 	"github.com/authgear/authgear-server/pkg/lib/session"
 	"github.com/authgear/authgear-server/pkg/lib/session/access"
 	"github.com/authgear/authgear-server/pkg/lib/session/idpsession"
 	"github.com/authgear/authgear-server/pkg/lib/translation"
+	"github.com/authgear/authgear-server/pkg/lib/usage"
 	"github.com/authgear/authgear-server/pkg/lib/web"
 	"github.com/authgear/authgear-server/pkg/util/backgroundjob"
 	"github.com/authgear/authgear-server/pkg/util/clock"
@@ -64,7 +78,7 @@ import (
 
 // Injectors from wire.go:
 
-func newConfigSourceController(p *deps.BackgroundProvider, c context.Context) *configsource.Controller {
+func newConfigSourceController(p *deps.BackgroundProvider) *configsource.Controller {
 	config := p.ConfigSourceConfig
 	factory := p.LoggerFactory
 	localFSLogger := configsource.NewLocalFSLogger(factory)
@@ -80,22 +94,24 @@ func newConfigSourceController(p *deps.BackgroundProvider, c context.Context) *c
 	clock := _wireSystemClockValue
 	globalDatabaseCredentialsEnvironmentConfig := &environmentConfig.GlobalDatabase
 	sqlBuilder := globaldb.NewSQLBuilder(globalDatabaseCredentialsEnvironmentConfig)
-	storeFactory := configsource.NewStoreFactory(c, sqlBuilder)
+	configSourceStoreFactory := configsource.NewConfigSourceStoreStoreFactory(sqlBuilder)
+	planStoreFactory := configsource.NewPlanStoreStoreFactory(sqlBuilder)
 	pool := p.DatabasePool
 	databaseEnvironmentConfig := &environmentConfig.DatabaseConfig
-	databaseHandleFactory := configsource.NewDatabaseHandleFactory(c, pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory)
+	databaseHandleFactory := configsource.NewDatabaseHandleFactory(pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory)
 	resolveAppIDType := configsource.NewResolveAppIDTypeDomain()
 	database := &configsource.Database{
-		Logger:                databaseLogger,
-		BaseResources:         manager,
-		TrustProxy:            trustProxy,
-		Config:                config,
-		Clock:                 clock,
-		StoreFactory:          storeFactory,
-		DatabaseHandleFactory: databaseHandleFactory,
-		DatabaseCredentials:   globalDatabaseCredentialsEnvironmentConfig,
-		DatabaseConfig:        databaseEnvironmentConfig,
-		ResolveAppIDType:      resolveAppIDType,
+		Logger:                   databaseLogger,
+		BaseResources:            manager,
+		TrustProxy:               trustProxy,
+		Config:                   config,
+		Clock:                    clock,
+		ConfigSourceStoreFactory: configSourceStoreFactory,
+		PlanStoreFactory:         planStoreFactory,
+		DatabaseHandleFactory:    databaseHandleFactory,
+		DatabaseCredentials:      globalDatabaseCredentialsEnvironmentConfig,
+		DatabaseConfig:           databaseEnvironmentConfig,
+		ResolveAppIDType:         resolveAppIDType,
 	}
 	controller := configsource.NewController(config, localFS, database)
 	return controller
@@ -105,7 +121,7 @@ var (
 	_wireSystemClockValue = clock.NewSystemClock()
 )
 
-func newAccountAnonymizationRunner(p *deps.BackgroundProvider, c context.Context, ctrl *configsource.Controller) *backgroundjob.Runner {
+func newAccountAnonymizationRunner(ctx context.Context, p *deps.BackgroundProvider, ctrl *configsource.Controller) *backgroundjob.Runner {
 	factory := p.LoggerFactory
 	pool := p.DatabasePool
 	environmentConfig := p.EnvironmentConfig
@@ -116,11 +132,11 @@ func newAccountAnonymizationRunner(p *deps.BackgroundProvider, c context.Context
 		BackgroundProvider: p,
 	}
 	runnableFactory := accountanonymization.NewRunnableFactory(pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory, clockClock, ctrl, accountAnonymizationServiceFactory)
-	runner := accountanonymization.NewRunner(factory, runnableFactory)
+	runner := accountanonymization.NewRunner(ctx, factory, runnableFactory)
 	return runner
 }
 
-func newAccountDeletionRunner(p *deps.BackgroundProvider, c context.Context, ctrl *configsource.Controller) *backgroundjob.Runner {
+func newAccountDeletionRunner(ctx context.Context, p *deps.BackgroundProvider, ctrl *configsource.Controller) *backgroundjob.Runner {
 	factory := p.LoggerFactory
 	pool := p.DatabasePool
 	environmentConfig := p.EnvironmentConfig
@@ -131,11 +147,11 @@ func newAccountDeletionRunner(p *deps.BackgroundProvider, c context.Context, ctr
 		BackgroundProvider: p,
 	}
 	runnableFactory := accountdeletion.NewRunnableFactory(pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory, clockClock, ctrl, accountDeletionServiceFactory)
-	runner := accountdeletion.NewRunner(factory, runnableFactory)
+	runner := accountdeletion.NewRunner(ctx, factory, runnableFactory)
 	return runner
 }
 
-func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID string, appContext *config.AppContext) *UserService {
+func newUserService(p *deps.BackgroundProvider, appID string, appContext *config.AppContext) *UserService {
 	pool := p.DatabasePool
 	environmentConfig := p.EnvironmentConfig
 	databaseEnvironmentConfig := &environmentConfig.DatabaseConfig
@@ -143,16 +159,17 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 	secretConfig := configConfig.SecretConfig
 	databaseCredentials := deps.ProvideDatabaseCredentials(secretConfig)
 	factory := p.LoggerFactory
-	handle := appdb.NewHandle(ctx, pool, databaseEnvironmentConfig, databaseCredentials, factory)
+	handle := appdb.NewHandle(pool, databaseEnvironmentConfig, databaseCredentials, factory)
 	appConfig := configConfig.AppConfig
 	configAppID := appConfig.ID
 	sqlBuilderApp := appdb.NewSQLBuilderApp(databaseCredentials, configAppID)
-	sqlExecutor := appdb.NewSQLExecutor(ctx, handle)
+	sqlExecutor := appdb.NewSQLExecutor(handle)
 	clockClock := _wireSystemClockValue
 	store := &user.Store{
 		SQLBuilder:  sqlBuilderApp,
 		SQLExecutor: sqlExecutor,
 		Clock:       clockClock,
+		AppID:       configAppID,
 	}
 	rawCommands := &user.RawCommands{
 		Store: store,
@@ -180,10 +197,12 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		SQLExecutor: sqlExecutor,
 	}
 	loginIDConfig := identityConfig.LoginID
+	uiConfig := appConfig.UI
 	manager := p.BaseResources
 	typeCheckerFactory := &loginid.TypeCheckerFactory{
-		Config:    loginIDConfig,
-		Resources: manager,
+		UIConfig:      uiConfig,
+		LoginIDConfig: loginIDConfig,
+		Resources:     manager,
 	}
 	checker := &loginid.Checker{
 		Config:             loginIDConfig,
@@ -235,9 +254,8 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 	redisCredentials := deps.ProvideRedisCredentials(secretConfig)
 	appredisHandle := appredis.NewHandle(redisPool, hub, redisEnvironmentConfig, redisCredentials, factory)
 	store2 := &passkey2.Store{
-		Context: ctx,
-		Redis:   appredisHandle,
-		AppID:   configAppID,
+		Redis: appredisHandle,
+		AppID: configAppID,
 	}
 	request := NewDummyHTTPRequest()
 	trustProxy := environmentConfig.TrustProxy
@@ -257,7 +275,6 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 	webAppCDNHost := environmentConfig.WebAppCDNHost
 	globalEmbeddedResourceManager := p.EmbeddedResources
 	staticAssetResolver := &web.StaticAssetResolver{
-		Context:           ctx,
 		Localization:      localizationConfig,
 		HTTPOrigin:        httpOrigin,
 		HTTPProto:         httpProto,
@@ -266,7 +283,6 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		EmbeddedResources: globalEmbeddedResourceManager,
 	}
 	translationService := &translation.Service{
-		Context:        ctx,
 		TemplateEngine: engine,
 		StaticAssets:   staticAssetResolver,
 	}
@@ -288,39 +304,21 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		SQLBuilder:  sqlBuilderApp,
 		SQLExecutor: sqlExecutor,
 	}
-	web3Config := appConfig.Web3
-	storeRedis := &siwe2.StoreRedis{
-		Context: ctx,
-		Redis:   appredisHandle,
-		AppID:   configAppID,
-		Clock:   clockClock,
-	}
-	ratelimitLogger := ratelimit.NewLogger(factory)
-	storageRedis := &ratelimit.StorageRedis{
-		AppID: configAppID,
-		Redis: appredisHandle,
-	}
-	rateLimitsFeatureConfig := featureConfig.RateLimits
-	limiter := &ratelimit.Limiter{
-		Logger:  ratelimitLogger,
-		Storage: storageRedis,
-		Config:  rateLimitsFeatureConfig,
-	}
-	siweLogger := siwe2.NewLogger(factory)
-	siweService := &siwe2.Service{
-		RemoteIP:             remoteIP,
-		HTTPOrigin:           httpOrigin,
-		Web3Config:           web3Config,
-		AuthenticationConfig: authenticationConfig,
-		Clock:                clockClock,
-		NonceStore:           storeRedis,
-		RateLimiter:          limiter,
-		Logger:               siweLogger,
-	}
 	siweProvider := &siwe.Provider{
 		Store: siweStore,
 		Clock: clockClock,
-		SIWE:  siweService,
+	}
+	ldapStore := &ldap.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	normalizer := &stdattrs.Normalizer{
+		LoginIDNormalizerFactory: normalizerFactory,
+	}
+	ldapProvider := &ldap.Provider{
+		Store:                        ldapStore,
+		Clock:                        clockClock,
+		StandardAttributesNormalizer: normalizer,
 	}
 	serviceService := &service.Service{
 		Authentication:        authenticationConfig,
@@ -333,6 +331,7 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		Biometric:             biometricProvider,
 		Passkey:               passkeyProvider,
 		SIWE:                  siweProvider,
+		LDAP:                  ldapProvider,
 	}
 	store3 := &service2.Store{
 		SQLBuilder:  sqlBuilderApp,
@@ -352,6 +351,7 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 	}
 	authenticatorFeatureConfig := featureConfig.Authenticator
 	passwordChecker := password.ProvideChecker(authenticatorPasswordConfig, authenticatorFeatureConfig, historyStore)
+	expiry := password.ProvideExpiry(authenticatorPasswordConfig, clockClock)
 	housekeeperLogger := password.NewHousekeeperLogger(factory)
 	housekeeper := &password.Housekeeper{
 		Store:  historyStore,
@@ -365,6 +365,7 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		Logger:          passwordLogger,
 		PasswordHistory: historyStore,
 		PasswordChecker: passwordChecker,
+		Expiry:          expiry,
 		Housekeeper:     housekeeper,
 	}
 	store4 := &passkey3.Store{
@@ -413,6 +414,15 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		Clock: clockClock,
 	}
 	otpLogger := otp.NewLogger(factory)
+	ratelimitLogger := ratelimit.NewLogger(factory)
+	storageRedis := ratelimit.NewAppStorageRedis(appredisHandle)
+	rateLimitsFeatureConfig := featureConfig.RateLimits
+	limiter := &ratelimit.Limiter{
+		Logger:  ratelimitLogger,
+		Storage: storageRedis,
+		AppID:   configAppID,
+		Config:  rateLimitsFeatureConfig,
+	}
 	otpService := &otp.Service{
 		Clock:                 clockClock,
 		AppID:                 configAppID,
@@ -469,12 +479,12 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		ClaimStore:        storePQ,
 	}
 	imagesCDNHost := environmentConfig.ImagesCDNHost
-	pictureTransformer := &stdattrs.PictureTransformer{
+	pictureTransformer := &stdattrs2.PictureTransformer{
 		HTTPProto:     httpProto,
 		HTTPHost:      httpHost,
 		ImagesCDNHost: imagesCDNHost,
 	}
-	serviceNoEvent := &stdattrs.ServiceNoEvent{
+	serviceNoEvent := &stdattrs2.ServiceNoEvent{
 		UserProfileConfig: userProfileConfig,
 		Identities:        serviceService,
 		UserQueries:       rawQueries,
@@ -487,12 +497,15 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		UserQueries: rawQueries,
 		UserStore:   store,
 	}
-	nftIndexerAPIEndpoint := environmentConfig.NFTIndexerAPIEndpoint
-	web3Service := &web3.Service{
-		APIEndpoint: nftIndexerAPIEndpoint,
-		Web3Config:  web3Config,
+	rolesgroupsStore := &rolesgroups.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+		Clock:       clockClock,
 	}
-	queries := &user.Queries{
+	queries := &rolesgroups.Queries{
+		Store: rolesgroupsStore,
+	}
+	userQueries := &user.Queries{
 		RawQueries:         rawQueries,
 		Store:              store,
 		Identities:         serviceService,
@@ -500,15 +513,17 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		Verification:       verificationService,
 		StandardAttributes: serviceNoEvent,
 		CustomAttributes:   customattrsServiceNoEvent,
-		Web3:               web3Service,
+		RolesAndGroups:     queries,
 	}
 	resolverImpl := &event.ResolverImpl{
-		Users: queries,
+		Users: userQueries,
 	}
 	hookLogger := hook.NewLogger(factory)
 	hookConfig := appConfig.Hook
+	webHookLogger := hook.NewWebHookLogger(factory)
 	webhookKeyMaterials := deps.ProvideWebhookKeyMaterials(secretConfig)
 	webHookImpl := hook.WebHookImpl{
+		Logger: webHookLogger,
 		Secret: webhookKeyMaterials,
 	}
 	syncHTTPClient := hook.NewSyncHTTPClient(hookConfig)
@@ -518,9 +533,10 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		SyncHTTP:    syncHTTPClient,
 		AsyncHTTP:   asyncHTTPClient,
 	}
+	denoHookLogger := hook.NewDenoHookLogger(factory)
 	denoHook := hook.DenoHook{
-		Context:         ctx,
 		ResourceManager: manager,
+		Logger:          denoHookLogger,
 	}
 	denoEndpoint := environmentConfig.DenoEndpoint
 	syncDenoClient := hook.NewSyncDenoClient(denoEndpoint, hookConfig, hookLogger)
@@ -530,6 +546,9 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		SyncDenoClient:  syncDenoClient,
 		AsyncDenoClient: asyncDenoClient,
 	}
+	commands := &rolesgroups.Commands{
+		Store: rolesgroupsStore,
+	}
 	sink := &hook.Sink{
 		Logger:             hookLogger,
 		Config:             hookConfig,
@@ -538,12 +557,13 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		EventDenoHook:      eventDenoHookImpl,
 		StandardAttributes: serviceNoEvent,
 		CustomAttributes:   customattrsServiceNoEvent,
+		RolesAndGroups:     commands,
 	}
 	auditLogger := audit.NewLogger(factory)
 	auditDatabaseCredentials := deps.ProvideAuditDatabaseCredentials(secretConfig)
-	writeHandle := auditdb.NewWriteHandle(ctx, pool, databaseEnvironmentConfig, auditDatabaseCredentials, factory)
+	writeHandle := auditdb.NewWriteHandle(pool, databaseEnvironmentConfig, auditDatabaseCredentials, factory)
 	auditdbSQLBuilderApp := auditdb.NewSQLBuilderApp(auditDatabaseCredentials, configAppID)
-	writeSQLExecutor := auditdb.NewWriteSQLExecutor(ctx, writeHandle)
+	writeSQLExecutor := auditdb.NewWriteSQLExecutor(writeHandle)
 	writeStore := &audit.WriteStore{
 		SQLBuilder:  auditdbSQLBuilderApp,
 		SQLExecutor: writeSQLExecutor,
@@ -553,25 +573,61 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		Database: writeHandle,
 		Store:    writeStore,
 	}
-	elasticsearchLogger := elasticsearch.NewLogger(factory)
+	sinkLogger := reindex.NewSinkLogger(factory)
+	searchConfig := appConfig.Search
+	reindexerLogger := reindex.NewReindexerLogger(factory)
+	userReindexProducer := redisqueue.NewUserReindexProducer(appredisHandle, clockClock)
+	sourceProvider := &reindex.SourceProvider{
+		AppID:           configAppID,
+		Users:           userQueries,
+		UserStore:       store,
+		IdentityService: serviceService,
+		RolesGroups:     rolesgroupsStore,
+	}
+	elasticsearchServiceLogger := elasticsearch.NewElasticsearchServiceLogger(factory)
 	elasticsearchCredentials := deps.ProvideElasticsearchCredentials(secretConfig)
 	client := elasticsearch.NewClient(elasticsearchCredentials)
-	noopTaskQueue := NewNoopTaskQueue()
-	elasticsearchService := elasticsearch.Service{
-		AppID:     configAppID,
-		Client:    client,
-		Users:     queries,
-		OAuth:     oauthStore,
-		LoginID:   loginidStore,
-		TaskQueue: noopTaskQueue,
+	elasticsearchService := &elasticsearch.Service{
+		Clock:           clockClock,
+		Database:        handle,
+		Logger:          elasticsearchServiceLogger,
+		AppID:           configAppID,
+		Client:          client,
+		Users:           userQueries,
+		UserStore:       store,
+		IdentityService: serviceService,
+		RolesGroups:     rolesgroupsStore,
 	}
-	elasticsearchSink := &elasticsearch.Sink{
-		Logger:   elasticsearchLogger,
-		Service:  elasticsearchService,
-		Database: handle,
+	appID2 := &appConfig.ID
+	searchDatabaseCredentials := deps.ProvideSearchDatabaseCredentials(secretConfig)
+	searchdbSQLBuilder := searchdb.NewSQLBuilder(searchDatabaseCredentials)
+	searchdbHandle := searchdb.NewHandle(pool, databaseEnvironmentConfig, searchDatabaseCredentials, factory)
+	searchdbSQLExecutor := searchdb.NewSQLExecutor(searchdbHandle)
+	pgsearchStore := pgsearch.NewStore(configAppID, searchdbSQLBuilder, searchdbSQLExecutor)
+	pgsearchService := &pgsearch.Service{
+		AppID:    appID2,
+		Store:    pgsearchStore,
+		Database: searchdbHandle,
 	}
-	eventService := event.NewService(ctx, configAppID, remoteIP, userAgentString, logger, handle, clockClock, localizationConfig, storeImpl, resolverImpl, sink, auditSink, elasticsearchSink)
-	commands := &user.Commands{
+	reindexer := &reindex.Reindexer{
+		AppID:                  configAppID,
+		SearchConfig:           searchConfig,
+		Clock:                  clockClock,
+		Database:               handle,
+		Logger:                 reindexerLogger,
+		UserStore:              store,
+		Producer:               userReindexProducer,
+		SourceProvider:         sourceProvider,
+		ElasticsearchReindexer: elasticsearchService,
+		PostgresqlReindexer:    pgsearchService,
+	}
+	reindexSink := &reindex.Sink{
+		Logger:    sinkLogger,
+		Reindexer: reindexer,
+		Database:  handle,
+	}
+	eventService := event.NewService(configAppID, remoteIP, userAgentString, logger, handle, clockClock, localizationConfig, storeImpl, resolverImpl, sink, auditSink, reindexSink)
+	userCommands := &user.Commands{
 		RawCommands:        rawCommands,
 		RawQueries:         rawQueries,
 		Events:             eventService,
@@ -579,11 +635,11 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		UserProfileConfig:  userProfileConfig,
 		StandardAttributes: serviceNoEvent,
 		CustomAttributes:   customattrsServiceNoEvent,
-		Web3:               web3Service,
+		RolesAndGroups:     queries,
 	}
 	userProvider := &user.Provider{
-		Commands: commands,
-		Queries:  queries,
+		Commands: userCommands,
+		Queries:  userQueries,
 	}
 	storeDeviceTokenRedis := &mfa.StoreDeviceTokenRedis{
 		Redis: appredisHandle,
@@ -608,7 +664,127 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		RateLimiter:   limiter,
 		Lockout:       mfaLockout,
 	}
-	stdattrsService := &stdattrs.Service{
+	messagingLogger := messaging.NewLogger(factory)
+	usageLogger := usage.NewLogger(factory)
+	usageLimiter := &usage.Limiter{
+		Logger: usageLogger,
+		Clock:  clockClock,
+		AppID:  configAppID,
+		Redis:  appredisHandle,
+	}
+	messagingConfig := appConfig.Messaging
+	messagingRateLimitsConfig := messagingConfig.RateLimits
+	messagingFeatureConfig := featureConfig.Messaging
+	rateLimitsEnvironmentConfig := &environmentConfig.RateLimits
+	limits := messaging.Limits{
+		Logger:        messagingLogger,
+		RateLimiter:   limiter,
+		UsageLimiter:  usageLimiter,
+		RemoteIP:      remoteIP,
+		Config:        messagingRateLimitsConfig,
+		FeatureConfig: messagingFeatureConfig,
+		EnvConfig:     rateLimitsEnvironmentConfig,
+	}
+	mailLogger := mail.NewLogger(factory)
+	smtpServerCredentials := deps.ProvideSMTPServerCredentials(secretConfig)
+	dialer := mail.NewGomailDialer(smtpServerCredentials)
+	sender := &mail.Sender{
+		Logger:       mailLogger,
+		GomailDialer: dialer,
+	}
+	smsLogger := sms.NewLogger(factory)
+	smsProvider := messagingConfig.SMSProvider
+	smsGatewayConfig := messagingConfig.SMSGateway
+	nexmoCredentials := deps.ProvideNexmoCredentials(secretConfig)
+	twilioCredentials := deps.ProvideTwilioCredentials(secretConfig)
+	customSMSProviderConfig := deps.ProvideCustomSMSProviderConfig(secretConfig)
+	smsGatewayEnvironmentConfig := &environmentConfig.SMSGatewayConfig
+	smsGatewayEnvironmentDefaultConfig := &smsGatewayEnvironmentConfig.Default
+	smsGatewayEnvironmentDefaultProvider := smsGatewayEnvironmentDefaultConfig.Provider
+	smsGatewayEnvironmentDefaultUseConfigFrom := smsGatewayEnvironmentDefaultConfig.UseConfigFrom
+	smsGatewayEnvironmentNexmoCredentials := smsGatewayEnvironmentConfig.Nexmo
+	smsGatewayEnvironmentTwilioCredentials := smsGatewayEnvironmentConfig.Twilio
+	smsGatewayEnvironmentCustomSMSProviderConfig := smsGatewayEnvironmentConfig.Custom
+	smsHookTimeout := custom.NewSMSHookTimeout(customSMSProviderConfig)
+	hookDenoClient := custom.NewHookDenoClient(denoEndpoint, hookLogger, smsHookTimeout)
+	smsDenoHook := custom.SMSDenoHook{
+		DenoHook: denoHook,
+		Client:   hookDenoClient,
+	}
+	hookWebHookImpl := &hook.WebHookImpl{
+		Logger: webHookLogger,
+		Secret: webhookKeyMaterials,
+	}
+	hookHTTPClient := custom.NewHookHTTPClient(smsHookTimeout)
+	smsWebHook := custom.SMSWebHook{
+		WebHook: hookWebHookImpl,
+		Client:  hookHTTPClient,
+	}
+	clientResolver := &sms.ClientResolver{
+		AuthgearYAMLSMSProvider:                    smsProvider,
+		AuthgearYAMLSMSGateway:                     smsGatewayConfig,
+		AuthgearSecretsYAMLNexmoCredentials:        nexmoCredentials,
+		AuthgearSecretsYAMLTwilioCredentials:       twilioCredentials,
+		AuthgearSecretsYAMLCustomSMSProviderConfig: customSMSProviderConfig,
+		EnvironmentDefaultProvider:                 smsGatewayEnvironmentDefaultProvider,
+		EnvironmentDefaultUseConfigFrom:            smsGatewayEnvironmentDefaultUseConfigFrom,
+		EnvironmentNexmoCredentials:                smsGatewayEnvironmentNexmoCredentials,
+		EnvironmentTwilioCredentials:               smsGatewayEnvironmentTwilioCredentials,
+		EnvironmentCustomSMSProviderConfig:         smsGatewayEnvironmentCustomSMSProviderConfig,
+		SMSDenoHook:                                smsDenoHook,
+		SMSWebHook:                                 smsWebHook,
+	}
+	smsSender := &sms.Sender{
+		Logger:         smsLogger,
+		ClientResolver: clientResolver,
+	}
+	serviceLogger := whatsapp.NewServiceLogger(factory)
+	whatsappConfig := messagingConfig.Whatsapp
+	whatsappOnPremisesCredentials := deps.ProvideWhatsappOnPremisesCredentials(secretConfig)
+	tokenStore := &whatsapp.TokenStore{
+		Redis: appredisHandle,
+		AppID: configAppID,
+		Clock: clockClock,
+	}
+	httpClient := whatsapp.NewHTTPClient()
+	onPremisesClient := whatsapp.NewWhatsappOnPremisesClient(factory, whatsappConfig, whatsappOnPremisesCredentials, tokenStore, httpClient)
+	whatsappService := &whatsapp.Service{
+		Logger:             serviceLogger,
+		WhatsappConfig:     whatsappConfig,
+		LocalizationConfig: localizationConfig,
+		OnPremisesClient:   onPremisesClient,
+	}
+	devMode := environmentConfig.DevMode
+	featureTestModeEmailSuppressed := deps.ProvideTestModeEmailSuppressed(testModeFeatureConfig)
+	testModeEmailConfig := testModeConfig.Email
+	featureTestModeSMSSuppressed := deps.ProvideTestModeSMSSuppressed(testModeFeatureConfig)
+	testModeSMSConfig := testModeConfig.SMS
+	featureTestModeWhatsappSuppressed := deps.ProvideTestModeWhatsappSuppressed(testModeFeatureConfig)
+	testModeWhatsappConfig := testModeConfig.Whatsapp
+	messagingSender := &messaging.Sender{
+		Logger:                            messagingLogger,
+		Limits:                            limits,
+		Events:                            eventService,
+		MailSender:                        sender,
+		SMSSender:                         smsSender,
+		WhatsappSender:                    whatsappService,
+		Database:                          handle,
+		DevMode:                           devMode,
+		MessagingFeatureConfig:            messagingFeatureConfig,
+		FeatureTestModeEmailSuppressed:    featureTestModeEmailSuppressed,
+		TestModeEmailConfig:               testModeEmailConfig,
+		FeatureTestModeSMSSuppressed:      featureTestModeSMSSuppressed,
+		TestModeSMSConfig:                 testModeSMSConfig,
+		FeatureTestModeWhatsappSuppressed: featureTestModeWhatsappSuppressed,
+		TestModeWhatsappConfig:            testModeWhatsappConfig,
+	}
+	forgotpasswordSender := &forgotpassword.Sender{
+		AppConfg:    appConfig,
+		Identities:  serviceService,
+		Sender:      messagingSender,
+		Translation: translationService,
+	}
+	stdattrsService := &stdattrs2.Service{
 		UserProfileConfig: userProfileConfig,
 		ServiceNoEvent:    serviceNoEvent,
 		Identities:        serviceService,
@@ -621,7 +797,7 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		SQLExecutor: sqlExecutor,
 	}
 	storeRedisLogger := idpsession.NewStoreRedisLogger(factory)
-	idpsessionStoreRedis := &idpsession.StoreRedis{
+	storeRedis := &idpsession.StoreRedis{
 		Redis:  appredisHandle,
 		AppID:  configAppID,
 		Clock:  clockClock,
@@ -632,14 +808,13 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 	cookieManager := deps.NewCookieManager(request, trustProxy, httpConfig)
 	cookieDef := session.NewSessionCookieDef(sessionConfig)
 	idpsessionManager := &idpsession.Manager{
-		Store:     idpsessionStoreRedis,
+		Store:     storeRedis,
 		Config:    sessionConfig,
 		Cookies:   cookieManager,
 		CookieDef: cookieDef,
 	}
 	redisLogger := redis.NewLogger(factory)
 	redisStore := &redis.Store{
-		Context:     ctx,
 		Redis:       appredisHandle,
 		AppID:       configAppID,
 		Logger:      redisLogger,
@@ -655,23 +830,43 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 	eventProvider := &access.EventProvider{
 		Store: eventStoreRedis,
 	}
+	analyticRedisCredentials := deps.ProvideAnalyticRedisCredentials(secretConfig)
+	analyticredisHandle := analyticredis.NewHandle(redisPool, redisEnvironmentConfig, analyticRedisCredentials, factory)
+	meterStoreRedisLogger := meter.NewStoreRedisLogger(factory)
+	writeStoreRedis := &meter.WriteStoreRedis{
+		Redis:  analyticredisHandle,
+		AppID:  configAppID,
+		Clock:  clockClock,
+		Logger: meterStoreRedisLogger,
+	}
+	meterService := &meter.Service{
+		Counter: writeStoreRedis,
+	}
 	rand := _wireRandValue
 	idpsessionProvider := &idpsession.Provider{
-		Context:         ctx,
 		RemoteIP:        remoteIP,
 		UserAgentString: userAgentString,
 		AppID:           configAppID,
 		Redis:           appredisHandle,
-		Store:           idpsessionStoreRedis,
+		Store:           storeRedis,
 		AccessEvents:    eventProvider,
+		MeterService:    meterService,
 		TrustProxy:      trustProxy,
 		Config:          sessionConfig,
 		Clock:           clockClock,
 		Random:          rand,
 	}
+	globalUIImplementation := environmentConfig.UIImplementation
+	globalUISettingsImplementation := environmentConfig.UISettingsImplementation
+	uiImplementationService := &web.UIImplementationService{
+		UIConfig:                       uiConfig,
+		GlobalUIImplementation:         globalUIImplementation,
+		GlobalUISettingsImplementation: globalUISettingsImplementation,
+	}
 	endpointsEndpoints := &endpoints.Endpoints{
-		HTTPHost:  httpHost,
-		HTTPProto: httpProto,
+		HTTPHost:                httpHost,
+		HTTPProto:               httpProto,
+		UIImplementationService: uiImplementationService,
 	}
 	oauthclientResolver := &oauthclient.Resolver{
 		OAuthConfig:     oAuthConfig,
@@ -682,6 +877,9 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		Clock:          clockClock,
 		IDPSessions:    idpsessionProvider,
 		ClientResolver: oauthclientResolver,
+		AccessEvents:   eventProvider,
+		MeterService:   meterService,
+		OfflineGrants:  redisStore,
 	}
 	sessionManager := &oauth2.SessionManager{
 		Store:   redisStore,
@@ -690,14 +888,24 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 	}
 	accountDeletionConfig := appConfig.AccountDeletion
 	accountAnonymizationConfig := appConfig.AccountAnonymization
+	maxTrials := _wireMaxTrialsValue
+	passwordRand := password.NewRandSource()
+	generator := &password.Generator{
+		MaxTrials:      maxTrials,
+		Checker:        passwordChecker,
+		Rand:           passwordRand,
+		PasswordConfig: authenticatorPasswordConfig,
+	}
 	coordinator := &facade.Coordinator{
 		Events:                     eventService,
 		Identities:                 serviceService,
 		Authenticators:             service3,
 		Verification:               verificationService,
 		MFA:                        mfaService,
-		UserCommands:               commands,
-		UserQueries:                queries,
+		SendPassword:               forgotpasswordSender,
+		UserCommands:               userCommands,
+		UserQueries:                userQueries,
+		RolesGroupsCommands:        commands,
 		StdAttrsService:            stdattrsService,
 		PasswordHistory:            historyStore,
 		OAuth:                      authorizationStore,
@@ -706,7 +914,9 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 		IdentityConfig:             identityConfig,
 		AccountDeletionConfig:      accountDeletionConfig,
 		AccountAnonymizationConfig: accountAnonymizationConfig,
+		AuthenticationConfig:       authenticationConfig,
 		Clock:                      clockClock,
+		PasswordGenerator:          generator,
 	}
 	userFacade := &facade.UserFacade{
 		UserProvider: userProvider,
@@ -720,5 +930,6 @@ func newUserService(ctx context.Context, p *deps.BackgroundProvider, appID strin
 }
 
 var (
-	_wireRandValue = idpsession.Rand(rand.SecureRand)
+	_wireRandValue      = idpsession.Rand(rand.SecureRand)
+	_wireMaxTrialsValue = password.DefaultMaxTrials
 )

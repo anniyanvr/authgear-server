@@ -9,38 +9,28 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/loginid"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/deps"
-	"github.com/authgear/authgear-server/pkg/lib/endpoints"
 	"github.com/authgear/authgear-server/pkg/lib/event"
 	"github.com/authgear/authgear-server/pkg/lib/facade"
-	"github.com/authgear/authgear-server/pkg/lib/oauth"
-	"github.com/authgear/authgear-server/pkg/lib/oauthclient"
-	"github.com/authgear/authgear-server/pkg/lib/tester"
 
 	"github.com/authgear/authgear-server/pkg/lib/feature/accountanonymization"
 	"github.com/authgear/authgear-server/pkg/lib/feature/accountdeletion"
 	"github.com/authgear/authgear-server/pkg/lib/hook"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/auditdb"
+	"github.com/authgear/authgear-server/pkg/lib/infra/db/searchdb"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis/analyticredis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/appredis"
-	"github.com/authgear/authgear-server/pkg/lib/infra/task"
 	"github.com/authgear/authgear-server/pkg/lib/web"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
 	"github.com/authgear/authgear-server/pkg/util/resource"
 	"github.com/authgear/authgear-server/pkg/util/template"
 )
 
-type NoopTaskQueue struct{}
-
-func (NoopTaskQueue) Enqueue(taskParam task.Param) {}
-
-func NewNoopTaskQueue() NoopTaskQueue {
-	return NoopTaskQueue{}
-}
-
 // This dummy HTTP request is only used for get/set cookie
 // which does not have any effect at all.
 func NewDummyHTTPRequest() *http.Request {
-	r, _ := http.NewRequest("", "", nil)
+	ctx := contextForDummyHTTPRequest
+	r, _ := http.NewRequestWithContext(ctx, "", "", nil)
 	return r
 }
 
@@ -64,21 +54,21 @@ type AccountDeletionServiceFactory struct {
 	BackgroundProvider *deps.BackgroundProvider
 }
 
-func (f *AccountDeletionServiceFactory) MakeUserService(ctx context.Context, appID string, appContext *config.AppContext) accountdeletion.UserService {
-	return newUserService(ctx, f.BackgroundProvider, appID, appContext)
+func (f *AccountDeletionServiceFactory) MakeUserService(appID string, appContext *config.AppContext) accountdeletion.UserService {
+	return newUserService(f.BackgroundProvider, appID, appContext)
 }
 
 type AccountAnonymizationServiceFactory struct {
 	BackgroundProvider *deps.BackgroundProvider
 }
 
-func (f *AccountAnonymizationServiceFactory) MakeUserService(ctx context.Context, appID string, appContext *config.AppContext) accountanonymization.UserService {
-	return newUserService(ctx, f.BackgroundProvider, appID, appContext)
+func (f *AccountAnonymizationServiceFactory) MakeUserService(appID string, appContext *config.AppContext) accountanonymization.UserService {
+	return newUserService(f.BackgroundProvider, appID, appContext)
 }
 
 type UserFacade interface {
-	DeleteFromScheduledDeletion(userID string) error
-	AnonymizeFromScheduledAnonymization(userID string) error
+	DeleteFromScheduledDeletion(ctx context.Context, userID string) error
+	AnonymizeFromScheduledAnonymization(ctx context.Context, userID string) error
 }
 
 type UserService struct {
@@ -86,15 +76,15 @@ type UserService struct {
 	UserFacade  UserFacade
 }
 
-func (s *UserService) DeleteFromScheduledDeletion(userID string) (err error) {
-	return s.AppDBHandle.WithTx(func() error {
-		return s.UserFacade.DeleteFromScheduledDeletion(userID)
+func (s *UserService) DeleteFromScheduledDeletion(ctx context.Context, userID string) (err error) {
+	return s.AppDBHandle.WithTx(ctx, func(ctx context.Context) error {
+		return s.UserFacade.DeleteFromScheduledDeletion(ctx, userID)
 	})
 }
 
-func (s *UserService) AnonymizeFromScheduledAnonymization(userID string) (err error) {
-	return s.AppDBHandle.WithTx(func() error {
-		return s.UserFacade.AnonymizeFromScheduledAnonymization(userID)
+func (s *UserService) AnonymizeFromScheduledAnonymization(ctx context.Context, userID string) (err error) {
+	return s.AppDBHandle.WithTx(ctx, func(ctx context.Context) error {
+		return s.UserFacade.AnonymizeFromScheduledAnonymization(ctx, userID)
 	})
 }
 
@@ -104,10 +94,11 @@ var DependencySet = wire.NewSet(
 	deps.CommonDependencySet,
 
 	appdb.NewHandle,
+	searchdb.NewHandle,
 	appredis.NewHandle,
+	analyticredis.NewHandle,
 	auditdb.NewReadHandle,
 	auditdb.NewWriteHandle,
-	NewNoopTaskQueue,
 	NewDummyHTTPRequest,
 	ProvideRemoteIP,
 	ProvideUserAgentString,
@@ -119,16 +110,10 @@ var DependencySet = wire.NewSet(
 	wire.Bind(new(UserFacade), new(*facade.UserFacade)),
 	wire.Bind(new(accountdeletion.UserServiceFactory), new(*AccountDeletionServiceFactory)),
 	wire.Bind(new(accountanonymization.UserServiceFactory), new(*AccountAnonymizationServiceFactory)),
-	wire.Bind(new(task.Queue), new(NoopTaskQueue)),
 	wire.Bind(new(event.Database), new(*appdb.Handle)),
 	wire.Bind(new(template.ResourceManager), new(*resource.Manager)),
 	wire.Bind(new(loginid.ResourceManager), new(*resource.Manager)),
 	wire.Bind(new(web.ResourceManager), new(*resource.Manager)),
 	wire.Bind(new(hook.ResourceManager), new(*resource.Manager)),
 	wire.Bind(new(web.EmbeddedResourceManager), new(*web.GlobalEmbeddedResourceManager)),
-
-	endpoints.DependencySet,
-	wire.Bind(new(tester.EndpointsProvider), new(*endpoints.Endpoints)),
-
-	wire.Bind(new(oauth.OAuthClientResolver), new(*oauthclient.Resolver)),
 )

@@ -1,8 +1,9 @@
 package graphql
 
 import (
-	"github.com/authgear/authgear-server/pkg/portal/model"
 	"github.com/graphql-go/graphql"
+
+	"github.com/authgear/authgear-server/pkg/portal/model"
 )
 
 var priceType = graphql.NewEnum(graphql.EnumConfig{
@@ -13,54 +14,6 @@ var priceType = graphql.NewEnum(graphql.EnumConfig{
 		},
 		"USAGE": &graphql.EnumValueConfig{
 			Value: model.PriceTypeUsage,
-		},
-	},
-})
-
-var usageType = graphql.NewEnum(graphql.EnumConfig{
-	Name: "SubscriptionItemPriceUsageType",
-	Values: graphql.EnumValueConfigMap{
-		"NONE": &graphql.EnumValueConfig{
-			Value: model.UsageTypeNone,
-		},
-		"SMS": &graphql.EnumValueConfig{
-			Value: model.UsageTypeSMS,
-		},
-		"WHATSAPP": &graphql.EnumValueConfig{
-			Value: model.UsageTypeWhatsapp,
-		},
-		"MAU": &graphql.EnumValueConfig{
-			Value: model.UsageTypeMAU,
-		},
-	},
-})
-
-var smsRegion = graphql.NewEnum(graphql.EnumConfig{
-	Name: "SubscriptionItemPriceSMSRegion",
-	Values: graphql.EnumValueConfigMap{
-		"NONE": &graphql.EnumValueConfig{
-			Value: model.SMSRegionNone,
-		},
-		"NORTH_AMERICA": &graphql.EnumValueConfig{
-			Value: model.SMSRegionNorthAmerica,
-		},
-		"OTHER_REGIONS": &graphql.EnumValueConfig{
-			Value: model.SMSRegionOtherRegions,
-		},
-	},
-})
-
-var whatsappRegion = graphql.NewEnum(graphql.EnumConfig{
-	Name: "SubscriptionItemPriceWhatsappRegion",
-	Values: graphql.EnumValueConfigMap{
-		"NONE": &graphql.EnumValueConfig{
-			Value: model.WhatsappRegionNone,
-		},
-		"NORTH_AMERICA": &graphql.EnumValueConfig{
-			Value: model.WhatsappRegionNorthAmerica,
-		},
-		"OTHER_REGIONS": &graphql.EnumValueConfig{
-			Value: model.WhatsappRegionOtherRegions,
 		},
 	},
 })
@@ -132,7 +85,7 @@ var subscriptionUsage = graphql.NewObject(graphql.ObjectConfig{
 			Type: graphql.NewNonNull(graphql.DateTime),
 		},
 		"items": &graphql.Field{
-			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(usageItem))),
+			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(subscriptionUsageItem))),
 		},
 	},
 })
@@ -148,7 +101,7 @@ var subscription = graphql.NewObject(graphql.ObjectConfig{
 	},
 })
 
-var usageItem = graphql.NewObject(graphql.ObjectConfig{
+var subscriptionUsageItem = graphql.NewObject(graphql.ObjectConfig{
 	Name: "SubscriptionUsageItem",
 	Fields: graphql.Fields{
 		"type": &graphql.Field{

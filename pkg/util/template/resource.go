@@ -10,6 +10,8 @@ import (
 	"regexp"
 	texttemplate "text/template"
 
+	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
 	"github.com/authgear/authgear-server/pkg/util/intl"
 	"github.com/authgear/authgear-server/pkg/util/intlresource"
 	"github.com/authgear/authgear-server/pkg/util/resource"
@@ -19,7 +21,18 @@ type Resource interface {
 	templateResource()
 }
 
-// HTML defines a HTML template
+func isTemplateUpdateAllowed(ctx context.Context) (bool, error) {
+	fc, ok := ctx.Value(configsource.ContextKeyFeatureConfig).(*config.FeatureConfig)
+	if !ok || fc == nil {
+		return false, ErrMissingFeatureFlagInCtx
+	}
+	if *fc.Messaging.TemplateCustomizationDisabled {
+		return false, ErrUpdateDisallowed
+	}
+	return true, nil
+}
+
+// HTML defines a HTML template that is non-customizable
 type HTML struct {
 	// Name is the name of template
 	Name string
@@ -27,30 +40,64 @@ type HTML struct {
 	ComponentDependencies []*HTML
 }
 
-var _ resource.Descriptor = &HTML{}
+// MessageHTML defines a HTML template that is customizable
+type MessageHTML struct {
+	// Name is the name of template
+	Name string
+}
 
-func (t *HTML) templateResource() {}
+var _ resource.Descriptor = &HTML{}
+var _ resource.Descriptor = &MessageHTML{}
+
+func (t *HTML) templateResource()        {}
+func (t *MessageHTML) templateResource() {}
 
 func (t *HTML) MatchResource(path string) (*resource.Match, bool) {
 	return matchTemplatePath(path, t.Name)
 }
 
+func (t *MessageHTML) MatchResource(path string) (*resource.Match, bool) {
+	return matchTemplatePath(path, t.Name)
+}
+
 func (t *HTML) FindResources(fs resource.Fs) ([]resource.Location, error) {
+	// Exclude App Fs
+	if fs.GetFsLevel() == resource.FsLevelApp {
+		return []resource.Location{}, nil
+	}
+	return readTemplates(fs, t.Name)
+}
+
+func (t *MessageHTML) FindResources(fs resource.Fs) ([]resource.Location, error) {
+	// Any Fs
 	return readTemplates(fs, t.Name)
 }
 
 func (t *HTML) ViewResources(resources []resource.ResourceFile, view resource.View) (interface{}, error) {
-	return viewHTMLTemplates(t.Name, resources, view)
+	skipValidate := true
+	return viewHTMLTemplates(t.Name, resources, view, skipValidate)
+}
+
+func (t *MessageHTML) ViewResources(resources []resource.ResourceFile, view resource.View) (interface{}, error) {
+	skipValidate := false
+	return viewHTMLTemplates(t.Name, resources, view, skipValidate)
 }
 
 func (t *HTML) UpdateResource(_ context.Context, _ []resource.ResourceFile, resrc *resource.ResourceFile, data []byte) (*resource.ResourceFile, error) {
+	return nil, fmt.Errorf("HTML resource cannot be updated. Use MessageHTML resource instead.")
+}
+
+func (t *MessageHTML) UpdateResource(ctx context.Context, _ []resource.ResourceFile, resrc *resource.ResourceFile, data []byte) (*resource.ResourceFile, error) {
+	if isAllowed, err := isTemplateUpdateAllowed(ctx); !isAllowed || err != nil {
+		return nil, err
+	}
 	return &resource.ResourceFile{
 		Location: resrc.Location,
 		Data:     data,
 	}, nil
 }
 
-// PlainText defines a plain text template
+// PlainText defines a plain text template that is non-customizable
 type PlainText struct {
 	// Name is the name of template
 	Name string
@@ -58,11 +105,23 @@ type PlainText struct {
 	ComponentDependencies []*PlainText
 }
 
-var _ resource.Descriptor = &PlainText{}
+// MessagePlainText defines a plain text template that is customizable
+type MessagePlainText struct {
+	// Name is the name of template
+	Name string
+}
 
-func (t *PlainText) templateResource() {}
+var _ resource.Descriptor = &PlainText{}
+var _ resource.Descriptor = &MessagePlainText{}
+
+func (t *PlainText) templateResource()        {}
+func (t *MessagePlainText) templateResource() {}
 
 func (t *PlainText) MatchResource(path string) (*resource.Match, bool) {
+	return matchTemplatePath(path, t.Name)
+}
+
+func (t *MessagePlainText) MatchResource(path string) (*resource.Match, bool) {
 	return matchTemplatePath(path, t.Name)
 }
 
@@ -70,11 +129,31 @@ func (t *PlainText) FindResources(fs resource.Fs) ([]resource.Location, error) {
 	return readTemplates(fs, t.Name)
 }
 
+func (t *MessagePlainText) FindResources(fs resource.Fs) ([]resource.Location, error) {
+	return readTemplates(fs, t.Name)
+}
+
 func (t *PlainText) ViewResources(resources []resource.ResourceFile, view resource.View) (interface{}, error) {
-	return viewTextTemplates(t.Name, resources, view)
+	skipValidate := true
+	return viewTextTemplates(t.Name, resources, view, skipValidate)
+}
+
+func (t *MessagePlainText) ViewResources(resources []resource.ResourceFile, view resource.View) (interface{}, error) {
+	skipValidate := false
+	return viewTextTemplates(t.Name, resources, view, skipValidate)
 }
 
 func (t *PlainText) UpdateResource(_ context.Context, _ []resource.ResourceFile, resrc *resource.ResourceFile, data []byte) (*resource.ResourceFile, error) {
+	return &resource.ResourceFile{
+		Location: resrc.Location,
+		Data:     data,
+	}, nil
+}
+
+func (t *MessagePlainText) UpdateResource(ctx context.Context, _ []resource.ResourceFile, resrc *resource.ResourceFile, data []byte) (*resource.ResourceFile, error) {
+	if isAllowed, err := isTemplateUpdateAllowed(ctx); !isAllowed || err != nil {
+		return nil, err
+	}
 	return &resource.ResourceFile{
 		Location: resrc.Location,
 		Data:     data,
@@ -87,8 +166,20 @@ func RegisterHTML(name string, dependencies ...*HTML) *HTML {
 	return desc
 }
 
+func RegisterMessageHTML(name string) *MessageHTML {
+	desc := &MessageHTML{Name: name}
+	resource.RegisterResource(desc)
+	return desc
+}
+
 func RegisterPlainText(name string, dependencies ...*PlainText) *PlainText {
 	desc := &PlainText{Name: name, ComponentDependencies: dependencies}
+	resource.RegisterResource(desc)
+	return desc
+}
+
+func RegisterMessagePlainText(name string) *MessagePlainText {
+	desc := &MessagePlainText{Name: name}
 	resource.RegisterResource(desc)
 	return desc
 }
@@ -160,19 +251,6 @@ func (t languageTemplate) GetLanguageTag() string {
 
 var templateLanguageTagRegex = regexp.MustCompile("^templates/([a-zA-Z0-9-_]+)/")
 
-func viewTemplates(resources []resource.ResourceFile, rawView resource.View) (interface{}, error) {
-	switch view := rawView.(type) {
-	case resource.AppFileView:
-		return viewTemplatesAppFile(resources, view)
-	case resource.EffectiveFileView:
-		return viewTemplatesEffectiveFile(resources, view)
-	case resource.EffectiveResourceView:
-		return viewTemplatesEffectiveResource(resources, view)
-	default:
-		return nil, fmt.Errorf("unsupported view: %T", rawView)
-	}
-}
-
 func viewTemplatesAppFile(resources []resource.ResourceFile, view resource.AppFileView) (interface{}, error) {
 	// When template is viewed as AppFile,
 	// the exact file is returned.
@@ -222,7 +300,7 @@ func viewTemplatesEffectiveFile(resources []resource.ResourceFile, view resource
 	return bytes, nil
 }
 
-func viewTemplatesEffectiveResource(resources []resource.ResourceFile, view resource.EffectiveResourceView) (interface{}, error) {
+func viewTemplatesEffectiveResource(resources []resource.ResourceFile, view resource.EffectiveResourceView) (*languageTemplate, error) {
 	preferredLanguageTags := view.PreferredLanguageTags()
 	defaultLanguageTag := view.DefaultLanguageTag()
 
@@ -264,41 +342,54 @@ func viewTemplatesEffectiveResource(resources []resource.ResourceFile, view reso
 	}
 
 	tagger := matched.(languageTemplate)
-	return tagger.data, nil
+	return &tagger, nil
 }
 
-func viewHTMLTemplates(name string, resources []resource.ResourceFile, view resource.View) (interface{}, error) {
-
-	switch view.(type) {
+func viewHTMLTemplates(name string, resources []resource.ResourceFile, rawView resource.View, skipValidate bool) (interface{}, error) {
+	switch view := rawView.(type) {
 	case resource.AppFileView:
-		bytes, err := viewTemplates(resources, view)
+		bytes, err := viewTemplatesAppFile(resources, view)
 		if err != nil {
 			return nil, err
 		}
 		return bytes, nil
 	case resource.EffectiveFileView:
-		bytes, err := viewTemplates(resources, view)
+		bytes, err := viewTemplatesEffectiveFile(resources, view)
 		if err != nil {
 			return nil, err
 		}
 		return bytes, nil
 	case resource.EffectiveResourceView:
-		bytes, err := viewTemplates(resources, view)
+		templatesEffectiveResource, err := viewTemplatesEffectiveResource(resources, view)
 		if err != nil {
 			return nil, err
 		}
 		tpl := htmltemplate.New(name)
-		tpl.Funcs(DefaultFuncMap)
-		_, err = tpl.Parse(string(bytes.([]byte)))
+		funcMap := MakeTemplateFuncMap(tpl)
+		tpl.Funcs(funcMap)
+		_, err = tpl.Parse(string(templatesEffectiveResource.data))
 		if err != nil {
 			return nil, fmt.Errorf("invalid HTML template: %w", err)
 		}
-		return tpl, nil
+		return &HTMLTemplateEffectiveResource{
+			Data:        templatesEffectiveResource.data,
+			LanguageTag: templatesEffectiveResource.languageTag,
+			Template:    tpl,
+		}, nil
 	case resource.ValidateResourceView:
+		if skipValidate {
+			return nil, nil
+		}
+
 		for _, resrc := range resources {
 			tpl := htmltemplate.New(name)
-			tpl.Funcs(DefaultFuncMap)
-			_, err := tpl.Parse(string(resrc.Data))
+			funcMap := MakeTemplateFuncMap(tpl)
+			tpl.Funcs(funcMap)
+			template, err := tpl.Parse(string(resrc.Data))
+			if err != nil {
+				return nil, fmt.Errorf("invalid HTML template: %w", err)
+			}
+			err = templateValidator.ValidateHTMLTemplate(template)
 			if err != nil {
 				return nil, fmt.Errorf("invalid HTML template: %w", err)
 			}
@@ -310,38 +401,51 @@ func viewHTMLTemplates(name string, resources []resource.ResourceFile, view reso
 
 }
 
-func viewTextTemplates(name string, resources []resource.ResourceFile, view resource.View) (interface{}, error) {
-
-	switch view.(type) {
+func viewTextTemplates(name string, resources []resource.ResourceFile, rawView resource.View, skipValidate bool) (interface{}, error) {
+	switch view := rawView.(type) {
 	case resource.AppFileView:
-		bytes, err := viewTemplates(resources, view)
+		bytes, err := viewTemplatesAppFile(resources, view)
 		if err != nil {
 			return nil, err
 		}
 		return bytes, nil
 	case resource.EffectiveFileView:
-		bytes, err := viewTemplates(resources, view)
+		bytes, err := viewTemplatesEffectiveFile(resources, view)
 		if err != nil {
 			return nil, err
 		}
 		return bytes, nil
 	case resource.EffectiveResourceView:
-		bytes, err := viewTemplates(resources, view)
+		templatesEffectiveResource, err := viewTemplatesEffectiveResource(resources, view)
 		if err != nil {
 			return nil, err
 		}
 		tpl := texttemplate.New(name)
-		tpl.Funcs(DefaultFuncMap)
-		_, err = tpl.Parse(string(bytes.([]byte)))
+		funcMap := MakeTemplateFuncMap(tpl)
+		tpl.Funcs(funcMap)
+		_, err = tpl.Parse(string(templatesEffectiveResource.data))
 		if err != nil {
-			return nil, fmt.Errorf("invalid text template: %w", err)
+			return nil, fmt.Errorf("invalid HTML template: %w", err)
 		}
-		return tpl, nil
+		return &TextTemplateEffectiveResource{
+			Data:        templatesEffectiveResource.data,
+			LanguageTag: templatesEffectiveResource.languageTag,
+			Template:    tpl,
+		}, nil
 	case resource.ValidateResourceView:
+		if skipValidate {
+			return nil, nil
+		}
+
 		for _, resrc := range resources {
 			tpl := texttemplate.New(name)
-			tpl.Funcs(DefaultFuncMap)
-			_, err := tpl.Parse(string(resrc.Data))
+			funcMap := MakeTemplateFuncMap(tpl)
+			tpl.Funcs(funcMap)
+			template, err := tpl.Parse(string(resrc.Data))
+			if err != nil {
+				return nil, fmt.Errorf("invalid text template: %w", err)
+			}
+			err = templateValidator.ValidateTextTemplate(template)
 			if err != nil {
 				return nil, fmt.Errorf("invalid text template: %w", err)
 			}

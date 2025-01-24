@@ -1,0 +1,43 @@
+@font-face {
+  font-family: "material-icons";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./material-symbols-outlined-subset.woff2") format("woff2"),
+    url("./material-symbols-outlined-subset.ttf") format("truetype");
+}
+
+@layer utilities {
+  .material-icons {
+    font-family: "material-icons";
+    font-weight: 400;
+    font-style: normal;
+    display: inline-block;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: normal;
+    word-wrap: normal;
+    white-space: nowrap;
+    direction: ltr;
+
+    /* Support for all WebKit browsers. */
+    -webkit-font-smoothing: antialiased;
+    /* Support for Safari and Chrome. */
+    text-rendering: optimizelegibility;
+
+    /* Support for Firefox. */
+    -moz-osx-font-smoothing: grayscale;
+
+    /* Support for IE. */
+    font-feature-settings: "liga";
+
+    /*
+  * Material Icons can override 4 font axis: FILL, WGTH, GRAD, and OPSZ.
+  * FILL is used to toggle between filled and outlined icons.
+  * For other axis, refer to https://developers.google.com/fonts/docs/material_symbols#what_are_material_symbols
+  */
+    &.material-icons--filled {
+      font-variation-settings: "FILL" 1;
+    }
+  }
+}

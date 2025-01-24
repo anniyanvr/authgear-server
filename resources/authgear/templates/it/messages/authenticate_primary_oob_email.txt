@@ -1,0 +1,7 @@
+Accedi a {{ template "app.name" }}
+
+Utilizza la seguente password monouso per completare il processo di accesso.
+
+{{ .Code }}
+
+Non condividerla con nessuno. Se non hai richiesto l''accesso, ignora questa email.

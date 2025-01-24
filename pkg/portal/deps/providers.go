@@ -5,6 +5,8 @@ import (
 
 	getsentry "github.com/getsentry/sentry-go"
 
+	runtimeresource "github.com/authgear/authgear-server"
+	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
@@ -30,10 +32,10 @@ type RootProvider struct {
 	KubernetesConfig           *portalconfig.KubernetesConfig
 	DomainImplementation       portalconfig.DomainImplementationType
 	SearchConfig               *portalconfig.SearchConfig
-	Web3Config                 *portalconfig.Web3Config
 	AuditLogConfig             *portalconfig.AuditLogConfig
 	AnalyticConfig             *config.AnalyticConfig
 	StripeConfig               *portalconfig.StripeConfig
+	OsanoConfig                *portalconfig.OsanoConfig
 	GoogleTagManagerConfig     *portalconfig.GoogleTagManagerConfig
 	PortalFrontendSentryConfig *portalconfig.PortalFrontendSentryConfig
 	LoggerFactory              *log.Factory
@@ -50,9 +52,7 @@ type RootProvider struct {
 
 func NewRootProvider(
 	cfg *config.EnvironmentConfig,
-	builtinResourceDirectory string,
 	customResourceDirectory string,
-	appBuiltinResourceDirectory string,
 	appCustomResourceDirectory string,
 	configSourceConfig *configsource.Config,
 	authgearConfig *portalconfig.AuthgearConfig,
@@ -63,10 +63,10 @@ func NewRootProvider(
 	kubernetesConfig *portalconfig.KubernetesConfig,
 	domainImplementation portalconfig.DomainImplementationType,
 	searchConfig *portalconfig.SearchConfig,
-	web3Config *portalconfig.Web3Config,
 	auditLogConfig *portalconfig.AuditLogConfig,
 	analyticConfig *config.AnalyticConfig,
 	stripeConfig *portalconfig.StripeConfig,
+	osanoConfig *portalconfig.OsanoConfig,
 	googleTagManagerConfig *portalconfig.GoogleTagManagerConfig,
 	portalFrontendSentryConfig *portalconfig.PortalFrontendSentryConfig,
 ) (*RootProvider, error) {
@@ -82,6 +82,7 @@ func NewRootProvider(
 
 	loggerFactory := log.NewFactory(
 		logLevel,
+		apierrors.SkipLoggingHook{},
 		log.NewDefaultMaskLogHook(),
 		sentry.NewLogHookFromHub(sentryHub),
 	)
@@ -107,10 +108,10 @@ func NewRootProvider(
 		KubernetesConfig:           kubernetesConfig,
 		DomainImplementation:       domainImplementation,
 		SearchConfig:               searchConfig,
-		Web3Config:                 web3Config,
 		AuditLogConfig:             auditLogConfig,
 		AnalyticConfig:             analyticConfig,
 		StripeConfig:               stripeConfig,
+		OsanoConfig:                osanoConfig,
 		GoogleTagManagerConfig:     googleTagManagerConfig,
 		PortalFrontendSentryConfig: portalFrontendSentryConfig,
 		LoggerFactory:              loggerFactory,
@@ -118,16 +119,18 @@ func NewRootProvider(
 		Database:                   db.NewPool(),
 		RedisPool:                  redisPool,
 		GlobalRedisHandle:          globalRedisHandle,
-		Resources: resource.NewManagerWithDir(
-			portalresource.PortalRegistry,
-			builtinResourceDirectory,
-			customResourceDirectory,
-		),
-		AppBaseResources: resource.NewManagerWithDir(
-			resource.DefaultRegistry,
-			appBuiltinResourceDirectory,
-			appCustomResourceDirectory,
-		),
+		Resources: resource.NewManagerWithDir(resource.NewManagerWithDirOptions{
+			Registry:              portalresource.PortalRegistry,
+			BuiltinResourceFS:     runtimeresource.EmbedFS_resources_portal,
+			BuiltinResourceFSRoot: runtimeresource.RelativePath_resources_portal,
+			CustomResourceDir:     customResourceDirectory,
+		}),
+		AppBaseResources: resource.NewManagerWithDir(resource.NewManagerWithDirOptions{
+			Registry:              resource.DefaultRegistry,
+			BuiltinResourceFS:     runtimeresource.EmbedFS_resources_authgear,
+			BuiltinResourceFSRoot: runtimeresource.RelativePath_resources_authgear,
+			CustomResourceDir:     appCustomResourceDirectory,
+		}),
 		FilesystemCache: filesystemCache,
 	}, nil
 }

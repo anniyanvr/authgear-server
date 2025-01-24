@@ -8,6 +8,8 @@ value:
     name: my_step
     one_of:
     - identification: email
+      bot_protection:
+        mode: never
       steps:
       - type: create_authenticator
         one_of:
@@ -25,8 +27,11 @@ part: AuthenticationFlowSignupFlow
 name: invalid
 error: |-
   invalid value:
+  /steps/0/one_of/0/bot_protection: required
+    map[actual:[foobar] expected:[mode] missing:[mode]]
+  /steps/0/one_of/0/bot_protection/foobar: 
   /steps/0/one_of/0/identification: enum
-    map[actual:foobar expected:[email phone username oauth passkey]]
+    map[actual:foobar expected:[email phone username oauth passkey ldap]]
   /steps/0/one_of/0/steps/0/one_of/0/authentication: enum
     map[actual:foobar expected:[primary_password primary_oob_otp_email primary_oob_otp_sms secondary_password secondary_totp secondary_oob_otp_email secondary_oob_otp_sms]]
   /steps/1: required
@@ -44,6 +49,8 @@ value:
     name: my_step
     one_of:
     - identification: foobar
+      bot_protection:
+        foobar: true # should be required
       steps:
       - type: create_authenticator
         one_of:
@@ -53,3 +60,28 @@ value:
     user_profile:
     - pointer: given_name
   - type: foobar
+---
+part: AuthenticationFlowSignupFlow
+name: bot-protection-mode-always
+error: null
+value:
+  name: id
+  steps:
+  - type: identify
+    name: my_step
+    one_of:
+    - identification: email
+      bot_protection:
+        mode: always
+      steps:
+      - type: create_authenticator
+        one_of:
+        - authentication: primary_password
+  - type: verify
+    target_step: my_step
+  - type: fill_in_user_profile
+    user_profile:
+    - pointer: /given_name
+      required: true
+  - type: view_recovery_code
+

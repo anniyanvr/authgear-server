@@ -7,27 +7,52 @@
 package elasticsearch
 
 import (
-	"context"
+	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator/oob"
+	passkey3 "github.com/authgear/authgear-server/pkg/lib/authn/authenticator/passkey"
+	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator/password"
+	service2 "github.com/authgear/authgear-server/pkg/lib/authn/authenticator/service"
+	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator/totp"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity/anonymous"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity/biometric"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity/ldap"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/loginid"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity/oauth"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity/passkey"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity/service"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity/siwe"
+	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
+	"github.com/authgear/authgear-server/pkg/lib/authn/stdattrs"
 	"github.com/authgear/authgear-server/pkg/lib/authn/user"
-	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
+	"github.com/authgear/authgear-server/pkg/lib/deps"
+	"github.com/authgear/authgear-server/pkg/lib/feature/customattrs"
+	passkey2 "github.com/authgear/authgear-server/pkg/lib/feature/passkey"
+	stdattrs2 "github.com/authgear/authgear-server/pkg/lib/feature/stdattrs"
+	"github.com/authgear/authgear-server/pkg/lib/feature/verification"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
+	"github.com/authgear/authgear-server/pkg/lib/lockout"
+	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
+	"github.com/authgear/authgear-server/pkg/lib/rolesgroups"
+	"github.com/authgear/authgear-server/pkg/lib/search/reindex"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
+	"github.com/authgear/authgear-server/pkg/lib/web"
 	"github.com/authgear/authgear-server/pkg/util/clock"
+	"github.com/authgear/authgear-server/pkg/util/httputil"
+	"github.com/authgear/authgear-server/pkg/util/template"
 )
 
 // Injectors from wire.go:
 
-func NewAppLister(ctx context.Context, pool *db.Pool, databaseCredentials *config.DatabaseCredentials) *AppLister {
-	globalDatabaseCredentialsEnvironmentConfig := NewGlobalDatabaseCredentials(databaseCredentials)
-	databaseEnvironmentConfig := config.NewDefaultDatabaseEnvironmentConfig()
+func NewAppLister(pool *db.Pool, databaseCredentials *CmdDBCredential) *AppLister {
+	environmentConfig := NewEnvConfig(databaseCredentials)
+	globalDatabaseCredentialsEnvironmentConfig := &environmentConfig.GlobalDatabase
+	databaseEnvironmentConfig := &environmentConfig.DatabaseConfig
 	factory := NewLoggerFactory()
-	handle := globaldb.NewHandle(ctx, pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory)
+	handle := globaldb.NewHandle(pool, globalDatabaseCredentialsEnvironmentConfig, databaseEnvironmentConfig, factory)
 	sqlBuilder := globaldb.NewSQLBuilder(globalDatabaseCredentialsEnvironmentConfig)
-	sqlExecutor := globaldb.NewSQLExecutor(ctx, handle)
+	sqlExecutor := globaldb.NewSQLExecutor(handle)
 	store := &configsource.Store{
 		SQLBuilder:  sqlBuilder,
 		SQLExecutor: sqlExecutor,
@@ -39,34 +64,371 @@ func NewAppLister(ctx context.Context, pool *db.Pool, databaseCredentials *confi
 	return appLister
 }
 
-func NewReindexer(ctx context.Context, pool *db.Pool, databaseCredentials *config.DatabaseCredentials, appID config.AppID) *Reindexer {
-	databaseEnvironmentConfig := config.NewDefaultDatabaseEnvironmentConfig()
-	factory := NewLoggerFactory()
-	handle := appdb.NewHandle(ctx, pool, databaseEnvironmentConfig, databaseCredentials, factory)
-	sqlBuilderApp := appdb.NewSQLBuilderApp(databaseCredentials, appID)
-	sqlExecutor := appdb.NewSQLExecutor(ctx, handle)
+func NewReindexer(pool *db.Pool, databaseCredentials *CmdDBCredential, appID CmdAppID) *Reindexer {
 	clock := _wireSystemClockValue
+	environmentConfig := NewEnvConfig(databaseCredentials)
+	databaseEnvironmentConfig := &environmentConfig.DatabaseConfig
+	config := NewEmptyConfig(pool, databaseCredentials, appID)
+	secretConfig := config.SecretConfig
+	configDatabaseCredentials := deps.ProvideDatabaseCredentials(secretConfig)
+	factory := NewLoggerFactory()
+	handle := appdb.NewHandle(pool, databaseEnvironmentConfig, configDatabaseCredentials, factory)
+	appConfig := config.AppConfig
+	configAppID := appConfig.ID
+	sqlBuilderApp := appdb.NewSQLBuilderApp(configDatabaseCredentials, configAppID)
+	sqlExecutor := appdb.NewSQLExecutor(handle)
 	store := &user.Store{
 		SQLBuilder:  sqlBuilderApp,
 		SQLExecutor: sqlExecutor,
 		Clock:       clock,
+		AppID:       configAppID,
 	}
-	identityConfig := NewEmptyIdentityConfig()
-	oauthStore := &oauth.Store{
-		SQLBuilder:     sqlBuilderApp,
-		SQLExecutor:    sqlExecutor,
-		IdentityConfig: identityConfig,
+	reindexedTimestamps := NewReindexedTimestamps()
+	rawQueries := &user.RawQueries{
+		Store: store,
+	}
+	authenticationConfig := appConfig.Authentication
+	identityConfig := appConfig.Identity
+	featureConfig := config.FeatureConfig
+	identityFeatureConfig := featureConfig.Identity
+	serviceStore := &service.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
 	}
 	loginidStore := &loginid.Store{
 		SQLBuilder:  sqlBuilderApp,
 		SQLExecutor: sqlExecutor,
 	}
+	loginIDConfig := identityConfig.LoginID
+	uiConfig := appConfig.UI
+	nilResourceManager := NewNilResourceManager()
+	typeCheckerFactory := &loginid.TypeCheckerFactory{
+		UIConfig:      uiConfig,
+		LoginIDConfig: loginIDConfig,
+		Resources:     nilResourceManager,
+	}
+	checker := &loginid.Checker{
+		Config:             loginIDConfig,
+		TypeCheckerFactory: typeCheckerFactory,
+	}
+	normalizerFactory := &loginid.NormalizerFactory{
+		Config: loginIDConfig,
+	}
+	provider := &loginid.Provider{
+		Store:             loginidStore,
+		Config:            loginIDConfig,
+		Checker:           checker,
+		NormalizerFactory: normalizerFactory,
+		Clock:             clock,
+	}
+	oauthStore := &oauth.Store{
+		SQLBuilder:     sqlBuilderApp,
+		SQLExecutor:    sqlExecutor,
+		IdentityConfig: identityConfig,
+	}
+	oauthProvider := &oauth.Provider{
+		Store:          oauthStore,
+		Clock:          clock,
+		IdentityConfig: identityConfig,
+	}
+	anonymousStore := &anonymous.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	anonymousProvider := &anonymous.Provider{
+		Store: anonymousStore,
+		Clock: clock,
+	}
+	biometricStore := &biometric.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	biometricProvider := &biometric.Provider{
+		Store: biometricStore,
+		Clock: clock,
+	}
+	passkeyStore := &passkey.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	appredisHandle := NewNilRedis()
+	store2 := &passkey2.Store{
+		Redis: appredisHandle,
+		AppID: configAppID,
+	}
+	request := NewNilRequest()
+	trustProxy := environmentConfig.TrustProxy
+	defaultLanguageTag := deps.ProvideDefaultLanguageTag(config)
+	supportedLanguageTags := deps.ProvideSupportedLanguageTags(config)
+	resolver := &template.Resolver{
+		Resources:             nilResourceManager,
+		DefaultLanguageTag:    defaultLanguageTag,
+		SupportedLanguageTags: supportedLanguageTags,
+	}
+	engine := &template.Engine{
+		Resolver: resolver,
+	}
+	localizationConfig := appConfig.Localization
+	httpProto := ProvideHTTPProto()
+	httpHost := ProvideHTTPHost()
+	httpOrigin := httputil.MakeHTTPOrigin(httpProto, httpHost)
+	webAppCDNHost := environmentConfig.WebAppCDNHost
+	staticAssetResolver := &web.StaticAssetResolver{
+		Localization:      localizationConfig,
+		HTTPOrigin:        httpOrigin,
+		HTTPProto:         httpProto,
+		WebAppCDNHost:     webAppCDNHost,
+		Resources:         nilResourceManager,
+		EmbeddedResources: nilResourceManager,
+	}
+	translationService := &translation.Service{
+		TemplateEngine: engine,
+		StaticAssets:   staticAssetResolver,
+	}
+	configService := &passkey2.ConfigService{
+		Request:            request,
+		TrustProxy:         trustProxy,
+		TranslationService: translationService,
+	}
+	passkeyService := &passkey2.Service{
+		Store:         store2,
+		ConfigService: configService,
+	}
+	passkeyProvider := &passkey.Provider{
+		Store:   passkeyStore,
+		Clock:   clock,
+		Passkey: passkeyService,
+	}
+	siweStore := &siwe.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	siweProvider := &siwe.Provider{
+		Store: siweStore,
+		Clock: clock,
+	}
+	ldapStore := &ldap.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	normalizer := &stdattrs.Normalizer{
+		LoginIDNormalizerFactory: normalizerFactory,
+	}
+	ldapProvider := &ldap.Provider{
+		Store:                        ldapStore,
+		Clock:                        clock,
+		StandardAttributesNormalizer: normalizer,
+	}
+	serviceService := &service.Service{
+		Authentication:        authenticationConfig,
+		Identity:              identityConfig,
+		IdentityFeatureConfig: identityFeatureConfig,
+		Store:                 serviceStore,
+		LoginID:               provider,
+		OAuth:                 oauthProvider,
+		Anonymous:             anonymousProvider,
+		Biometric:             biometricProvider,
+		Passkey:               passkeyProvider,
+		SIWE:                  siweProvider,
+		LDAP:                  ldapProvider,
+	}
+	store3 := &service2.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	passwordStore := &password.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	authenticatorConfig := appConfig.Authenticator
+	authenticatorPasswordConfig := authenticatorConfig.Password
+	logger := password.NewLogger(factory)
+	historyStore := &password.HistoryStore{
+		Clock:       clock,
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	authenticatorFeatureConfig := featureConfig.Authenticator
+	passwordChecker := password.ProvideChecker(authenticatorPasswordConfig, authenticatorFeatureConfig, historyStore)
+	expiry := password.ProvideExpiry(authenticatorPasswordConfig, clock)
+	housekeeperLogger := password.NewHousekeeperLogger(factory)
+	housekeeper := &password.Housekeeper{
+		Store:  historyStore,
+		Logger: housekeeperLogger,
+		Config: authenticatorPasswordConfig,
+	}
+	passwordProvider := &password.Provider{
+		Store:           passwordStore,
+		Config:          authenticatorPasswordConfig,
+		Clock:           clock,
+		Logger:          logger,
+		PasswordHistory: historyStore,
+		PasswordChecker: passwordChecker,
+		Expiry:          expiry,
+		Housekeeper:     housekeeper,
+	}
+	store4 := &passkey3.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	provider2 := &passkey3.Provider{
+		Store:   store4,
+		Clock:   clock,
+		Passkey: passkeyService,
+	}
+	totpStore := &totp.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	authenticatorTOTPConfig := authenticatorConfig.TOTP
+	totpProvider := &totp.Provider{
+		Store:  totpStore,
+		Config: authenticatorTOTPConfig,
+		Clock:  clock,
+	}
+	oobStore := &oob.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	oobProvider := &oob.Provider{
+		Store:                    oobStore,
+		LoginIDNormalizerFactory: normalizerFactory,
+		Clock:                    clock,
+	}
+	testModeConfig := appConfig.TestMode
+	testModeFeatureConfig := featureConfig.TestMode
+	remoteIP := ProvideRemoteIP()
+	codeStoreRedis := &otp.CodeStoreRedis{
+		Redis: appredisHandle,
+		AppID: configAppID,
+		Clock: clock,
+	}
+	lookupStoreRedis := &otp.LookupStoreRedis{
+		Redis: appredisHandle,
+		AppID: configAppID,
+		Clock: clock,
+	}
+	attemptTrackerRedis := &otp.AttemptTrackerRedis{
+		Redis: appredisHandle,
+		AppID: configAppID,
+		Clock: clock,
+	}
+	otpLogger := otp.NewLogger(factory)
+	ratelimitLogger := ratelimit.NewLogger(factory)
+	storageRedis := ratelimit.NewAppStorageRedis(appredisHandle)
+	rateLimitsFeatureConfig := featureConfig.RateLimits
+	limiter := &ratelimit.Limiter{
+		Logger:  ratelimitLogger,
+		Storage: storageRedis,
+		AppID:   configAppID,
+		Config:  rateLimitsFeatureConfig,
+	}
+	otpService := &otp.Service{
+		Clock:                 clock,
+		AppID:                 configAppID,
+		TestModeConfig:        testModeConfig,
+		TestModeFeatureConfig: testModeFeatureConfig,
+		RemoteIP:              remoteIP,
+		CodeStore:             codeStoreRedis,
+		LookupStore:           lookupStoreRedis,
+		AttemptTracker:        attemptTrackerRedis,
+		Logger:                otpLogger,
+		RateLimiter:           limiter,
+	}
+	rateLimits := service2.RateLimits{
+		IP:          remoteIP,
+		Config:      authenticationConfig,
+		RateLimiter: limiter,
+	}
+	authenticationLockoutConfig := authenticationConfig.Lockout
+	lockoutLogger := lockout.NewLogger(factory)
+	lockoutStorageRedis := &lockout.StorageRedis{
+		AppID: configAppID,
+		Redis: appredisHandle,
+	}
+	lockoutService := &lockout.Service{
+		Logger:  lockoutLogger,
+		Storage: lockoutStorageRedis,
+	}
+	serviceLockout := service2.Lockout{
+		Config:   authenticationLockoutConfig,
+		RemoteIP: remoteIP,
+		Provider: lockoutService,
+	}
+	service3 := &service2.Service{
+		Store:          store3,
+		Config:         appConfig,
+		Password:       passwordProvider,
+		Passkey:        provider2,
+		TOTP:           totpProvider,
+		OOBOTP:         oobProvider,
+		OTPCodeService: otpService,
+		RateLimits:     rateLimits,
+		Lockout:        serviceLockout,
+	}
+	verificationConfig := appConfig.Verification
+	userProfileConfig := appConfig.UserProfile
+	storePQ := &verification.StorePQ{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+	}
+	verificationService := &verification.Service{
+		Config:            verificationConfig,
+		UserProfileConfig: userProfileConfig,
+		Clock:             clock,
+		ClaimStore:        storePQ,
+	}
+	imagesCDNHost := environmentConfig.ImagesCDNHost
+	pictureTransformer := &stdattrs2.PictureTransformer{
+		HTTPProto:     httpProto,
+		HTTPHost:      httpHost,
+		ImagesCDNHost: imagesCDNHost,
+	}
+	serviceNoEvent := &stdattrs2.ServiceNoEvent{
+		UserProfileConfig: userProfileConfig,
+		Identities:        serviceService,
+		UserQueries:       rawQueries,
+		UserStore:         store,
+		ClaimStore:        storePQ,
+		Transformer:       pictureTransformer,
+	}
+	customattrsServiceNoEvent := &customattrs.ServiceNoEvent{
+		Config:      userProfileConfig,
+		UserQueries: rawQueries,
+		UserStore:   store,
+	}
+	rolesgroupsStore := &rolesgroups.Store{
+		SQLBuilder:  sqlBuilderApp,
+		SQLExecutor: sqlExecutor,
+		Clock:       clock,
+	}
+	queries := &rolesgroups.Queries{
+		Store: rolesgroupsStore,
+	}
+	userQueries := &user.Queries{
+		RawQueries:         rawQueries,
+		Store:              store,
+		Identities:         serviceService,
+		Authenticators:     service3,
+		Verification:       verificationService,
+		StandardAttributes: serviceNoEvent,
+		CustomAttributes:   customattrsServiceNoEvent,
+		RolesAndGroups:     queries,
+	}
+	sourceProvider := &reindex.SourceProvider{
+		AppID:           configAppID,
+		Users:           userQueries,
+		UserStore:       store,
+		IdentityService: serviceService,
+		RolesGroups:     rolesgroupsStore,
+	}
 	reindexer := &Reindexer{
-		Handle:  handle,
-		AppID:   appID,
-		Users:   store,
-		OAuth:   oauthStore,
-		LoginID: loginidStore,
+		Clock:               clock,
+		Handle:              handle,
+		AppID:               configAppID,
+		Users:               store,
+		ReindexedTimestamps: reindexedTimestamps,
+		SourceProvider:      sourceProvider,
 	}
 	return reindexer
 }

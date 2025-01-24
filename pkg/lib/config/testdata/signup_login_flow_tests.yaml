@@ -7,6 +7,8 @@ value:
   - type: identify
     one_of:
     - identification: email
+      bot_protection:
+        mode: never
       signup_flow: a
       login_flow: b
 
@@ -18,9 +20,12 @@ error: |-
   /steps/0/type: enum
     map[actual:foobar expected:[identify]]
   /steps/1/one_of/0: required
-    map[actual:[identification] expected:[identification login_flow signup_flow] missing:[login_flow signup_flow]]
+    map[actual:[bot_protection identification] expected:[identification login_flow signup_flow] missing:[login_flow signup_flow]]
+  /steps/1/one_of/0/bot_protection: required
+    map[actual:[foobar] expected:[mode] missing:[mode]]
+  /steps/1/one_of/0/bot_protection/foobar: 
   /steps/1/one_of/0/identification: enum
-    map[actual:foobar expected:[email phone username oauth passkey]]
+    map[actual:foobar expected:[email phone username oauth passkey ldap]]
 value:
   name: id
   steps:
@@ -30,3 +35,19 @@ value:
   - type: identify
     one_of:
     - identification: foobar
+      bot_protection:
+        foobar: true
+---
+part: AuthenticationFlowSignupLoginFlow
+name: bot_protection-mode-always
+error: null
+value:
+  name: id
+  steps:
+  - type: identify
+    one_of:
+    - identification: email
+      bot_protection:
+        mode: always
+      signup_flow: a
+      login_flow: b

@@ -12,14 +12,6 @@ func init() {
 	authflow.RegisterIntent(&IntentAccountRecoveryFlowStepResetPassword{})
 }
 
-type IntentAccountRecoveryFlowStepResetPasswordData struct {
-	PasswordPolicy *PasswordPolicy `json:"password_policy,omitempty"`
-}
-
-var _ authflow.Data = IntentAccountRecoveryFlowStepResetPasswordData{}
-
-func (IntentAccountRecoveryFlowStepResetPasswordData) Data() {}
-
 type IntentAccountRecoveryFlowStepResetPassword struct {
 	StepName    string        `json:"step_name,omitempty"`
 	JSONPointer jsonpointer.T `json:"json_pointer,omitempty"`
@@ -34,18 +26,24 @@ func (*IntentAccountRecoveryFlowStepResetPassword) Kind() string {
 
 func (i *IntentAccountRecoveryFlowStepResetPassword) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
 	if len(flows.Nearest.Nodes) == 0 {
+		flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+		if err != nil {
+			return nil, err
+		}
 		return &InputSchemaTakeNewPassword{
-			JSONPointer: i.JSONPointer,
+			FlowRootObject: flowRootObject,
+			JSONPointer:    i.JSONPointer,
 		}, nil
 	}
 	return nil, authflow.ErrEOF
 }
 
 func (i *IntentAccountRecoveryFlowStepResetPassword) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
-	milestone, ok := authflow.FindMilestone[MilestoneAccountRecoveryCode](flows.Root)
-	if !ok {
+	ms := authflow.FindAllMilestones[MilestoneAccountRecoveryCode](flows.Root)
+	if len(ms) == 0 {
 		return nil, InvalidFlowConfig.New("IntentAccountRecoveryFlowStepResetPassword depends on MilestoneAccountRecoveryCode")
 	}
+	milestone := ms[0]
 	code := milestone.MilestoneAccountRecoveryCode()
 
 	var inputTakeNewPassword inputTakeNewPassword
@@ -61,10 +59,10 @@ func (i *IntentAccountRecoveryFlowStepResetPassword) ReactTo(ctx context.Context
 }
 
 func (i *IntentAccountRecoveryFlowStepResetPassword) OutputData(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.Data, error) {
-	return IntentAccountRecoveryFlowStepResetPasswordData{
+	return NewNewPasswordData(NewPasswordData{
 		PasswordPolicy: NewPasswordPolicy(
 			deps.FeatureConfig.Authenticator,
 			deps.Config.Authenticator.Password.Policy,
 		),
-	}, nil
+	}), nil
 }

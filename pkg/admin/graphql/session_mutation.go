@@ -1,8 +1,9 @@
 package graphql
 
 import (
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
@@ -48,20 +49,21 @@ var _ = registerMutationField(
 				return nil, apierrors.NewInvalid("invalid session ID")
 			}
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 
-			s, err := gqlCtx.SessionFacade.Get(resolvedNodeID.ID)
+			s, err := gqlCtx.SessionFacade.Get(ctx, resolvedNodeID.ID)
 			if err != nil {
 				return nil, err
 			}
 			userID := s.GetAuthenticationInfo().UserID
 
-			err = gqlCtx.SessionFacade.Revoke(s.SessionID())
+			err = gqlCtx.SessionFacade.Revoke(ctx, s.SessionID())
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.Events.DispatchEvent(&nonblocking.AdminAPIMutationRevokeSessionExecutedEventPayload{
+			err = gqlCtx.Events.DispatchEventOnCommit(ctx, &nonblocking.AdminAPIMutationRevokeSessionExecutedEventPayload{
 				UserRef: apimodel.UserRef{
 					Meta: apimodel.Meta{
 						ID: userID,
@@ -74,7 +76,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"user": gqlCtx.Users.Load(userID),
+				"user": gqlCtx.Users.Load(ctx, userID),
 			}).Value, nil
 		},
 	},
@@ -119,14 +121,15 @@ var _ = registerMutationField(
 			}
 			userID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 
-			err := gqlCtx.SessionFacade.RevokeAll(userID)
+			err := gqlCtx.SessionFacade.RevokeAll(ctx, userID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.Events.DispatchEvent(&nonblocking.AdminAPIMutationRevokeAllSessionsExecutedEventPayload{
+			err = gqlCtx.Events.DispatchEventOnCommit(ctx, &nonblocking.AdminAPIMutationRevokeAllSessionsExecutedEventPayload{
 				UserRef: apimodel.UserRef{
 					Meta: apimodel.Meta{
 						ID: userID,
@@ -138,7 +141,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"user": gqlCtx.Users.Load(userID),
+				"user": gqlCtx.Users.Load(ctx, userID),
 			}).Value, nil
 		},
 	},
@@ -181,7 +184,8 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 			if !(*gqlCtx.AdminAPIFeatureConfig.CreateSessionEnabled) {
 				return nil, apierrors.NewForbidden("CreateSession is disabled")
 			}
@@ -197,12 +201,12 @@ var _ = registerMutationField(
 
 			clientID := input["clientID"].(string)
 
-			s, resp, err := gqlCtx.OAuthFacade.CreateSession(clientID, userID)
+			s, resp, err := gqlCtx.OAuthFacade.CreateSession(ctx, clientID, userID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.Events.DispatchEvent(&nonblocking.AdminAPIMutationCreateSessionExecutedEventPayload{
+			err = gqlCtx.Events.DispatchEventOnCommit(ctx, &nonblocking.AdminAPIMutationCreateSessionExecutedEventPayload{
 				UserRef: apimodel.UserRef{
 					Meta: apimodel.Meta{
 						ID: userID,

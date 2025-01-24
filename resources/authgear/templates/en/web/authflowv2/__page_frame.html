@@ -1,0 +1,18 @@
+{{ define "authflowv2/__page_frame.html" }}
+{{ template "authflowv2/__base_page_frame.html" . }}
+{{ end }}
+
+{{ define "page-frame-content" }}
+{{ template "web/authflowv2/layout.html" . }}
+{{ end }}
+
+{{ define "widget" }}
+  <div class="widget">
+    <div class="widget-content">
+      {{ template "page-content" . }}
+      {{ template "authflowv2/__lockout.html" . }}
+      {{ template "authflowv2/__watermark.html" . }}
+      {{ template "authflowv2/__bot_protection_dialog.html" . }}
+    </div>
+  </div>
+{{ end }}

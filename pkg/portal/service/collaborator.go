@@ -10,20 +10,19 @@ import (
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/lib/pq"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/mail"
-	"github.com/authgear/authgear-server/pkg/lib/infra/task"
 	portalconfig "github.com/authgear/authgear-server/pkg/portal/config"
 	"github.com/authgear/authgear-server/pkg/portal/model"
 	"github.com/authgear/authgear-server/pkg/portal/resource"
 	"github.com/authgear/authgear-server/pkg/portal/session"
-	"github.com/authgear/authgear-server/pkg/portal/task/tasks"
 	"github.com/authgear/authgear-server/pkg/util/base32"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/graphqlutil"
@@ -44,8 +43,8 @@ var ErrCollaboratorInvitationInvalidEmail = apierrors.Invalid.WithReason("Collab
 
 var ErrCollaboratorQuotaExceeded = apierrors.Invalid.WithReason("CollaboratorQuotaExceeded").New("collaborator quota exceeded")
 
-type CollaboratorServiceTaskQueue interface {
-	Enqueue(param task.Param)
+type CollaboratorServiceSMTPService interface {
+	SendRealEmail(ctx context.Context, opts mail.SendOptions) error
 }
 
 type CollaboratorServiceEndpointsProvider interface {
@@ -53,21 +52,23 @@ type CollaboratorServiceEndpointsProvider interface {
 }
 
 type CollaboratorServiceAdminAPIService interface {
-	SelfDirector(actorUserID string, usage Usage) (func(*http.Request), error)
+	SelfDirector(ctx context.Context, actorUserID string, usage Usage) (func(*http.Request), error)
 }
 
 type CollaboratorAppConfigService interface {
-	ResolveContext(appID string) (*config.AppContext, error)
+	ResolveContext(ctx context.Context, appID string) (*config.AppContext, error)
 }
 
 type CollaboratorService struct {
-	Context     context.Context
 	Clock       clock.Clock
 	SQLBuilder  *globaldb.SQLBuilder
 	SQLExecutor *globaldb.SQLExecutor
+	HTTPClient  HTTPClient
+
+	GlobalDatabase *globaldb.Handle
 
 	MailConfig     *portalconfig.MailConfig
-	TaskQueue      CollaboratorServiceTaskQueue
+	SMTPService    CollaboratorServiceSMTPService
 	Endpoints      CollaboratorServiceEndpointsProvider
 	TemplateEngine *template.Engine
 	AdminAPI       CollaboratorServiceAdminAPIService
@@ -97,59 +98,88 @@ func (s *CollaboratorService) selectCollaboratorInvitation() sq.SelectBuilder {
 	).From(s.SQLBuilder.TableName("_portal_app_collaborator_invitation"))
 }
 
-func (s *CollaboratorService) ListCollaborators(appID string) ([]*model.Collaborator, error) {
+// ListCollaborators acquires connection.
+func (s *CollaboratorService) ListCollaborators(ctx context.Context, appID string) ([]*model.Collaborator, error) {
 	q := s.selectCollaborator().Where("app_id = ?", appID)
-	rows, err := s.SQLExecutor.QueryWith(q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	var cs []*model.Collaborator
-	for rows.Next() {
-		c, err := scanCollaborator(rows)
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.SQLExecutor.QueryWith(ctx, q)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		cs = append(cs, c)
+		defer rows.Close()
+
+		for rows.Next() {
+			c, err := scanCollaborator(rows)
+			if err != nil {
+				return err
+			}
+			cs = append(cs, c)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return cs, nil
 }
 
-func (s *CollaboratorService) ListCollaboratorsByUser(userID string) ([]*model.Collaborator, error) {
+// ListCollaboratorsByUser acquires connection.
+func (s *CollaboratorService) ListCollaboratorsByUser(ctx context.Context, userID string) ([]*model.Collaborator, error) {
 	q := s.selectCollaborator().Where("user_id = ?", userID)
-	rows, err := s.SQLExecutor.QueryWith(q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	var cs []*model.Collaborator
-	for rows.Next() {
-		c, err := scanCollaborator(rows)
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.SQLExecutor.QueryWith(ctx, q)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		cs = append(cs, c)
+		defer rows.Close()
+
+		for rows.Next() {
+			c, err := scanCollaborator(rows)
+			if err != nil {
+				return err
+			}
+			cs = append(cs, c)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return cs, nil
 }
 
-func (s *CollaboratorService) GetProjectOwnerCount(userID string) (int, error) {
+// GetProjectOwnerCount acquires connection.
+func (s *CollaboratorService) GetProjectOwnerCount(ctx context.Context, userID string) (int, error) {
 	q := s.SQLBuilder.Select("count(1)").
 		From(s.SQLBuilder.TableName("_portal_app_collaborator")).
 		Where("user_id = ?", userID).
 		Where("role = ?", string(model.CollaboratorRoleOwner))
 
-	row, err := s.SQLExecutor.QueryRowWith(q)
-	if err != nil {
-		return 0, err
-	}
-
 	var count int
-	err = row.Scan(&count)
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		row, err := s.SQLExecutor.QueryRowWith(ctx, q)
+		if err != nil {
+			return err
+		}
+
+		err = row.Scan(&count)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -157,7 +187,8 @@ func (s *CollaboratorService) GetProjectOwnerCount(userID string) (int, error) {
 	return count, nil
 }
 
-func (s *CollaboratorService) GetManyProjectOwnerCount(userIDs []string) ([]int, error) {
+// GetManyProjectOwnerCount acquires connection.
+func (s *CollaboratorService) GetManyProjectOwnerCount(ctx context.Context, userIDs []string) ([]int, error) {
 	q := s.SQLBuilder.Select(
 		"user_id",
 		"count(1)",
@@ -167,21 +198,29 @@ func (s *CollaboratorService) GetManyProjectOwnerCount(userIDs []string) ([]int,
 		GroupBy("user_id", "role").
 		Having("role = ?", string(model.CollaboratorRoleOwner))
 
-	rows, err := s.SQLExecutor.QueryWith(q)
+	m := make(map[string]int)
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.SQLExecutor.QueryWith(ctx, q)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var userID string
+			var count int
+			err = rows.Scan(&userID, &count)
+			if err != nil {
+				return err
+			}
+			m[userID] = count
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-
-	m := make(map[string]int)
-	for rows.Next() {
-		var userID string
-		var count int
-		err = rows.Scan(&userID, &count)
-		if err != nil {
-			return nil, err
-		}
-		m[userID] = count
 	}
 
 	out := make([]int, len(userIDs))
@@ -197,6 +236,7 @@ func (s *CollaboratorService) GetManyProjectOwnerCount(userIDs []string) ([]int,
 	return out, nil
 }
 
+// NewCollaborator does not need connection.
 func (s *CollaboratorService) NewCollaborator(appID string, userID string, role model.CollaboratorRole) *model.Collaborator {
 	now := s.Clock.NowUTC()
 	c := &model.Collaborator{
@@ -209,13 +249,14 @@ func (s *CollaboratorService) NewCollaborator(appID string, userID string, role 
 	return c
 }
 
-func (s *CollaboratorService) CreateCollaborator(c *model.Collaborator) error {
-	err := s.deleteExpiredInvitations()
+// CreateCollaborator assume acquired connection.
+func (s *CollaboratorService) CreateCollaborator(ctx context.Context, c *model.Collaborator) error {
+	err := s.deleteExpiredInvitations(ctx)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.SQLExecutor.ExecWith(s.SQLBuilder.
+	_, err = s.SQLExecutor.ExecWith(ctx, s.SQLBuilder.
 		Insert(s.SQLBuilder.TableName("_portal_app_collaborator")).
 		Columns(
 			"id",
@@ -239,59 +280,110 @@ func (s *CollaboratorService) CreateCollaborator(c *model.Collaborator) error {
 	return nil
 }
 
-func (s *CollaboratorService) GetCollaborator(id string) (*model.Collaborator, error) {
+// GetCollaborator acquires connection.
+func (s *CollaboratorService) GetCollaborator(ctx context.Context, id string) (*model.Collaborator, error) {
 	q := s.selectCollaborator().Where("id = ?", id)
-	row, err := s.SQLExecutor.QueryRowWith(q)
+
+	var coll *model.Collaborator
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		row, err := s.SQLExecutor.QueryRowWith(ctx, q)
+		if err != nil {
+			return err
+		}
+
+		coll, err = scanCollaborator(row)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return scanCollaborator(row)
+
+	return coll, nil
 }
 
-func (s *CollaboratorService) GetManyCollaborators(ids []string) ([]*model.Collaborator, error) {
+// GetManyCollaborators acquires connection.
+func (s *CollaboratorService) GetManyCollaborators(ctx context.Context, ids []string) ([]*model.Collaborator, error) {
 	q := s.selectCollaborator().Where("id = ANY (?)", pq.Array(ids))
-	rows, err := s.SQLExecutor.QueryWith(q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	var cs []*model.Collaborator
-	for rows.Next() {
-		c, err := scanCollaborator(rows)
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.SQLExecutor.QueryWith(ctx, q)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		cs = append(cs, c)
+		defer rows.Close()
+
+		for rows.Next() {
+			c, err := scanCollaborator(rows)
+			if err != nil {
+				return err
+			}
+			cs = append(cs, c)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return cs, nil
 }
 
-func (s *CollaboratorService) GetCollaboratorByAppAndUser(appID string, userID string) (*model.Collaborator, error) {
+// GetCollaboratorByAppAndUser acquires connection.
+func (s *CollaboratorService) GetCollaboratorByAppAndUser(ctx context.Context, appID string, userID string) (*model.Collaborator, error) {
 	q := s.selectCollaborator().Where("app_id = ? AND user_id = ?", appID, userID)
-	row, err := s.SQLExecutor.QueryRowWith(q)
+	var coll *model.Collaborator
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		row, err := s.SQLExecutor.QueryRowWith(ctx, q)
+		if err != nil {
+			return err
+		}
+
+		coll, err = scanCollaborator(row)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return scanCollaborator(row)
+
+	return coll, nil
 }
 
-func (s *CollaboratorService) DeleteCollaborator(c *model.Collaborator) error {
-	sessionInfo := session.GetValidSessionInfo(s.Context)
+// DeleteCollaborator acquires connection.
+func (s *CollaboratorService) DeleteCollaborator(ctx context.Context, c *model.Collaborator) error {
+	sessionInfo := session.GetValidSessionInfo(ctx)
 	if c.UserID == sessionInfo.UserID {
 		return ErrCollaboratorSelfDeletion
 	}
 
-	err := s.deleteExpiredInvitations()
-	if err != nil {
-		return err
-	}
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		err = s.deleteExpiredInvitations(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = s.SQLExecutor.ExecWith(ctx, s.SQLBuilder.
+			Delete(s.SQLBuilder.TableName("_portal_app_collaborator")).
+			Where("id = ?", c.ID),
+		)
+		if err != nil {
+			return err
+		}
 
-	_, err = s.SQLExecutor.ExecWith(s.SQLBuilder.
-		Delete(s.SQLBuilder.TableName("_portal_app_collaborator")).
-		Where("id = ?", c.ID),
-	)
+		return nil
+	})
 	if err != nil {
 		return err
 	}
@@ -299,73 +391,108 @@ func (s *CollaboratorService) DeleteCollaborator(c *model.Collaborator) error {
 	return nil
 }
 
-func (s *CollaboratorService) GetManyInvitations(ids []string) ([]*model.CollaboratorInvitation, error) {
+// GetManyInvitations acquires connection.
+func (s *CollaboratorService) GetManyInvitations(ctx context.Context, ids []string) ([]*model.CollaboratorInvitation, error) {
 	q := s.selectCollaboratorInvitation().Where("id = ANY (?)", pq.Array(ids))
-	rows, err := s.SQLExecutor.QueryWith(q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	var is []*model.CollaboratorInvitation
-	for rows.Next() {
-		i, err := scanCollaboratorInvitation(rows)
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.SQLExecutor.QueryWith(ctx, q)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		is = append(is, i)
+		defer rows.Close()
+
+		for rows.Next() {
+			i, err := scanCollaboratorInvitation(rows)
+			if err != nil {
+				return err
+			}
+			is = append(is, i)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return is, nil
 }
 
-func (s *CollaboratorService) ListInvitations(appID string) ([]*model.CollaboratorInvitation, error) {
+// ListInvitations acquires connection.
+func (s *CollaboratorService) ListInvitations(ctx context.Context, appID string) ([]*model.CollaboratorInvitation, error) {
 	now := s.Clock.NowUTC()
 	q := s.selectCollaboratorInvitation().Where("app_id = ? AND expire_at > ?", appID, now)
-	rows, err := s.SQLExecutor.QueryWith(q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	var is []*model.CollaboratorInvitation
-	for rows.Next() {
-		i, err := scanCollaboratorInvitation(rows)
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.SQLExecutor.QueryWith(ctx, q)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		is = append(is, i)
+		defer rows.Close()
+
+		for rows.Next() {
+			i, err := scanCollaboratorInvitation(rows)
+			if err != nil {
+				return err
+			}
+			is = append(is, i)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return is, nil
 }
 
+// SendInvitation acquires connection.
 func (s *CollaboratorService) SendInvitation(
+	ctx context.Context,
 	appID string,
 	inviteeEmail string,
 ) (*model.CollaboratorInvitation, error) {
-	sessionInfo := session.GetValidSessionInfo(s.Context)
+	sessionInfo := session.GetValidSessionInfo(ctx)
 	invitedBy := sessionInfo.UserID
 
-	err := s.checkQuotaInSend(appID)
+	err := s.checkQuotaInSend(ctx, appID)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO(collaborator): Ideally we should prevent sending invitation to existing collaborator.
+	// Ideally we should prevent sending invitation to existing collaborator.
 	// However, this is not harmful to not have it.
 	// The collaborator will receive the invitation and they cannot accept it because
 	// we have database constraint to enforce this invariant.
-	// If Admin API have getUserByClaim, then we can detect this condition here.
 
 	// Check if the invitee has a pending invitation already.
-	invitations, err := s.ListInvitations(appID)
+	invitations, err := s.ListInvitations(ctx, appID)
 	if err != nil {
 		return nil, err
 	}
 	for _, i := range invitations {
 		if i.InviteeEmail == inviteeEmail {
 			return nil, ErrCollaboratorInvitationDuplicate
+		}
+	}
+
+	if AUTHGEARONCE {
+		inviteeExists, err := s.checkInviteeExistenceByEmail(ctx, invitedBy, inviteeEmail)
+		if err != nil {
+			return nil, err
+		}
+
+		if !inviteeExists {
+			err = s.createAccountForInvitee(ctx, invitedBy, inviteeEmail)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -384,12 +511,19 @@ func (s *CollaboratorService) SendInvitation(
 		ExpireAt:     expireAt,
 	}
 
-	err = s.deleteExpiredInvitations()
-	if err != nil {
-		return nil, err
-	}
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		err = s.deleteExpiredInvitations(ctx)
+		if err != nil {
+			return err
+		}
 
-	err = s.createCollaboratorInvitation(i)
+		err = s.createCollaboratorInvitation(ctx, i)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -422,48 +556,72 @@ func (s *CollaboratorService) SendInvitation(
 		return nil, err
 	}
 
-	s.TaskQueue.Enqueue(&tasks.SendMessagesParam{
-		EmailMessages: []mail.SendOptions{
-			{
-				// TODO(collaborator): We should reuse translation service.
-				Sender:    s.MailConfig.Sender,
-				ReplyTo:   s.MailConfig.ReplyTo,
-				Subject:   "You are invited to collaborate on \"" + appID + "\" in Authgear",
-				Recipient: inviteeEmail,
-				TextBody:  textBody,
-				HTMLBody:  htmlBody,
-			},
-		},
+	err = s.SMTPService.SendRealEmail(ctx, mail.SendOptions{
+		// TODO(collaborator): We should reuse translation service.
+		Sender:    s.MailConfig.Sender,
+		ReplyTo:   s.MailConfig.ReplyTo,
+		Subject:   "You are invited to collaborate on \"" + appID + "\" in Authgear",
+		Recipient: inviteeEmail,
+		TextBody:  textBody.String,
+		HTMLBody:  htmlBody.String,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return i, nil
 }
 
-func (s *CollaboratorService) GetInvitation(id string) (*model.CollaboratorInvitation, error) {
+// GetInvitation acquires connection.
+func (s *CollaboratorService) GetInvitation(ctx context.Context, id string) (*model.CollaboratorInvitation, error) {
 	q := s.selectCollaboratorInvitation().Where("id = ?", id)
-	row, err := s.SQLExecutor.QueryRowWith(q)
+	var ci *model.CollaboratorInvitation
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		row, err := s.SQLExecutor.QueryRowWith(ctx, q)
+		if err != nil {
+			return err
+		}
+
+		ci, err = scanCollaboratorInvitation(row)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return scanCollaboratorInvitation(row)
+
+	return ci, nil
 }
 
-func (s *CollaboratorService) GetInvitationWithCode(code string) (*model.CollaboratorInvitation, error) {
+// GetInvitationWithCode acquires connection.
+func (s *CollaboratorService) GetInvitationWithCode(ctx context.Context, code string) (*model.CollaboratorInvitation, error) {
 	now := s.Clock.NowUTC()
 	q := s.selectCollaboratorInvitation().Where("code = ? AND expire_at > ?", code, now)
-	rows, err := s.SQLExecutor.QueryWith(q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	var is []*model.CollaboratorInvitation
-	for rows.Next() {
-		i, err := scanCollaboratorInvitation(rows)
+	err := s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.SQLExecutor.QueryWith(ctx, q)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		is = append(is, i)
+		defer rows.Close()
+
+		for rows.Next() {
+			i, err := scanCollaboratorInvitation(rows)
+			if err != nil {
+				return err
+			}
+			is = append(is, i)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if len(is) <= 0 {
@@ -473,13 +631,81 @@ func (s *CollaboratorService) GetInvitationWithCode(code string) (*model.Collabo
 	return is[0], nil
 }
 
-func (s *CollaboratorService) DeleteInvitation(i *model.CollaboratorInvitation) error {
-	err := s.deleteExpiredInvitations()
+// DeleteInvitation acquires connection.
+func (s *CollaboratorService) DeleteInvitation(ctx context.Context, i *model.CollaboratorInvitation) error {
+	var err error
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		err = s.deleteInvitation(ctx, i)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return err
 	}
 
-	_, err = s.SQLExecutor.ExecWith(s.SQLBuilder.
+	return nil
+}
+
+// AcceptInvitation acquires connection.
+func (s *CollaboratorService) AcceptInvitation(ctx context.Context, code string) (*model.Collaborator, error) {
+	actorID := session.GetValidSessionInfo(ctx).UserID
+
+	invitation, err := s.GetInvitationWithCode(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.checkQuotaInAccept(ctx, invitation.AppID)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.CheckInviteeEmail(ctx, invitation, actorID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = s.GetCollaboratorByAppAndUser(ctx, invitation.AppID, actorID)
+	if err == nil {
+		return nil, ErrCollaboratorDuplicate
+	}
+	if !errors.Is(err, ErrCollaboratorNotFound) {
+		return nil, err
+	}
+
+	collaborator := s.NewCollaborator(invitation.AppID, actorID, model.CollaboratorRoleEditor)
+
+	err = s.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+		err = s.deleteInvitation(ctx, invitation)
+		if err != nil {
+			return err
+		}
+
+		err = s.CreateCollaborator(ctx, collaborator)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return collaborator, nil
+}
+
+func (s *CollaboratorService) deleteInvitation(ctx context.Context, i *model.CollaboratorInvitation) error {
+	var err error
+	err = s.deleteExpiredInvitations(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.SQLExecutor.ExecWith(ctx, s.SQLBuilder.
 		Delete(s.SQLBuilder.TableName("_portal_app_collaborator_invitation")).
 		Where("id = ?", i.ID),
 	)
@@ -490,50 +716,9 @@ func (s *CollaboratorService) DeleteInvitation(i *model.CollaboratorInvitation) 
 	return nil
 }
 
-func (s *CollaboratorService) AcceptInvitation(code string) (*model.Collaborator, error) {
-	actorID := session.GetValidSessionInfo(s.Context).UserID
-
-	invitation, err := s.GetInvitationWithCode(code)
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.checkQuotaInAccept(invitation.AppID)
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.CheckInviteeEmail(invitation, actorID)
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.DeleteInvitation(invitation)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = s.GetCollaboratorByAppAndUser(invitation.AppID, actorID)
-	if err == nil {
-		return nil, ErrCollaboratorDuplicate
-	}
-
-	if err != nil && !errors.Is(err, ErrCollaboratorNotFound) {
-		return nil, err
-	}
-
-	collaborator := s.NewCollaborator(invitation.AppID, actorID, model.CollaboratorRoleEditor)
-	err = s.CreateCollaborator(collaborator)
-	if err != nil {
-		return nil, err
-	}
-
-	return collaborator, nil
-}
-
-func (s *CollaboratorService) deleteExpiredInvitations() error {
+func (s *CollaboratorService) deleteExpiredInvitations(ctx context.Context) error {
 	now := s.Clock.NowUTC()
-	_, err := s.SQLExecutor.ExecWith(s.SQLBuilder.
+	_, err := s.SQLExecutor.ExecWith(ctx, s.SQLBuilder.
 		Delete(s.SQLBuilder.TableName("_portal_app_collaborator_invitation")).
 		Where("expire_at <= ?", now),
 	)
@@ -543,8 +728,8 @@ func (s *CollaboratorService) deleteExpiredInvitations() error {
 	return nil
 }
 
-func (s *CollaboratorService) createCollaboratorInvitation(i *model.CollaboratorInvitation) error {
-	_, err := s.SQLExecutor.ExecWith(s.SQLBuilder.
+func (s *CollaboratorService) createCollaboratorInvitation(ctx context.Context, i *model.CollaboratorInvitation) error {
+	_, err := s.SQLExecutor.ExecWith(ctx, s.SQLBuilder.
 		Insert(s.SQLBuilder.TableName("_portal_app_collaborator_invitation")).
 		Columns(
 			"id",
@@ -572,42 +757,40 @@ func (s *CollaboratorService) createCollaboratorInvitation(i *model.Collaborator
 	return nil
 }
 
-func (s *CollaboratorService) CheckInviteeEmail(i *model.CollaboratorInvitation, actorID string) error {
+// CheckInviteeEmail calls HTTP request.
+func (s *CollaboratorService) CheckInviteeEmail(ctx context.Context, i *model.CollaboratorInvitation, actorID string) error {
 	id := relay.ToGlobalID("User", actorID)
 
 	params := graphqlutil.DoParams{
-		OperationName: "getUserNodes",
+		OperationName: "getUserNode",
 		Query: `
-		query getUserNodes($ids: [ID!]!) {
-			nodes(ids: $ids) {
+		query getUserNode($id: ID!) {
+			node(id: $id) {
 				... on User {
 					id
-					verifiedClaims {
-						name
-						value
-					}
+					standardAttributes
 				}
 			}
 		}
 		`,
 		Variables: map[string]interface{}{
-			"ids": []interface{}{id},
+			"id": id,
 		},
 	}
 
-	r, err := http.NewRequest("POST", "/graphql", nil)
+	r, err := http.NewRequestWithContext(ctx, "POST", "/graphql", nil)
 	if err != nil {
 		return err
 	}
 
-	director, err := s.AdminAPI.SelfDirector(actorID, UsageInternal)
+	director, err := s.AdminAPI.SelfDirector(ctx, actorID, UsageInternal)
 	if err != nil {
 		return err
 	}
 
 	director(r)
 
-	result, err := graphqlutil.HTTPDo(r, params)
+	result, err := graphqlutil.HTTPDo(s.HTTPClient.Client, r, params)
 	if err != nil {
 		return err
 	}
@@ -616,59 +799,135 @@ func (s *CollaboratorService) CheckInviteeEmail(i *model.CollaboratorInvitation,
 		return fmt.Errorf("unexpected graphql errors: %v", result.Errors)
 	}
 
-	var userModels []*model.User
+	var email string
 	data := result.Data.(map[string]interface{})
-	nodes := data["nodes"].([]interface{})
-	for _, iface := range nodes {
-		// It could be null.
-		userNode, ok := iface.(map[string]interface{})
-		if !ok {
-			userModels = append(userModels, nil)
-		} else {
-			userModel := &model.User{}
-			globalID := userNode["id"].(string)
-			userModel.ID = globalID
-
-			// Use the last email claim.
-			verifiedClaims := userNode["verifiedClaims"].([]interface{})
-			for _, iface := range verifiedClaims {
-				claim := iface.(map[string]interface{})
-				name := claim["name"].(string)
-				value := claim["value"].(string)
-				if name == "email" {
-					userModel.Email = value
-				}
+	if userNode, ok := data["node"].(map[string]interface{}); ok {
+		if standardAttributes, ok := userNode["standardAttributes"].(map[string]interface{}); ok {
+			if e, ok := standardAttributes["email"].(string); ok {
+				email = e
 			}
-
-			userModels = append(userModels, userModel)
 		}
 	}
 
-	if len(userModels) != 1 {
-		return fmt.Errorf("expected exact one user")
-	}
-
-	user := userModels[0]
-
-	if user.Email != i.InviteeEmail {
+	if email != i.InviteeEmail {
 		return ErrCollaboratorInvitationInvalidEmail
 	}
 
 	return nil
 }
 
-func (s *CollaboratorService) checkQuotaInSend(appID string) error {
-	appCtx, err := s.AppConfigs.ResolveContext(appID)
+// checkInviteeExistenceByEmail calls HTTP request.
+func (s *CollaboratorService) checkInviteeExistenceByEmail(ctx context.Context, actorUserID string, inviteeEmail string) (inviteeExists bool, err error) {
+	params := graphqlutil.DoParams{
+		OperationName: "getUsersByStandardAttribute",
+		Query: `
+		query getUsersByStandardAttribute($name: String!, $value: String!) {
+			users: getUsersByStandardAttribute(attributeName: $name, attributeValue: $value) {
+				id
+			}
+		}
+		`,
+		Variables: map[string]interface{}{
+			"name":  "email",
+			"value": inviteeEmail,
+		},
+	}
+
+	r, err := http.NewRequestWithContext(ctx, "POST", "/graphql", nil)
+	if err != nil {
+		return
+	}
+
+	director, err := s.AdminAPI.SelfDirector(ctx, actorUserID, UsageInternal)
+	if err != nil {
+		return
+	}
+
+	director(r)
+
+	result, err := graphqlutil.HTTPDo(s.HTTPClient.Client, r, params)
+	if err != nil {
+		return
+	}
+
+	if result.HasErrors() {
+		err = fmt.Errorf("unexpected graphql errors: %v", result.Errors)
+		return
+	}
+
+	data := result.Data.(map[string]interface{})
+	users := data["users"].([]interface{})
+	if len(users) > 0 {
+		inviteeExists = true
+		return
+	}
+
+	return
+}
+
+// createAccountForInvitee calls HTTP request.
+func (s *CollaboratorService) createAccountForInvitee(ctx context.Context, actorUserID string, inviteeEmail string) (err error) {
+	params := graphqlutil.DoParams{
+		OperationName: "createAccount",
+		Query: `
+		mutation createAccount($email: String!) {
+			createUser(input: {
+				definition: {
+					loginID: {
+						key: "email"
+						value: $email
+					}
+				}
+				sendPassword: true
+				setPasswordExpired: true
+			}) {
+				user {
+					id
+				}
+			}
+		}
+		`,
+		Variables: map[string]interface{}{
+			"email": inviteeEmail,
+		},
+	}
+
+	r, err := http.NewRequestWithContext(ctx, "POST", "/graphql", nil)
 	if err != nil {
 		return err
 	}
 
-	collaborators, err := s.ListCollaborators(appID)
+	director, err := s.AdminAPI.SelfDirector(ctx, actorUserID, UsageInternal)
 	if err != nil {
 		return err
 	}
 
-	invitations, err := s.ListInvitations(appID)
+	director(r)
+
+	result, err := graphqlutil.HTTPDo(s.HTTPClient.Client, r, params)
+	if err != nil {
+		return err
+	}
+
+	if result.HasErrors() {
+		return fmt.Errorf("unexpected graphql errors: %v", result.Errors)
+	}
+
+	return
+}
+
+func (s *CollaboratorService) checkQuotaInSend(ctx context.Context, appID string) error {
+	appCtx, err := s.AppConfigs.ResolveContext(ctx, appID)
+	if err != nil {
+		return err
+	}
+
+	collaborators, err := s.ListCollaborators(ctx, appID)
+	if err != nil {
+		return err
+	}
+
+	invitations, err := s.ListInvitations(ctx, appID)
 	if err != nil {
 		return err
 	}
@@ -685,13 +944,13 @@ func (s *CollaboratorService) checkQuotaInSend(appID string) error {
 	return nil
 }
 
-func (s *CollaboratorService) checkQuotaInAccept(appID string) error {
-	appCtx, err := s.AppConfigs.ResolveContext(appID)
+func (s *CollaboratorService) checkQuotaInAccept(ctx context.Context, appID string) error {
+	appCtx, err := s.AppConfigs.ResolveContext(ctx, appID)
 	if err != nil {
 		return err
 	}
 
-	collaborators, err := s.ListCollaborators(appID)
+	collaborators, err := s.ListCollaborators(ctx, appID)
 	if err != nil {
 		return err
 	}

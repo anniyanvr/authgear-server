@@ -2,6 +2,7 @@ package hook
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -12,16 +13,22 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/util/crypto"
 	"github.com/authgear/authgear-server/pkg/util/jwkutil"
+	"github.com/authgear/authgear-server/pkg/util/log"
 )
+
+type WebHookLogger struct{ *log.Logger }
+
+func NewWebHookLogger(lf *log.Factory) WebHookLogger { return WebHookLogger{lf.New("webhook")} }
 
 type WebHook interface {
 	SupportURL(u *url.URL) bool
-	PrepareRequest(u *url.URL, body interface{}) (*http.Request, error)
+	PrepareRequest(ctx context.Context, u *url.URL, body interface{}) (*http.Request, error)
 	PerformWithResponse(client *http.Client, request *http.Request) (resp *http.Response, err error)
 	PerformNoResponse(client *http.Client, request *http.Request) error
 }
 
 type WebHookImpl struct {
+	Logger WebHookLogger
 	Secret *config.WebhookKeyMaterials
 }
 
@@ -31,7 +38,7 @@ func (h *WebHookImpl) SupportURL(u *url.URL) bool {
 	return u.Scheme == "http" || u.Scheme == "https"
 }
 
-func (h *WebHookImpl) PrepareRequest(u *url.URL, body interface{}) (*http.Request, error) {
+func (h *WebHookImpl) PrepareRequest(ctx context.Context, u *url.URL, body interface{}) (*http.Request, error) {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -42,7 +49,7 @@ func (h *WebHookImpl) PrepareRequest(u *url.URL, body interface{}) (*http.Reques
 	}
 	signature := crypto.HMACSHA256String(key, jsonBody)
 
-	request, err := http.NewRequest("POST", u.String(), bytes.NewReader(jsonBody))
+	request, err := http.NewRequestWithContext(ctx, "POST", u.String(), bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}
@@ -65,15 +72,17 @@ func (h *WebHookImpl) PerformNoResponse(
 	client *http.Client,
 	request *http.Request) error {
 
-	resp, err := performRequest(client, request)
-
-	defer func() {
+	go func() {
+		resp, err := performRequest(client, request)
+		if err != nil {
+			h.Logger.WithError(err).Error("failed to dispatch nonblocking webhook")
+		}
 		if resp != nil {
-			resp.Body.Close()
+			defer resp.Body.Close()
 		}
 	}()
 
-	return err
+	return nil
 }
 
 type EventWebHookImpl struct {
@@ -84,8 +93,8 @@ type EventWebHookImpl struct {
 
 var _ EventWebHook = &EventWebHookImpl{}
 
-func (h *EventWebHookImpl) DeliverBlockingEvent(u *url.URL, e *event.Event) (*event.HookResponse, error) {
-	request, err := h.PrepareRequest(u, e)
+func (h *EventWebHookImpl) DeliverBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) (*event.HookResponse, error) {
+	request, err := h.PrepareRequest(ctx, u, e)
 	if err != nil {
 		return nil, err
 	}
@@ -112,8 +121,10 @@ func (h *EventWebHookImpl) DeliverBlockingEvent(u *url.URL, e *event.Event) (*ev
 	return hookResp, nil
 }
 
-func (h *EventWebHookImpl) DeliverNonBlockingEvent(u *url.URL, e *event.Event) error {
-	request, err := h.PrepareRequest(u, e)
+func (h *EventWebHookImpl) DeliverNonBlockingEvent(ctx context.Context, u *url.URL, e *event.Event) error {
+	// Detach the deadline so that the context is not canceled along with the request.
+	ctx = context.WithoutCancel(ctx)
+	request, err := h.PrepareRequest(ctx, u, e)
 	if err != nil {
 		return err
 	}

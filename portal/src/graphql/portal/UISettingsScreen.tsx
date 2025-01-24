@@ -55,15 +55,17 @@ import {
 import styles from "./UISettingsScreen.module.css";
 import { useAppConfigForm } from "../../hook/useAppConfigForm";
 import { clearEmptyObject } from "../../util/misc";
-import { useResourceForm } from "../../hook/useResourceForm";
+import {
+  ResourcesFormState,
+  useResourceForm,
+} from "../../hook/useResourceForm";
 import FormContainer from "../../FormContainer";
 import { useAppFeatureConfigQuery } from "./query/appFeatureConfigQuery";
 import WidgetDescription from "../../WidgetDescription";
 import Toggle from "../../Toggle";
-import { ErrorParseRule, ParsedAPIError } from "../../error/parse";
-import { APIError } from "../../error/error";
-
-const ImageMaxSizeInKB = 100;
+import { ErrorParseRule } from "../../error/parse";
+import { makeImageSizeTooLargeErrorRule } from "../../error/resources";
+import { nonNullable } from "../../util/types";
 
 interface ConfigFormState {
   supportedLanguages: string[];
@@ -72,8 +74,6 @@ interface ConfigFormState {
   watermarkDisabled: boolean;
 
   default_client_uri: string;
-  default_redirect_uri: string;
-  default_post_logout_redirect_uri: string;
 }
 
 interface FeatureConfigFormState {
@@ -102,16 +102,7 @@ function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
     darkThemeDisabled: config.ui?.dark_theme_disabled ?? false,
     watermarkDisabled: config.ui?.watermark_disabled ?? false,
     default_client_uri: config.ui?.default_client_uri ?? "",
-    default_redirect_uri: config.ui?.default_redirect_uri ?? "",
-    default_post_logout_redirect_uri:
-      config.ui?.default_post_logout_redirect_uri ?? "",
   };
-}
-
-interface PropertyNames {
-  default_client_uri: string;
-  default_redirect_uri: string;
-  default_post_logout_redirect_uri: string;
 }
 
 function constructConfig(
@@ -128,45 +119,10 @@ function constructConfig(
     config.ui.dark_theme_disabled = currentState.darkThemeDisabled;
     config.ui.watermark_disabled = currentState.watermarkDisabled;
 
-    const propertyNames: (keyof PropertyNames)[] = [
-      "default_client_uri",
-      "default_redirect_uri",
-      "default_post_logout_redirect_uri",
-    ];
-
-    for (const propertyName of propertyNames) {
-      config.ui[propertyName] =
-        currentState[propertyName] === ""
-          ? undefined
-          : currentState[propertyName];
-    }
+    config.ui.default_client_uri = currentState.default_client_uri || undefined;
 
     clearEmptyObject(config);
   });
-}
-
-interface ResourcesFormState {
-  resources: Partial<Record<string, Resource>>;
-}
-
-function constructResourcesFormState(
-  resources: Resource[]
-): ResourcesFormState {
-  const resourceMap: Partial<Record<string, Resource>> = {};
-  for (const r of resources) {
-    const id = specifierId(r.specifier);
-    // Multiple resources may use same specifier ID (images),
-    // use the first resource with non-empty values.
-    if ((resourceMap[id]?.nullableValue ?? "") === "") {
-      resourceMap[specifierId(r.specifier)] = r;
-    }
-  }
-
-  return { resources: resourceMap };
-}
-
-function constructResources(state: ResourcesFormState): Resource[] {
-  return Object.values(state.resources).filter(Boolean) as Resource[];
 }
 
 interface FormState
@@ -191,56 +147,20 @@ interface FormModel {
 
 interface ResourcesConfigurationContentProps {
   form: FormModel;
-  supportedLanguages: LanguageTag[];
+  initialSupportedLanguages: string[];
 }
 
 const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProps> =
   function ResourcesConfigurationContent(props) {
+    const { initialSupportedLanguages } = props;
     const { state, setState } = props.form;
-    const { supportedLanguages } = props;
+    const { supportedLanguages } = state;
 
     const { renderToString } = useContext(Context);
 
     const setSelectedLanguage = useCallback(
       (selectedLanguage: LanguageTag) => {
         setState((s) => ({ ...s, selectedLanguage }));
-      },
-      [setState]
-    );
-
-    const onChangeLanguages = useCallback(
-      (supportedLanguages: LanguageTag[], fallbackLanguage: LanguageTag) => {
-        setState((prev) => {
-          // Reset selected language to fallback language if it was removed.
-          let { selectedLanguage, resources } = prev;
-          resources = { ...resources };
-          if (!supportedLanguages.includes(selectedLanguage)) {
-            selectedLanguage = fallbackLanguage;
-          }
-
-          // Remove resources of removed languges
-          const removedLanguages = prev.supportedLanguages.filter(
-            (l) => !supportedLanguages.includes(l)
-          );
-          for (const [id, resource] of Object.entries(resources)) {
-            const language = resource?.specifier.locale;
-            if (
-              resource != null &&
-              language != null &&
-              removedLanguages.includes(language)
-            ) {
-              resources[id] = { ...resource, nullableValue: "" };
-            }
-          }
-
-          return {
-            ...prev,
-            selectedLanguage,
-            supportedLanguages,
-            fallbackLanguage,
-            resources,
-          };
-        });
       },
       [setState]
     );
@@ -265,7 +185,9 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
 
     const getOnChangeImage = useCallback(
       (def: ResourceDefinition) => {
-        return (base64EncodedData?: string, extension?: string) => {
+        return (
+          image: { base64EncodedData: string; extension: string } | null
+        ) => {
           setState((prev) => {
             const updatedResources = { ...prev.resources };
 
@@ -286,16 +208,16 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             }
 
             // Add the new one.
-            if (base64EncodedData != null && extension != null) {
+            if (image != null) {
               const specifier = {
                 def,
-                extension,
+                extension: image.extension,
                 locale: state.selectedLanguage,
               };
               const resource: Resource = {
                 specifier,
                 path: expandSpecifier(specifier),
-                nullableValue: base64EncodedData,
+                nullableValue: image.base64EncodedData,
               };
               updatedResources[specifierId(specifier)] = resource;
             }
@@ -393,29 +315,20 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
       [state.selectedLanguage, state.fallbackLanguage, setState]
     );
 
-    const valueForState = useCallback(
-      (key: keyof PropertyNames) => {
-        return state[key];
-      },
-      [state]
-    );
-
-    const onChangeForState = useCallback(
-      (key: keyof PropertyNames) => {
-        return (
-          _e: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>,
-          value?: string
-        ) => {
-          if (value == null) {
-            return;
-          }
-          setState((prev) => {
-            return {
-              ...prev,
-              [key]: value,
-            };
-          });
-        };
+    const onChangeDefaultClientURI = useCallback(
+      (
+        _e: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>,
+        value?: string
+      ) => {
+        if (value == null) {
+          return;
+        }
+        setState((prev) => {
+          return {
+            ...prev,
+            default_client_uri: value,
+          };
+        });
       },
       [setState]
     );
@@ -665,11 +578,11 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             <FormattedMessage id="UISettingsScreen.title" />
           </ScreenTitle>
           <ManageLanguageWidget
+            existingLanguages={initialSupportedLanguages}
             supportedLanguages={supportedLanguages}
             selectedLanguage={state.selectedLanguage}
             fallbackLanguage={state.fallbackLanguage}
             onChangeSelectedLanguage={setSelectedLanguage}
-            onChangeLanguages={onChangeLanguages}
           />
         </div>
         <ScreenDescription className={styles.widget}>
@@ -722,28 +635,8 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             description={renderToString(
               "UISettingsScreen.default-client-uri-description"
             )}
-            value={valueForState("default_client_uri")}
-            onChange={onChangeForState("default_client_uri")}
-          />
-          <TextField
-            label={renderToString(
-              "UISettingsScreen.default-redirect-uri-label"
-            )}
-            description={renderToString(
-              "UISettingsScreen.default-redirect-uri-description"
-            )}
-            value={valueForState("default_redirect_uri")}
-            onChange={onChangeForState("default_redirect_uri")}
-          />
-          <TextField
-            label={renderToString(
-              "UISettingsScreen.default-post-logout-redirect-uri-label"
-            )}
-            description={renderToString(
-              "UISettingsScreen.default-post-logout-redirect-uri-description"
-            )}
-            value={valueForState("default_post_logout_redirect_uri")}
-            onChange={onChangeForState("default_post_logout_redirect_uri")}
+            value={state.default_client_uri}
+            onChange={onChangeDefaultClientURI}
           />
         </Widget>
         <Widget className={styles.widget}>
@@ -847,12 +740,7 @@ const UISettingsScreen: React.VFC = function UISettingsScreen() {
     return specifiers;
   }, [initialSupportedLanguages]);
 
-  const resources = useResourceForm(
-    appID,
-    specifiers,
-    constructResourcesFormState,
-    constructResources
-  );
+  const resources = useResourceForm(appID, specifiers);
 
   const state = useMemo<FormState>(
     () => ({
@@ -863,9 +751,6 @@ const UISettingsScreen: React.VFC = function UISettingsScreen() {
       darkThemeDisabled: config.state.darkThemeDisabled,
       watermarkDisabled: config.state.watermarkDisabled,
       default_client_uri: config.state.default_client_uri,
-      default_redirect_uri: config.state.default_redirect_uri,
-      default_post_logout_redirect_uri:
-        config.state.default_post_logout_redirect_uri,
       whiteLabelingDisabled:
         featureConfig.effectiveFeatureConfig?.ui?.white_labeling?.disabled ??
         false,
@@ -876,100 +761,57 @@ const UISettingsScreen: React.VFC = function UISettingsScreen() {
       config.state.darkThemeDisabled,
       config.state.watermarkDisabled,
       config.state.default_client_uri,
-      config.state.default_redirect_uri,
-      config.state.default_post_logout_redirect_uri,
       resources.state.resources,
       selectedLanguage,
       featureConfig.effectiveFeatureConfig?.ui?.white_labeling?.disabled,
     ]
   );
 
-  const form: FormModel = {
-    isLoading: config.isLoading || resources.isLoading || featureConfig.loading,
-    isUpdating: config.isUpdating || resources.isUpdating,
-    isDirty: config.isDirty || resources.isDirty,
-    loadError: config.loadError ?? resources.loadError ?? featureConfig.error,
-    updateError: config.updateError ?? resources.updateError,
-    state,
-    setState: (fn) => {
-      const newState = fn(state);
-      config.setState(() => ({
-        supportedLanguages: newState.supportedLanguages,
-        fallbackLanguage: newState.fallbackLanguage,
-        darkThemeDisabled: newState.darkThemeDisabled,
-        watermarkDisabled: newState.watermarkDisabled,
-        default_client_uri: newState.default_client_uri,
-        default_redirect_uri: newState.default_redirect_uri,
-        default_post_logout_redirect_uri:
-          newState.default_post_logout_redirect_uri,
-      }));
-      resources.setState(() => ({ resources: newState.resources }));
-      setSelectedLanguage(newState.selectedLanguage);
-    },
-    reload: () => {
-      config.reload();
-      resources.reload();
-      featureConfig.refetch().finally(() => {});
-    },
-    reset: () => {
-      config.reset();
-      resources.reset();
-      setSelectedLanguage(config.state.fallbackLanguage);
-    },
-    save: async () => {
-      await config.save();
-      await resources.save();
-    },
-  };
-
-  const imageSizeTooLargeErrorRule = useCallback(
-    (apiError: APIError): ParsedAPIError[] => {
-      if (apiError.reason === "RequestEntityTooLarge") {
-        // When the request is blocked by the load balancer due to RequestEntityTooLarge
-        // We try to get the largest resource from the state
-        // and construct the error message for display
-
-        let path = "";
-        let longestLength = 0;
-        // get the largest resources from the state
-        for (const r of Object.keys(state.resources)) {
-          const l = state.resources[r]?.nullableValue?.length ?? 0;
-          if (l > longestLength) {
-            longestLength = l;
-            path = state.resources[r]?.path ?? "";
-          }
-        }
-
-        // parse resource type from resource path
-        let resourceType = "other";
-        if (path !== "") {
-          const dir = path.split("/");
-          const fileName = dir[dir.length - 1];
-          if (fileName.lastIndexOf(".") !== -1) {
-            resourceType = fileName.slice(0, fileName.lastIndexOf("."));
-          } else {
-            resourceType = fileName;
-          }
-        }
-
-        return [
-          {
-            messageID: "errors.resource-too-large",
-            arguments: {
-              maxSize: ImageMaxSizeInKB,
-              resourceType,
-            },
-          },
-        ];
-      }
-      return [];
-    },
-    [state.resources]
+  const form: FormModel = useMemo(
+    () => ({
+      isLoading:
+        config.isLoading || resources.isLoading || featureConfig.loading,
+      isUpdating: config.isUpdating || resources.isUpdating,
+      isDirty: config.isDirty || resources.isDirty,
+      loadError: config.loadError ?? resources.loadError ?? featureConfig.error,
+      updateError: config.updateError ?? resources.updateError,
+      state,
+      setState: (fn) => {
+        const newState = fn(state);
+        config.setState((configState) => ({
+          ...configState,
+          darkThemeDisabled: newState.darkThemeDisabled,
+          watermarkDisabled: newState.watermarkDisabled,
+          default_client_uri: newState.default_client_uri,
+        }));
+        resources.setState(() => ({ resources: newState.resources }));
+        setSelectedLanguage(newState.selectedLanguage);
+      },
+      reload: () => {
+        config.reload();
+        resources.reload();
+        featureConfig.refetch().finally(() => {});
+      },
+      reset: () => {
+        config.reset();
+        resources.reset();
+        setSelectedLanguage(config.state.fallbackLanguage);
+      },
+      save: async (ignoreConflict: boolean = false) => {
+        await config.save(ignoreConflict);
+        await resources.save(ignoreConflict);
+      },
+    }),
+    [config, featureConfig, resources, state]
   );
 
   const errorRules: ErrorParseRule[] = useMemo(
-    () => [imageSizeTooLargeErrorRule],
-    [imageSizeTooLargeErrorRule]
+    () => [
+      makeImageSizeTooLargeErrorRule(
+        Object.values(form.state.resources).filter(nonNullable)
+      ),
+    ],
+    [form.state.resources]
   );
 
   if (form.isLoading) {
@@ -984,7 +826,7 @@ const UISettingsScreen: React.VFC = function UISettingsScreen() {
     <FormContainer form={form} canSave={true} errorRules={errorRules}>
       <ResourcesConfigurationContent
         form={form}
-        supportedLanguages={config.state.supportedLanguages}
+        initialSupportedLanguages={initialSupportedLanguages}
       />
     </FormContainer>
   );

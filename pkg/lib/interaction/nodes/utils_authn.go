@@ -1,6 +1,8 @@
 package nodes
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn"
@@ -9,6 +11,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/feature"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
 )
 
 type SendOOBCodeResult struct {
@@ -26,20 +29,20 @@ type SendOOBCode struct {
 	OTPForm              otp.Form
 }
 
-func (p *SendOOBCode) Do() (*SendOOBCodeResult, error) {
-	var messageType otp.MessageType
+func (p *SendOOBCode) Do(goCtx context.Context) (*SendOOBCodeResult, error) {
+	var messageType translation.MessageType
 	switch p.Stage {
 	case authn.AuthenticationStagePrimary:
 		if p.IsAuthenticating {
-			messageType = otp.MessageTypeAuthenticatePrimaryOOB
+			messageType = translation.MessageTypeAuthenticatePrimaryOOB
 		} else {
-			messageType = otp.MessageTypeSetupPrimaryOOB
+			messageType = translation.MessageTypeSetupPrimaryOOB
 		}
 	case authn.AuthenticationStageSecondary:
 		if p.IsAuthenticating {
-			messageType = otp.MessageTypeAuthenticateSecondaryOOB
+			messageType = translation.MessageTypeAuthenticateSecondaryOOB
 		} else {
-			messageType = otp.MessageTypeSetupSecondaryOOB
+			messageType = translation.MessageTypeSetupSecondaryOOB
 		}
 	default:
 		panic("interaction: unknown authentication stage: " + p.Stage)
@@ -79,17 +82,9 @@ func (p *SendOOBCode) Do() (*SendOOBCodeResult, error) {
 		CodeLength: p.OTPForm.CodeLength(),
 	}
 
-	msg, err := p.Context.OTPSender.Prepare(channel, p.AuthenticatorInfo.OOBOTP.ToTarget(), p.OTPForm, messageType)
-	if p.IgnoreRatelimitError && apierrors.IsKind(err, ratelimit.RateLimited) {
-		// Ignore the rate limit error and do NOT send the code.
-		return result, nil
-	} else if err != nil {
-		return nil, err
-	}
-	defer msg.Close()
-
 	code, err := p.Context.OTPCodeService.GenerateOTP(
-		otp.KindOOBOTP(p.Context.Config, channel),
+		goCtx,
+		otp.KindOOBOTPWithForm(p.Context.Config, channel, p.OTPForm),
 		p.AuthenticatorInfo.OOBOTP.ToTarget(),
 		p.OTPForm,
 		&otp.GenerateOptions{WebSessionID: p.Context.WebSessionID},
@@ -101,8 +96,20 @@ func (p *SendOOBCode) Do() (*SendOOBCodeResult, error) {
 		return nil, err
 	}
 
-	err = p.Context.OTPSender.Send(msg, otp.SendOptions{OTP: code})
-	if err != nil {
+	err = p.Context.OTPSender.Send(
+		goCtx,
+		otp.SendOptions{
+			Channel: channel,
+			Target:  p.AuthenticatorInfo.OOBOTP.ToTarget(),
+			Form:    p.OTPForm,
+			Type:    messageType,
+			OTP:     code,
+		},
+	)
+	if p.IgnoreRatelimitError && apierrors.IsKind(err, ratelimit.RateLimited) {
+		// Ignore the rate limit error and do NOT send the code.
+		return result, nil
+	} else if err != nil {
 		return nil, err
 	}
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/authgear/authgear-server/pkg/util/copyutil"
 	"github.com/authgear/authgear-server/pkg/util/errorutil"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
@@ -63,6 +64,14 @@ func (e *APIError) HasCause(kind string) bool {
 	}
 
 	return false
+}
+
+func (e *APIError) Clone() *APIError {
+	ee, err := copyutil.Clone(e)
+	if err != nil {
+		return nil
+	}
+	return ee.(*APIError)
 }
 
 func (k Kind) New(msg string) error {
@@ -154,6 +163,11 @@ func AsAPIError(err error) *APIError {
 	details := errorutil.CollectDetails(err, nil)
 	info := errorutil.FilterDetails(details, APIErrorDetail)
 
+	var jsonSyntaxError *json.SyntaxError
+	if errors.As(err, &jsonSyntaxError) {
+		return newInvalidJSON(jsonSyntaxError)
+	}
+
 	var apiError *APIError
 	if errors.As(err, &apiError) {
 		apiError.Info = mergeInfo(apiError.Info, info)
@@ -225,4 +239,19 @@ func NewNotFound(msg string) error {
 
 func NewDataRace(msg string) error {
 	return DataRace.WithReason(string(DataRace)).New(msg)
+}
+
+func NewTooManyRequest(msg string) error {
+	return TooManyRequest.WithReason(string(TooManyRequest)).New(msg)
+}
+
+func newInvalidJSON(err *json.SyntaxError) *APIError {
+	return &APIError{
+		Kind:    Kind{BadRequest, "InvalidJSON"},
+		Message: err.Error(),
+		Code:    BadRequest.HTTPStatus(),
+		Info: map[string]interface{}{
+			"byte_offset": err.Offset,
+		},
+	}
 }

@@ -1,8 +1,8 @@
 import React, { useCallback, useContext, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Pivot, PivotItem } from "@fluentui/react";
+import cn from "classnames";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
-import { produce } from "immer";
 import ShowLoading from "../../ShowLoading";
 import ShowError from "../../ShowError";
 import ScreenContent from "../../ScreenContent";
@@ -14,9 +14,10 @@ import ManageLanguageWidget from "./ManageLanguageWidget";
 import EditTemplatesWidget, {
   EditTemplatesWidgetSection,
 } from "./EditTemplatesWidget";
-import { AuthenticatorEmailOTPMode, PortalAPIAppConfig } from "../../types";
+import { AuthenticatorEmailOTPMode, MessagingConfig } from "../../types";
 import {
   ALL_LANGUAGES_TEMPLATES,
+  DEFAULT_TEMPLATE_LOCALE,
   RESOURCE_AUTHENTICATE_PRIMARY_LOGIN_LINK_HTML,
   RESOURCE_AUTHENTICATE_PRIMARY_LOGIN_LINK_TXT,
   RESOURCE_AUTHENTICATE_PRIMARY_OOB_EMAIL_HTML,
@@ -53,66 +54,19 @@ import {
   specifierId,
   expandSpecifier,
 } from "../../util/resource";
-import { useAppConfigForm } from "../../hook/useAppConfigForm";
-import { clearEmptyObject } from "../../util/misc";
-import { useResourceForm } from "../../hook/useResourceForm";
+import {
+  ResourcesFormState,
+  useResourceForm,
+} from "../../hook/useResourceForm";
 import FormContainer from "../../FormContainer";
-import { useSystemConfig } from "../../context/SystemConfigContext";
 import styles from "./LocalizationConfigurationScreen.module.css";
+import { useAppAndSecretConfigQuery } from "./query/appAndSecretConfigQuery";
+import FeatureDisabledMessageBar from "./FeatureDisabledMessageBar";
+import { useAppFeatureConfigQuery } from "./query/appFeatureConfigQuery";
 
-interface ConfigFormState {
+interface FormState extends ResourcesFormState {
   supportedLanguages: string[];
   fallbackLanguage: string;
-}
-
-function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
-  const fallbackLanguage = config.localization?.fallback_language ?? "en";
-  return {
-    fallbackLanguage,
-    supportedLanguages: config.localization?.supported_languages ?? [
-      fallbackLanguage,
-    ],
-  };
-}
-
-function constructConfig(
-  config: PortalAPIAppConfig,
-  _initialState: ConfigFormState,
-  currentState: ConfigFormState
-): PortalAPIAppConfig {
-  return produce(config, (config) => {
-    config.localization = config.localization ?? {};
-    config.localization.fallback_language = currentState.fallbackLanguage;
-    config.localization.supported_languages = currentState.supportedLanguages;
-    clearEmptyObject(config);
-  });
-}
-
-interface ResourcesFormState {
-  resources: Partial<Record<string, Resource>>;
-}
-
-function constructResourcesFormState(
-  resources: Resource[]
-): ResourcesFormState {
-  const resourceMap: Partial<Record<string, Resource>> = {};
-  for (const r of resources) {
-    const id = specifierId(r.specifier);
-    // Multiple resources may use same specifier ID (images),
-    // use the first resource with non-empty values.
-    if ((resourceMap[id]?.nullableValue ?? "") === "") {
-      resourceMap[specifierId(r.specifier)] = r;
-    }
-  }
-
-  return { resources: resourceMap };
-}
-
-function constructResources(state: ResourcesFormState): Resource[] {
-  return Object.values(state.resources).filter(Boolean) as Resource[];
-}
-
-interface FormState extends ConfigFormState, ResourcesFormState {
   selectedLanguage: string;
 }
 
@@ -131,11 +85,12 @@ interface FormModel {
 
 interface ResourcesConfigurationContentProps {
   form: FormModel;
-  supportedLanguages: LanguageTag[];
+  initialSupportedLanguages: string[];
   passwordlessViaEmailEnabled: boolean;
   passwordlessViaSMSEnabled: boolean;
   passwordlessViaEmailOTPMode: AuthenticatorEmailOTPMode;
   verificationEnabled: boolean;
+  messagingFeatureConfig?: MessagingConfig;
 }
 
 const PIVOT_KEY_FORGOT_PASSWORD_LINK = "forgot_password_link";
@@ -143,7 +98,6 @@ const PIVOT_KEY_FORGOT_PASSWORD_CODE = "forgot_password_code";
 const PIVOT_KEY_VERIFICATION = "verification";
 const PIVOT_KEY_PASSWORDLESS_VIA_EMAIL = "passwordless_via_email";
 const PIVOT_KEY_PASSWORDLESS_VIA_SMS = "passwordless_via_sms";
-const PIVOT_KEY_TRANSLATION_JSON = "translation.json";
 
 const PIVOT_KEY_DEFAULT = PIVOT_KEY_FORGOT_PASSWORD_LINK;
 
@@ -153,62 +107,28 @@ const ALL_PIVOT_KEYS = [
   PIVOT_KEY_VERIFICATION,
   PIVOT_KEY_PASSWORDLESS_VIA_EMAIL,
   PIVOT_KEY_PASSWORDLESS_VIA_SMS,
-  PIVOT_KEY_TRANSLATION_JSON,
 ];
 
 const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProps> =
   function ResourcesConfigurationContent(props) {
     const { state, setState } = props.form;
     const {
-      supportedLanguages,
+      initialSupportedLanguages,
       passwordlessViaEmailEnabled,
       passwordlessViaSMSEnabled,
       passwordlessViaEmailOTPMode,
       verificationEnabled,
+      messagingFeatureConfig,
     } = props;
+    const { supportedLanguages } = state;
     const { renderToString } = useContext(Context);
-    const { gitCommitHash } = useSystemConfig();
+
+    const isTemplateCustomizationDisabled =
+      messagingFeatureConfig?.template_customization_disabled ?? false;
 
     const setSelectedLanguage = useCallback(
       (selectedLanguage: LanguageTag) => {
         setState((s) => ({ ...s, selectedLanguage }));
-      },
-      [setState]
-    );
-
-    const onChangeLanguages = useCallback(
-      (supportedLanguages: LanguageTag[], fallbackLanguage: LanguageTag) => {
-        setState((prev) => {
-          // Reset selected language to fallback language if it was removed.
-          let { selectedLanguage, resources } = prev;
-          resources = { ...resources };
-          if (!supportedLanguages.includes(selectedLanguage)) {
-            selectedLanguage = fallbackLanguage;
-          }
-
-          // Remove resources of removed languges
-          const removedLanguages = prev.supportedLanguages.filter(
-            (l) => !supportedLanguages.includes(l)
-          );
-          for (const [id, resource] of Object.entries(resources)) {
-            const language = resource?.specifier.locale;
-            if (
-              resource != null &&
-              language != null &&
-              removedLanguages.includes(language)
-            ) {
-              resources[id] = { ...resource, nullableValue: "" };
-            }
-          }
-
-          return {
-            ...prev,
-            selectedLanguage,
-            supportedLanguages,
-            fallbackLanguage,
-            resources,
-          };
-        });
       },
       [setState]
     );
@@ -233,7 +153,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
         getValueFn: (
           resource: Resource | undefined
         ) => string | undefined | null
-      ) => {
+      ): string | undefined | null => {
         const specifier: ResourceSpecifier = {
           def,
           locale: selectedLanguage,
@@ -247,7 +167,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             locale: fallbackLanguage,
             extension: null,
           };
-          return getValueFn(resources[specifierId(specifier)]) ?? "";
+          return getValueFn(resources[specifierId(specifier)]);
         }
 
         return value;
@@ -257,12 +177,25 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
 
     const getValue = useCallback(
       (def: ResourceDefinition) => {
-        return getValueFromState(
+        const selectedValue = getValueFromState(
           state.resources,
           state.selectedLanguage,
           state.fallbackLanguage,
           def,
-          (res) => res?.nullableValue
+          (res) => res?.nullableValue ?? res?.effectiveData
+        );
+        if (selectedValue != null) {
+          return selectedValue;
+        }
+
+        return (
+          getValueFromState(
+            state.resources,
+            DEFAULT_TEMPLATE_LOCALE,
+            state.fallbackLanguage,
+            def,
+            (res) => res?.effectiveData
+          ) ?? ""
         );
       },
       [
@@ -309,13 +242,16 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
           (res) => res?.nullableValue
         );
         try {
-          const translationJSON = JSON.parse(translationJSONStr);
-          if (translationJSON[key] != null) {
-            return translationJSON[key];
+          if (translationJSONStr != null) {
+            const translationJSON = JSON.parse(translationJSONStr);
+            if (translationJSON[key] != null) {
+              return translationJSON[key];
+            }
           }
         } catch (_e: unknown) {
           // if failed to decode the translation.json, use the effective data
         }
+
         // fallback to the effective data
         const effTranslationJSONStr = getValueFromState(
           state.resources,
@@ -324,8 +260,33 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
           RESOURCE_TRANSLATION_JSON,
           (res) => res?.effectiveData
         );
-        const jsonValue = JSON.parse(effTranslationJSONStr);
-        return jsonValue[key] ?? "";
+        try {
+          if (effTranslationJSONStr != null) {
+            const translationJSON = JSON.parse(effTranslationJSONStr);
+            return translationJSON[key] ?? "";
+          }
+        } catch (_e: unknown) {
+          // if failed to decode the translation.json, use English.
+        }
+
+        // fallback to en
+        const enTranslationJSONStr = getValueFromState(
+          state.resources,
+          DEFAULT_TEMPLATE_LOCALE,
+          state.fallbackLanguage,
+          RESOURCE_TRANSLATION_JSON,
+          (res) => res?.effectiveData
+        );
+        try {
+          if (enTranslationJSONStr != null) {
+            const translationJSON = JSON.parse(enTranslationJSONStr);
+            return translationJSON[key] ?? "";
+          }
+        } catch (_e: unknown) {
+          // if failed to decode the translation.json, return empty string
+        }
+
+        return "";
       },
       [
         state.resources,
@@ -353,20 +314,25 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               (res) => res?.nullableValue
             );
 
-            let resultTranslationJSON;
-            try {
-              const translationJSON = JSON.parse(translationJSONStr);
-              if (value) {
-                translationJSON[key] = value;
-              } else {
-                delete translationJSON[key];
-              }
-              resultTranslationJSON = JSON.stringify(translationJSON, null, 2);
-            } catch (error: unknown) {
-              // if failed to decode the translation.json, don't update it
-              console.error(error);
-              return prev;
+            // By default, create a new translation.json
+            let translationJSON: Record<string, string> = {};
+            // If translation.json exists, use it.
+            if (translationJSONStr != null) {
+              translationJSON = JSON.parse(translationJSONStr);
             }
+
+            // Update the value.
+            if (value) {
+              translationJSON[key] = value;
+            } else {
+              delete translationJSON[key];
+            }
+
+            const resultTranslationJSON = JSON.stringify(
+              translationJSON,
+              null,
+              2
+            );
 
             // get the translation JSON effective data, decode and alter
             const effTranslationJSONStr = getValueFromState(
@@ -376,12 +342,20 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               RESOURCE_TRANSLATION_JSON,
               (res) => res?.effectiveData
             );
-            const effTranslationJSON = JSON.parse(effTranslationJSONStr);
+
+            // By default, create a new translation.json
+            let effTranslationJSON: Record<string, string> = {};
+            if (effTranslationJSONStr != null) {
+              effTranslationJSON = JSON.parse(effTranslationJSONStr);
+            }
+
+            // Update the value.
             if (value) {
               effTranslationJSON[key] = value;
             } else {
               delete effTranslationJSON[key];
             }
+
             const resultEffTranslationJSON = JSON.stringify(
               effTranslationJSON,
               null,
@@ -406,32 +380,6 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
       [setState, getValueFromState, state.selectedLanguage]
     );
 
-    const sectionsTranslationJSON: EditTemplatesWidgetSection[] = [
-      {
-        key: "translation.json",
-        title: (
-          <FormattedMessage id="EditTemplatesWidget.translationjson.title" />
-        ),
-        items: [
-          {
-            key: "translation.json",
-            title: (
-              <FormattedMessage
-                id="EditTemplatesWidget.translationjson.subtitle"
-                values={{
-                  COMMIT: gitCommitHash,
-                }}
-              />
-            ),
-            language: "json",
-            value: getValue(RESOURCE_TRANSLATION_JSON),
-            onChange: getOnChange(RESOURCE_TRANSLATION_JSON),
-            editor: "code",
-          },
-        ],
-      },
-    ];
-
     const sectionsForgotPasswordLink: EditTemplatesWidgetSection[] = [
       {
         key: "email",
@@ -448,6 +396,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               TRANSLATION_JSON_KEY_EMAIL_FORGOT_PASSWORD_LINK_SUBJECT
             ),
             editor: "textfield",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "html-email",
@@ -456,6 +405,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_FORGOT_PASSWORD_EMAIL_LINK_HTML),
             onChange: getOnChange(RESOURCE_FORGOT_PASSWORD_EMAIL_LINK_HTML),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "plaintext-email",
@@ -466,6 +416,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_FORGOT_PASSWORD_EMAIL_LINK_TXT),
             onChange: getOnChange(RESOURCE_FORGOT_PASSWORD_EMAIL_LINK_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -480,6 +431,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_FORGOT_PASSWORD_SMS_LINK_TXT),
             onChange: getOnChange(RESOURCE_FORGOT_PASSWORD_SMS_LINK_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -501,6 +453,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               TRANSLATION_JSON_KEY_EMAIL_FORGOT_PASSWORD_CODE_SUBJECT
             ),
             editor: "textfield",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "html-email",
@@ -509,6 +462,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_FORGOT_PASSWORD_EMAIL_CODE_HTML),
             onChange: getOnChange(RESOURCE_FORGOT_PASSWORD_EMAIL_CODE_HTML),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "plaintext-email",
@@ -519,6 +473,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_FORGOT_PASSWORD_EMAIL_CODE_TXT),
             onChange: getOnChange(RESOURCE_FORGOT_PASSWORD_EMAIL_CODE_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -533,6 +488,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_FORGOT_PASSWORD_SMS_CODE_TXT),
             onChange: getOnChange(RESOURCE_FORGOT_PASSWORD_SMS_CODE_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -554,6 +510,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               TRANSLATION_JSON_KEY_EMAIL_VERIFICATION_SUBJECT
             ),
             editor: "textfield",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "html-email",
@@ -562,6 +519,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_VERIFICATION_EMAIL_HTML),
             onChange: getOnChange(RESOURCE_VERIFICATION_EMAIL_HTML),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "plaintext-email",
@@ -572,6 +530,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_VERIFICATION_EMAIL_TXT),
             onChange: getOnChange(RESOURCE_VERIFICATION_EMAIL_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -586,6 +545,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_VERIFICATION_SMS_TXT),
             onChange: getOnChange(RESOURCE_VERIFICATION_SMS_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -633,6 +593,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getTranslationValue(passwordlessViaEmailSubject.setup),
             onChange: getTranslationOnChange(passwordlessViaEmailSubject.setup),
             editor: "textfield",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "html-email",
@@ -641,6 +602,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(passwordlessViaEmailTemplates.setupHtml),
             onChange: getOnChange(passwordlessViaEmailTemplates.setupHtml),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "plaintext-email",
@@ -651,6 +613,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(passwordlessViaEmailTemplates.setupPlainText),
             onChange: getOnChange(passwordlessViaEmailTemplates.setupPlainText),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -671,6 +634,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               passwordlessViaEmailSubject.authenticate
             ),
             editor: "textfield",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "html-email",
@@ -681,6 +645,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               passwordlessViaEmailTemplates.authenticateHtml
             ),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
           {
             key: "plaintext-email",
@@ -695,6 +660,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
               passwordlessViaEmailTemplates.authenticatePlainText
             ),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -714,6 +680,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_SETUP_PRIMARY_OOB_SMS_TXT),
             onChange: getOnChange(RESOURCE_SETUP_PRIMARY_OOB_SMS_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -730,6 +697,7 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
             value: getValue(RESOURCE_AUTHENTICATE_PRIMARY_OOB_SMS_TXT),
             onChange: getOnChange(RESOURCE_AUTHENTICATE_PRIMARY_OOB_SMS_TXT),
             editor: "code",
+            readOnly: isTemplateCustomizationDisabled,
           },
         ],
       },
@@ -737,27 +705,31 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
 
     return (
       <ScreenContent>
-        <div className={styles.titleContainer}>
-          <ScreenTitle>
-            <FormattedMessage id="LocalizationConfigurationScreen.title" />
-          </ScreenTitle>
+        <ScreenTitle className={cn("col-span-8", "tablet:col-span-full")}>
+          <FormattedMessage id="LocalizationConfigurationScreen.title" />
+        </ScreenTitle>
+        <div className={styles.descriptionContainer}>
+          <ScreenDescription className={styles.widget}>
+            <FormattedMessage id="LocalizationConfigurationScreen.description" />
+          </ScreenDescription>
           <ManageLanguageWidget
+            showLabel={false}
+            existingLanguages={initialSupportedLanguages}
             supportedLanguages={supportedLanguages}
             selectedLanguage={state.selectedLanguage}
-            onChangeSelectedLanguage={setSelectedLanguage}
             fallbackLanguage={state.fallbackLanguage}
-            onChangeLanguages={onChangeLanguages}
+            onChangeSelectedLanguage={setSelectedLanguage}
           />
         </div>
-        <ScreenDescription className={styles.widget}>
-          <FormattedMessage id="LocalizationConfigurationScreen.description" />
-        </ScreenDescription>
         {/* Code editors might incorrectly fire change events when changing language
             Set key to selectedLanguage to ensure code editors always remount */}
         <Widget className={styles.widget} key={state.selectedLanguage}>
           <WidgetTitle>
             <FormattedMessage id="LocalizationConfigurationScreen.template-content-title" />
           </WidgetTitle>
+          {isTemplateCustomizationDisabled ? (
+            <FeatureDisabledMessageBar messageID="FeatureConfig.edit-template.disabled" />
+          ) : null}
           <Pivot
             overflowBehavior="menu"
             onLinkClick={onLinkClick}
@@ -809,14 +781,6 @@ const ResourcesConfigurationContent: React.VFC<ResourcesConfigurationContentProp
                 <EditTemplatesWidget sections={sectionsPasswordlessViaSMS} />
               </PivotItem>
             ) : null}
-            <PivotItem
-              headerText={renderToString(
-                "LocalizationConfigurationScreen.translationjson.title"
-              )}
-              itemKey={PIVOT_KEY_TRANSLATION_JSON}
-            >
-              <EditTemplatesWidget sections={sectionsTranslationJSON} />
-            </PivotItem>
           </Pivot>
         </Widget>
       </ScreenContent>
@@ -829,22 +793,20 @@ const LocalizationConfigurationScreen: React.VFC =
     const [selectedLanguage, setSelectedLanguage] =
       useState<LanguageTag | null>(null);
 
-    const config = useAppConfigForm({
-      appID,
-      constructFormState,
-      constructConfig,
-    });
+    const config = useAppAndSecretConfigQuery(appID);
+
+    const featureConfig = useAppFeatureConfigQuery(appID);
 
     const initialSupportedLanguages = useMemo(() => {
       return (
-        config.effectiveConfig.localization?.supported_languages ?? [
-          config.effectiveConfig.localization?.fallback_language ?? "en",
+        config.effectiveAppConfig?.localization?.supported_languages ?? [
+          config.effectiveAppConfig?.localization?.fallback_language ?? "en",
         ]
       );
-    }, [config.effectiveConfig.localization]);
+    }, [config.effectiveAppConfig?.localization]);
 
     const verificationEnabled = useMemo(() => {
-      const verificationConfig = config.effectiveConfig.verification;
+      const verificationConfig = config.effectiveAppConfig?.verification;
       return Boolean(
         (verificationConfig?.claims?.email?.enabled ?? true) ||
           (verificationConfig?.claims?.phone_number?.enabled ?? true)
@@ -853,27 +815,33 @@ const LocalizationConfigurationScreen: React.VFC =
 
     const passwordlessViaEmailEnabled = useMemo(() => {
       return (
-        config.effectiveConfig.authentication?.primary_authenticators?.indexOf(
+        config.effectiveAppConfig?.authentication?.primary_authenticators?.indexOf(
           "oob_otp_email"
         ) !== -1
       );
-    }, [config.effectiveConfig]);
+    }, [config.effectiveAppConfig]);
 
     const passwordlessViaSMSEnabled = useMemo(() => {
       return (
-        config.effectiveConfig.authentication?.primary_authenticators?.indexOf(
+        config.effectiveAppConfig?.authentication?.primary_authenticators?.indexOf(
           "oob_otp_sms"
         ) !== -1
       );
-    }, [config.effectiveConfig]);
+    }, [config.effectiveAppConfig]);
 
     const passwordlessViaEmailOTPMode =
-      config.effectiveConfig.authenticator?.oob_otp?.email?.email_otp_mode ??
-      "code";
+      config.effectiveAppConfig?.authenticator?.oob_otp?.email
+        ?.email_otp_mode ?? "code";
 
     const specifiers = useMemo<ResourceSpecifier[]>(() => {
       const specifiers = [];
-      for (const locale of initialSupportedLanguages) {
+
+      const supportedLanguages = [...initialSupportedLanguages];
+      if (!supportedLanguages.includes(DEFAULT_TEMPLATE_LOCALE)) {
+        supportedLanguages.push(DEFAULT_TEMPLATE_LOCALE);
+      }
+
+      for (const locale of supportedLanguages) {
         for (const def of ALL_LANGUAGES_TEMPLATES) {
           specifiers.push({
             def,
@@ -885,58 +853,56 @@ const LocalizationConfigurationScreen: React.VFC =
       return specifiers;
     }, [initialSupportedLanguages]);
 
-    const resources = useResourceForm(
-      appID,
-      specifiers,
-      constructResourcesFormState,
-      constructResources
-    );
+    const resources = useResourceForm(appID, specifiers);
 
-    const state = useMemo<FormState>(
-      () => ({
-        supportedLanguages: config.state.supportedLanguages,
-        fallbackLanguage: config.state.fallbackLanguage,
+    const state = useMemo<FormState>(() => {
+      const fallbackLanguage =
+        config.effectiveAppConfig?.localization?.fallback_language ?? "en";
+      return {
+        supportedLanguages: config.effectiveAppConfig?.localization
+          ?.supported_languages ?? [fallbackLanguage],
+        fallbackLanguage,
         resources: resources.state.resources,
-        selectedLanguage: selectedLanguage ?? config.state.fallbackLanguage,
-      }),
-      [
-        config.state.supportedLanguages,
-        config.state.fallbackLanguage,
-        resources.state.resources,
-        selectedLanguage,
-      ]
-    );
+        selectedLanguage: selectedLanguage ?? fallbackLanguage,
+      };
+    }, [
+      config.effectiveAppConfig?.localization,
+      resources.state.resources,
+      selectedLanguage,
+    ]);
 
-    const form: FormModel = {
-      isLoading: config.isLoading || resources.isLoading,
-      isUpdating: config.isUpdating || resources.isUpdating,
-      isDirty: config.isDirty || resources.isDirty,
-      loadError: config.loadError ?? resources.loadError,
-      updateError: config.updateError ?? resources.updateError,
-      state,
-      setState: (fn) => {
-        const newState = fn(state);
-        config.setState(() => ({
-          supportedLanguages: newState.supportedLanguages,
-          fallbackLanguage: newState.fallbackLanguage,
-        }));
-        resources.setState(() => ({ resources: newState.resources }));
-        setSelectedLanguage(newState.selectedLanguage);
-      },
-      reload: () => {
-        config.reload();
-        resources.reload();
-      },
-      reset: () => {
-        config.reset();
-        resources.reset();
-        setSelectedLanguage(config.state.fallbackLanguage);
-      },
-      save: async () => {
-        await config.save();
-        await resources.save();
-      },
-    };
+    const form: FormModel = useMemo(
+      () => ({
+        isLoading: config.loading || resources.isLoading,
+        isUpdating: resources.isUpdating,
+        isDirty: resources.isDirty,
+        loadError: config.error ?? resources.loadError,
+        updateError: resources.updateError,
+        state,
+        setState: (fn) => {
+          const newState = fn(state);
+          resources.setState(() => ({ resources: newState.resources }));
+          setSelectedLanguage(newState.selectedLanguage);
+        },
+        reload: () => {
+          // Previously is also a floating promise, so just log the error out
+          // to make linter happy
+          config.refetch().catch((err) => {
+            console.error("Reload config error", err);
+            throw err;
+          });
+          resources.reload();
+        },
+        reset: () => {
+          resources.reset();
+          setSelectedLanguage(state.fallbackLanguage);
+        },
+        save: async (ignoreConflict: boolean = false) => {
+          await resources.save(ignoreConflict);
+        },
+      }),
+      [config, resources, state]
+    );
 
     if (form.isLoading) {
       return <ShowLoading />;
@@ -947,14 +913,17 @@ const LocalizationConfigurationScreen: React.VFC =
     }
 
     return (
-      <FormContainer form={form} canSave={true}>
+      <FormContainer form={form} canSave={true} stickyFooterComponent={true}>
         <ResourcesConfigurationContent
           form={form}
-          supportedLanguages={config.state.supportedLanguages}
+          initialSupportedLanguages={initialSupportedLanguages}
           passwordlessViaEmailEnabled={passwordlessViaEmailEnabled}
           passwordlessViaSMSEnabled={passwordlessViaSMSEnabled}
           passwordlessViaEmailOTPMode={passwordlessViaEmailOTPMode}
           verificationEnabled={verificationEnabled}
+          messagingFeatureConfig={
+            featureConfig.effectiveFeatureConfig?.messaging
+          }
         />
       </FormContainer>
     );

@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -16,7 +17,7 @@ import (
 
 var TemplateWebSettingsMFAHTML = template.RegisterHTML(
 	"web/settings_mfa.html",
-	components...,
+	Components...,
 )
 
 func ConfigureSettingsMFARoute(route httproute.Route) httproute.Route {
@@ -26,8 +27,8 @@ func ConfigureSettingsMFARoute(route httproute.Route) httproute.Route {
 }
 
 type SettingsMFAService interface {
-	ListRecoveryCodes(userID string) ([]*mfa.RecoveryCode, error)
-	InvalidateAllDeviceTokens(userID string) error
+	ListRecoveryCodes(ctx context.Context, userID string) ([]*mfa.RecoveryCode, error)
+	InvalidateAllDeviceTokens(ctx context.Context, userID string) error
 }
 
 type SettingsMFAHandler struct {
@@ -44,19 +45,19 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
 	redirectURI := httputil.HostRelative(r.URL).String()
 	authenticatorID := r.Form.Get("x_authenticator_id")
-	userID := ctrl.RequireUserID()
+	userID := ctrl.RequireUserID(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		data := map[string]interface{}{}
 
 		baseViewModel := h.BaseViewModel.ViewModel(r, w)
 		viewmodels.Embed(data, baseViewModel)
 
-		viewModelPtr, err := h.SettingsViewModel.ViewModel(userID)
+		viewModelPtr, err := h.SettingsViewModel.ViewModel(ctx, userID)
 		if err != nil {
 			return err
 		}
@@ -66,8 +67,8 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("revoke_devices", func() error {
-		if err := h.MFA.InvalidateAllDeviceTokens(userID); err != nil {
+	ctrl.PostAction("revoke_devices", func(ctx context.Context) error {
+		if err := h.MFA.InvalidateAllDeviceTokens(ctx, userID); err != nil {
 			return err
 		}
 
@@ -76,7 +77,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("setup_secondary_password", func() error {
+	ctrl.PostAction("setup_secondary_password", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
@@ -86,7 +87,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			model.AuthenticatorTypePassword,
 		)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			return &InputCreateAuthenticator{}, nil
 		})
 		if err != nil {
@@ -97,13 +98,13 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("remove_secondary_password", func() error {
+	ctrl.PostAction("remove_secondary_password", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
 		intent := intents.NewIntentRemoveAuthenticator(userID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			return &InputRemoveAuthenticator{
 				Type: model.AuthenticatorTypePassword,
 				ID:   authenticatorID,
@@ -117,7 +118,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("add_secondary_totp", func() error {
+	ctrl.PostAction("add_secondary_totp", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
@@ -127,7 +128,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			model.AuthenticatorTypeTOTP,
 		)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			input = &InputCreateAuthenticator{}
 			return
 		})
@@ -139,7 +140,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("add_secondary_oob_otp_email", func() error {
+	ctrl.PostAction("add_secondary_oob_otp_email", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
@@ -149,7 +150,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			model.AuthenticatorTypeOOBEmail,
 		)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			input = &InputCreateAuthenticator{}
 			return
 		})
@@ -161,7 +162,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("add_secondary_oob_otp_sms", func() error {
+	ctrl.PostAction("add_secondary_oob_otp_sms", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
@@ -171,7 +172,7 @@ func (h *SettingsMFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			model.AuthenticatorTypeOOBSMS,
 		)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			input = &InputCreateAuthenticator{}
 			return
 		})

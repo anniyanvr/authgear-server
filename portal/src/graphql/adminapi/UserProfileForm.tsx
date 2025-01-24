@@ -43,6 +43,8 @@ import {
 import TextField from "../../TextField";
 
 import styles from "./UserProfileForm.module.css";
+import PrimaryButton from "../../PrimaryButton";
+import { useFormContainerBaseContext } from "../../FormContainerBase";
 
 export interface StandardAttributesAddressState {
   street_address: string;
@@ -125,7 +127,7 @@ function HorizontalDivider() {
   return (
     <div
       style={{
-        backgroundColor: `${theme.palette.neutralTertiaryAlt}`,
+        backgroundColor: theme.palette.neutralTertiaryAlt,
         height: "1px",
       }}
     />
@@ -220,7 +222,6 @@ interface CustomAttributeControlProps {
   onChangeCustomAttributes?: (attrs: CustomAttributesState) => void;
 }
 
-// eslint-disable-next-line complexity
 function CustomAttributeControl(props: CustomAttributeControlProps) {
   const { attributeConfig, customAttributes, onChangeCustomAttributes } = props;
   const {
@@ -319,15 +320,16 @@ function CustomAttributeControl(props: CustomAttributeControlProps) {
   );
 
   const onChangePhoneNumber = useCallback(
-    (valid: string, input: string) => {
+    (values: { e164?: string; rawInputValue: string }) => {
       if (onChangeCustomAttributes == null) {
         return;
       }
+      const { e164, rawInputValue } = values;
 
       onChangeCustomAttributes({
         ...customAttributes,
-        [pointer]: valid ? valid : input,
-        ["phone_number" + pointer]: input,
+        [pointer]: e164 != null ? e164 : rawInputValue,
+        ["phone_number" + pointer]: rawInputValue,
       });
     },
     [customAttributes, onChangeCustomAttributes, pointer]
@@ -471,7 +473,6 @@ interface StandardAttributesFormProps {
 }
 
 const StandardAttributesForm: React.VFC<StandardAttributesFormProps> =
-  // eslint-disable-next-line complexity
   function StandardAttributesForm(props: StandardAttributesFormProps) {
     const {
       standardAttributes,
@@ -666,7 +667,6 @@ const StandardAttributesForm: React.VFC<StandardAttributesFormProps> =
       return options;
     }, [renderToString]);
     const onChangeGenderVariant = useCallback(
-      // eslint-disable-next-line complexity
       (
         _e: React.FormEvent<unknown>,
         option?: IDropdownOption,
@@ -1085,7 +1085,8 @@ const UserProfileForm: React.VFC<UserProfileFormProps> =
       onChangeCustomAttributes,
       customAttributesConfig,
     } = props;
-    const { locale: appLocale } = useContext(Context);
+    const { locale: appLocale, renderToString } = useContext(Context);
+    const { canSave, onSave } = useFormContainerBaseContext();
 
     const updatedAt = standardAttributes.updated_at;
     const updatedAtFormatted: string | undefined | null = useMemo(() => {
@@ -1120,6 +1121,13 @@ const UserProfileForm: React.VFC<UserProfileFormProps> =
             />
           </Text>
         ) : null}
+        <div>
+          <PrimaryButton
+            text={renderToString("save")}
+            disabled={!canSave}
+            onClick={onSave}
+          />
+        </div>
       </div>
     );
   };

@@ -10,19 +10,7 @@ import {
   useSearchParams,
   URLSearchParamsInit,
 } from "react-router-dom";
-import {
-  ICommandBarItemProps,
-  addDays,
-  TooltipHost,
-  ITooltipHostStyles,
-  ITooltipProps,
-  DirectionalHint,
-  IContextualMenuItem,
-  Pivot,
-  PivotItem,
-  SearchBox,
-} from "@fluentui/react";
-import { useId } from "@fluentui/react-hooks";
+import { addDays, Pivot, PivotItem, ISearchBoxProps } from "@fluentui/react";
 import { FormattedMessage, Context } from "@oursky/react-messageformat";
 import { useQuery } from "@apollo/client";
 import { DateTime } from "luxon";
@@ -42,10 +30,20 @@ import { AuditLogActivityType, SortDirection } from "./globalTypes.generated";
 import styles from "./AuditLogScreen.module.css";
 import { useAppFeatureConfigQuery } from "../portal/query/appFeatureConfigQuery";
 import FeatureDisabledMessageBar from "../portal/FeatureDisabledMessageBar";
-import CommandBarButton from "../../CommandBarButton";
 import { useDebounced } from "../../hook/useDebounced";
 import { toTypedID } from "../../util/graphql";
 import { NodeType } from "./node";
+import { parseEmail } from "../../util/email";
+import { parsePhoneNumber } from "../../util/phone";
+import {
+  AuditLogFilter,
+  AuditLogFilterBar,
+  AuditLogFilterBarPropsDateRange,
+} from "../../components/audit-log/AuditLogFilterBar";
+import {
+  ACTIVITY_TYPE_ALL,
+  ActivityTypeFilterDropdownOptionKey,
+} from "../../components/audit-log/ActivityTypeFilterDropdown";
 
 const pageSize = 100;
 
@@ -66,48 +64,6 @@ function isAuditLogKind(s: string): s is AuditLogKind {
   return Object.values(AuditLogKind).includes(s as AuditLogKind);
 }
 
-const ALL = "ALL" as const;
-
-function RefreshButton(props: ICommandBarItemProps) {
-  const tooltipStyle: Partial<ITooltipHostStyles> = {
-    root: { display: "inline-block" },
-  };
-  const tooltipId = useId("refreshTooltip");
-  const tooltipCalloutProps = {
-    gapSpace: 0,
-  };
-
-  const { renderToString, locale } = useContext(Context);
-
-  const tooltipProps: ITooltipProps = useMemo(() => {
-    return {
-      // eslint-disable-next-line react/no-unstable-nested-components
-      onRenderContent: () => {
-        const tooltipcontent = renderToString("AuditLogScreen.last-update-at", {
-          datetime:
-            DateTime.fromJSDate(props.lastUpdatedAt).toRelative({ locale }) ??
-            "",
-        });
-        return <>{tooltipcontent}</>;
-      },
-    };
-  }, [locale, props.lastUpdatedAt, renderToString]);
-
-  return (
-    <TooltipHost
-      styles={tooltipStyle}
-      id={tooltipId}
-      calloutProps={tooltipCalloutProps}
-      directionalHint={DirectionalHint.bottomCenter}
-      tooltipProps={tooltipProps}
-    >
-      {/* @ts-expect-error */}
-      <CommandBarButton {...props} />
-    </TooltipHost>
-  );
-}
-
-// eslint-disable-next-line complexity
 const AuditLogScreen: React.VFC = function AuditLogScreen() {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -120,8 +76,8 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
   const queryPage = searchParams.get("page");
   const queryActivityType = searchParams.get("activity_type");
   const queryLastUpdatedAt = searchParams.get("last_updated_at");
-  const queryActivityKind = searchParams.get("kind") ?? "";
-  const queryUserID = searchParams.get("user_id") ?? "";
+  const queryAuditLogKind = searchParams.get("kind") ?? "";
+  const queryString = searchParams.get("q") ?? "";
 
   const initialOffset = useMemo(() => {
     if (queryPage != null) {
@@ -134,7 +90,6 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
   }, [queryPage]);
 
   const [offset, setOffset] = useState(initialOffset);
-  const [stateSelectedKey, setSelectedKey] = useState(queryActivityType ?? ALL);
   const [sortDirection, setSortDirection] =
     useState<SortDirection>(queryOrderBy);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(
@@ -143,13 +98,35 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
       : new Date()
   );
   const [dateRangeDialogHidden, setDateRangeDialogHidden] = useState(true);
-  const [activityKind, setActivityKind] = useState<AuditLogKind>(() => {
-    if (isAuditLogKind(queryActivityKind)) {
-      return queryActivityKind;
+  const [auditLogKind, setAuditLogKind] = useState<AuditLogKind>(() => {
+    if (isAuditLogKind(queryAuditLogKind)) {
+      return queryAuditLogKind;
     }
     return AuditLogKind.User;
   });
-  const [searchUserID, setSearchUserID] = useState<string>(queryUserID);
+
+  const availableActivityTypes = useMemo(() => {
+    return auditLogKind === "admin"
+      ? ADMIN_ACTIVITY_TYPES
+      : USER_ACTIVITY_TYPES;
+  }, [auditLogKind]);
+
+  const defaultActivityType =
+    useMemo<ActivityTypeFilterDropdownOptionKey>(() => {
+      if (queryActivityType == null) {
+        return ACTIVITY_TYPE_ALL;
+      }
+      const queryActivityTypeKey = queryActivityType as AuditLogActivityType;
+      if (availableActivityTypes.includes(queryActivityTypeKey)) {
+        return queryActivityTypeKey;
+      }
+      return ACTIVITY_TYPE_ALL;
+    }, [availableActivityTypes, queryActivityType]);
+
+  const [filters, setFilters] = useState<AuditLogFilter>({
+    searchKeyword: "",
+    activityType: defaultActivityType,
+  });
 
   const {
     committedValue: rangeFrom,
@@ -219,25 +196,37 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
 
   const isCustomDateRange = rangeFrom != null || rangeTo != null;
 
-  const availableActivityTypes = useMemo(() => {
-    return activityKind === "admin"
-      ? ADMIN_ACTIVITY_TYPES
-      : USER_ACTIVITY_TYPES;
-  }, [activityKind]);
+  const onClickAllDateRange = useCallback(
+    (e?: React.MouseEvent<unknown> | React.KeyboardEvent<unknown>) => {
+      e?.stopPropagation();
+      setRangeFromImmediately(null);
+      setRangeToImmediately(null);
+    },
+    [setRangeFromImmediately, setRangeToImmediately]
+  );
 
-  const selectedKey = useMemo(() => {
-    if (stateSelectedKey === ALL) {
-      return stateSelectedKey;
-    }
-    if (
-      availableActivityTypes.includes(stateSelectedKey as AuditLogActivityType)
-    ) {
-      return stateSelectedKey;
-    }
-    return ALL;
-  }, [availableActivityTypes, stateSelectedKey]);
+  const onClickCustomDateRange = useCallback(
+    (e?: React.MouseEvent<unknown> | React.KeyboardEvent<unknown>) => {
+      e?.stopPropagation();
+      setDateRangeDialogHidden(false);
+    },
+    []
+  );
 
-  const [debounedSearchUserID] = useDebounced(searchUserID, 300);
+  const filtersDateRange = useMemo<AuditLogFilterBarPropsDateRange>(() => {
+    return {
+      value: isCustomDateRange ? "customDateRange" : "allDateRange",
+      onClickAllDateRange,
+      onClickCustomDateRange,
+    };
+  }, [isCustomDateRange, onClickAllDateRange, onClickCustomDateRange]);
+
+  const [debouncedSearchQuery] = useDebounced(filters.searchKeyword, 300);
+
+  // Reset page to zero on search
+  useEffect(() => {
+    setOffset(0);
+  }, [debouncedSearchQuery]);
 
   const { renderToString } = useContext(Context);
 
@@ -255,7 +244,7 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
   }, []);
 
   // Sync state to searchParams.
-  // eslint-disable-next-line complexity
+
   useEffect(() => {
     const page = offset / pageSize + 1;
 
@@ -267,10 +256,10 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
       rangeTo != null ? DateTime.fromJSDate(rangeTo).toISODate() : "";
     const newQueryOrderBy = sortDirection;
     const newQueryPage = page.toString();
-    const newQueryActivityType = selectedKey;
+    const newQueryActivityType = filters.activityType;
     const newQueryLastUpdatedAt = lastUpdatedAt.getTime().toString();
-    const newActivityKind = activityKind;
-    const newUserID = debounedSearchUserID;
+    const newAuditLogKind = auditLogKind;
+    const newQueryString = debouncedSearchQuery;
 
     params["from"] = newQueryFrom;
     params["to"] = newQueryTo;
@@ -278,8 +267,8 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
     params["page"] = newQueryPage;
     params["activity_type"] = newQueryActivityType;
     params["last_updated_at"] = newQueryLastUpdatedAt;
-    params["kind"] = newActivityKind;
-    params["user_id"] = newUserID;
+    params["kind"] = newAuditLogKind;
+    params["q"] = newQueryString;
 
     let callSet = false;
     if (newQueryFrom !== queryFrom) {
@@ -300,10 +289,10 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
     if (newQueryLastUpdatedAt !== queryLastUpdatedAt) {
       callSet = true;
     }
-    if (newActivityKind !== queryActivityKind) {
+    if (newAuditLogKind !== queryAuditLogKind) {
       callSet = true;
     }
-    if (newUserID !== queryUserID) {
+    if (newQueryString !== queryString) {
       callSet = true;
     }
 
@@ -321,37 +310,21 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
     rangeTo,
     sortDirection,
     offset,
-    selectedKey,
+    filters.activityType,
     lastUpdatedAt,
     setSearchParams,
-    activityKind,
-    queryActivityKind,
-    debounedSearchUserID,
-    queryUserID,
+    auditLogKind,
+    queryAuditLogKind,
+    debouncedSearchQuery,
+    queryString,
   ]);
 
-  const activityTypeOptions = useMemo(() => {
-    const options = [
-      {
-        key: ALL as string,
-        text: renderToString("AuditLogActivityType.ALL"),
-      },
-    ];
-    for (const key of availableActivityTypes) {
-      options.push({
-        key: key,
-        text: renderToString("AuditLogActivityType." + key),
-      });
-    }
-    return options;
-  }, [availableActivityTypes, renderToString]);
-
   const activityTypes: AuditLogActivityType[] | null = useMemo(() => {
-    if (selectedKey === ALL) {
+    if (filters.activityType === ACTIVITY_TYPE_ALL) {
       return availableActivityTypes;
     }
-    return [selectedKey] as AuditLogActivityType[];
-  }, [availableActivityTypes, selectedKey]);
+    return [filters.activityType];
+  }, [availableActivityTypes, filters.activityType]);
 
   const items = useMemo(() => {
     return [{ to: ".", label: <FormattedMessage id="AuditLogScreen.title" /> }];
@@ -368,11 +341,47 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
     setOffset(offset);
   }, []);
 
-  const userNodeIDs = useMemo(() => {
-    return debounedSearchUserID
-      ? [toTypedID(NodeType.User, debounedSearchUserID)]
+  const queryEmailAddresses = useMemo(() => {
+    const email = parseEmail(debouncedSearchQuery);
+    if (email == null) {
+      return null;
+    }
+
+    switch (filters.activityType) {
+      // Only search email addresses if `all` or `email_sent` filter active
+      case ACTIVITY_TYPE_ALL:
+      case AuditLogActivityType.EmailSent:
+        return email ? [email] : null;
+      default:
+        return null;
+    }
+  }, [debouncedSearchQuery, filters.activityType]);
+
+  const queryPhoneNumbers = useMemo(() => {
+    const phoneNumber = parsePhoneNumber(debouncedSearchQuery);
+    if (phoneNumber == null) {
+      return null;
+    }
+    switch (filters.activityType) {
+      // Only search phone numbers if `all` or `phone_sent` or `whatsapp_sent` filter active
+      case ACTIVITY_TYPE_ALL:
+      case AuditLogActivityType.SmsSent:
+      case AuditLogActivityType.WhatsappSent:
+        return [phoneNumber];
+      default:
+        return null;
+    }
+  }, [debouncedSearchQuery, filters.activityType]);
+
+  const queryUserIDs = useMemo(() => {
+    if (queryEmailAddresses != null || queryPhoneNumbers != null) {
+      return null;
+    }
+    // only search by userIDs if query notLikeEmail & notLikePhoneNumber
+    return debouncedSearchQuery
+      ? [toTypedID(NodeType.User, debouncedSearchQuery)]
       : null;
-  }, [debounedSearchUserID]);
+  }, [debouncedSearchQuery, queryEmailAddresses, queryPhoneNumbers]);
 
   const {
     data: currentData,
@@ -387,7 +396,9 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
         pageSize,
         cursor,
         activityTypes,
-        userIDs: userNodeIDs,
+        userIDs: queryUserIDs,
+        emailAddresses: queryEmailAddresses,
+        phoneNumbers: queryPhoneNumbers,
         rangeFrom: queryRangeFrom,
         rangeTo: queryRangeTo,
         sortDirection,
@@ -416,36 +427,27 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
     return null;
   }, [error, refetch, featureConfig]);
 
-  const onChangeSelectedKey = useCallback(
-    (
-      e?: React.MouseEvent<unknown> | React.KeyboardEvent<unknown>,
-      item?: IContextualMenuItem
-    ) => {
-      e?.stopPropagation();
-      if (item != null && typeof item.key === "string") {
+  const onFilterChange = useCallback(
+    (fn: (prevValue: AuditLogFilter) => AuditLogFilter) => {
+      const newFilters = fn(filters);
+
+      if (newFilters.activityType !== filters.activityType) {
         setOffset(0);
-        setSelectedKey(item.key);
       }
+      setFilters(fn);
     },
-    []
+    [filters]
   );
 
-  const onClickAllDateRange = useCallback(
-    (e?: React.MouseEvent<unknown> | React.KeyboardEvent<unknown>) => {
-      e?.stopPropagation();
-      setRangeFromImmediately(null);
-      setRangeToImmediately(null);
-    },
-    [setRangeFromImmediately, setRangeToImmediately]
-  );
-
-  const onClickCustomDateRange = useCallback(
-    (e?: React.MouseEvent<unknown> | React.KeyboardEvent<unknown>) => {
-      e?.stopPropagation();
-      setDateRangeDialogHidden(false);
-    },
-    []
-  );
+  const onRemoveAllFilters = useCallback(() => {
+    setOffset(0);
+    setRangeFromImmediately(null);
+    setRangeToImmediately(null);
+    onFilterChange(() => ({
+      searchKeyword: "",
+      activityType: ACTIVITY_TYPE_ALL,
+    }));
+  }, [onFilterChange, setRangeFromImmediately, setRangeToImmediately]);
 
   const onClickRefresh = useCallback(
     (e?: React.MouseEvent<unknown> | React.KeyboardEvent<unknown>) => {
@@ -456,126 +458,23 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
     [setLastUpdatedAt, setOffset]
   );
 
-  const onChangeSearchUserID = useCallback(
-    (e?: React.ChangeEvent<HTMLInputElement>) => {
-      if (e === undefined) {
-        return;
-      }
-      setSearchUserID(e.currentTarget.value);
-    },
-    []
-  );
+  const searchBoxPlaceholder = useMemo(() => {
+    switch (filters.activityType) {
+      case AuditLogActivityType.EmailSent:
+        return renderToString("AuditLogScreen.search-by-user-id-or-email");
+      case AuditLogActivityType.SmsSent:
+      case AuditLogActivityType.WhatsappSent:
+        return renderToString("AuditLogScreen.search-by-user-id-or-phone");
+      default:
+        return renderToString("AuditLogScreen.search-by-user-id");
+    }
+  }, [filters.activityType, renderToString]);
 
-  const onClearSearchUserID = useCallback(() => {
-    setSearchUserID("");
-  }, []);
-
-  const commandBarFarItems: ICommandBarItemProps[] = useMemo(() => {
-    const allDateRangeLabel = renderToString("AuditLogScreen.date-range.all");
-    const customDateRangeLabel = renderToString(
-      "AuditLogScreen.date-range.custom"
-    );
-    const items: ICommandBarItemProps[] = [
-      {
-        key: "dateRange",
-        text: isCustomDateRange ? customDateRangeLabel : allDateRangeLabel,
-        iconProps: { iconName: "Calendar" },
-        subMenuProps: {
-          items: [
-            {
-              key: "allDateRange",
-              text: allDateRangeLabel,
-              onClick: onClickAllDateRange,
-            },
-            {
-              key: "customDateRange",
-              text: customDateRangeLabel,
-              onClick: onClickCustomDateRange,
-            },
-          ],
-        },
-      },
-      {
-        key: "activityTypes",
-        text: activityTypeOptions.find((option) => option.key === selectedKey)!
-          .text,
-        iconProps: {
-          iconName: "PC1",
-        },
-        subMenuProps: {
-          items: activityTypeOptions.map((option) => {
-            return {
-              key: option.key,
-              text: option.text,
-              onClick: onChangeSelectedKey,
-            };
-          }),
-        },
-      },
-      {
-        key: "search",
-        // eslint-disable-next-line react/no-unstable-nested-components
-        onRender: () => {
-          return (
-            <SearchBox
-              placeholder={renderToString("AuditLogScreen.search-by-user-id")}
-              className={styles.searchBox}
-              value={searchUserID}
-              onChange={onChangeSearchUserID}
-              onClear={onClearSearchUserID}
-            />
-          );
-        },
-      },
-      {
-        key: "clear",
-        text: renderToString("AuditLogScreen.clear-all-filters"),
-        iconProps: {
-          iconName: "",
-        },
-        onClick: () => {
-          setOffset(0);
-          setRangeFromImmediately(null);
-          setRangeToImmediately(null);
-          setSelectedKey(ALL);
-          setSearchUserID("");
-        },
-        buttonStyles: {
-          root: {
-            color: "rgba(89, 86, 83, 0.4)",
-          },
-        },
-      },
-    ];
-    return items;
-  }, [
-    renderToString,
-    isCustomDateRange,
-    onClickAllDateRange,
-    onClickCustomDateRange,
-    activityTypeOptions,
-    selectedKey,
-    onChangeSelectedKey,
-    searchUserID,
-    onChangeSearchUserID,
-    onClearSearchUserID,
-    setRangeFromImmediately,
-    setRangeToImmediately,
-  ]);
-
-  const commandBarSecondaryItems: ICommandBarItemProps[] = useMemo(() => {
-    const refreshLabel = renderToString("AuditLogScreen.refresh");
-    return [
-      {
-        key: "refresh",
-        text: refreshLabel,
-        iconProps: { iconName: "Sync" },
-        onClick: onClickRefresh,
-        commandBarButtonAs: RefreshButton,
-        lastUpdatedAt,
-      },
-    ];
-  }, [onClickRefresh, renderToString, lastUpdatedAt]);
+  const searchBoxProps = useMemo<ISearchBoxProps>(() => {
+    return {
+      placeholder: searchBoxPlaceholder,
+    };
+  }, [searchBoxPlaceholder]);
 
   const onDismissDateRangeDialog = useCallback(
     (e?: React.MouseEvent<unknown>) => {
@@ -647,11 +546,10 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
     if (!itemKey || !isAuditLogKind(itemKey)) {
       return;
     }
-    setActivityKind(itemKey);
+    setAuditLogKind(itemKey);
     // Reset pagination on tab change
     setOffset(0);
   }, []);
-
   return (
     <>
       <div className={styles.root}>
@@ -666,7 +564,7 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
           ) : null}
           <Pivot
             className={styles.pivot}
-            selectedKey={activityKind}
+            selectedKey={auditLogKind}
             onLinkClick={onTabChange}
           >
             <PivotItem
@@ -679,12 +577,21 @@ const AuditLogScreen: React.VFC = function AuditLogScreen() {
             />
           </Pivot>
         </div>
+        <AuditLogFilterBar
+          filters={filters}
+          onFilterChange={onFilterChange}
+          searchBoxProps={searchBoxProps}
+          dateRange={filtersDateRange}
+          availableActivityTypes={availableActivityTypes}
+          onRemoveAllFilters={onRemoveAllFilters}
+          onRefresh={onClickRefresh}
+          lastUpdatedAt={lastUpdatedAt}
+        />
         <div className={styles.listContainer}>
           <CommandBarContainer
             isLoading={loading}
             messageBar={messageBar}
-            primaryItems={commandBarFarItems}
-            secondaryItems={commandBarSecondaryItems}
+            hideCommandBar={true}
             className={styles.commandBarContainerContent}
             headerPosition="static"
           >

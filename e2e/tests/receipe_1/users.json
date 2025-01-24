@@ -1,0 +1,61 @@
+{
+  "identifier": "preferred_username",
+  "records": [
+    {
+      "preferred_username": "e2e_recipe_1_first_time",
+      "phone_number": "+85295000001",
+
+      "password": {
+        "type": "bcrypt",
+        "password_hash": "$2y$10$ffowit0BtS5vbIK7gfMQSuHDLZxdt3KvLQuo7YowtZOAlYi3VGoC."
+      }
+    },
+    {
+      "preferred_username": "e2e_recipe_1_employee_id",
+      "phone_number": "+85295000002",
+
+      "password": {
+        "type": "bcrypt",
+        "password_hash": "$2y$10$ze9h.zFQCg9ew9X4orQE2OkuLJZvTDs/YwOuptGkzkiFvwsES16hK"
+      }
+    },
+    {
+      "preferred_username": "e2e_recipe_1_adfs",
+      "email": "mock@example.com",
+      "email_verified": true,
+
+      "password": {
+        "type": "bcrypt",
+        "password_hash": "$2y$10$ze9h.zFQCg9ew9X4orQE2OkuLJZvTDs/YwOuptGkzkiFvwsES16hK"
+      }
+    },
+    {
+      "preferred_username": "e2e_recipe_1_recovery_email",
+      "email": "e2e_recipe_1_recovery_email@example.com",
+      "phone_number": "+85295000003",
+
+      "password": {
+        "type": "bcrypt",
+        "password_hash": "$2y$10$ze9h.zFQCg9ew9X4orQE2OkuLJZvTDs/YwOuptGkzkiFvwsES16hK"
+      }
+    },
+    {
+      "preferred_username": "e2e_recipe_1_recovery_sms",
+      "phone_number": "+85295000004",
+
+      "password": {
+        "type": "bcrypt",
+        "password_hash": "$2y$10$ze9h.zFQCg9ew9X4orQE2OkuLJZvTDs/YwOuptGkzkiFvwsES16hK"
+      }
+    },
+    {
+      "preferred_username": "e2e_recipe_1_expiry",
+      "email": "e2e_recipe_1_expiry@example.com",
+
+      "password": {
+        "type": "bcrypt",
+        "password_hash": "$2y$10$ze9h.zFQCg9ew9X4orQE2OkuLJZvTDs/YwOuptGkzkiFvwsES16hK"
+      }
+    }
+  ]
+}

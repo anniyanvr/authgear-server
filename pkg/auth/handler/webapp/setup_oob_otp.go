@@ -1,8 +1,10 @@
 package webapp
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+
 	"net/url"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -16,7 +18,7 @@ import (
 
 var TemplateWebSetupOOBOTPHTML = template.RegisterHTML(
 	"web/setup_oob_otp.html",
-	components...,
+	Components...,
 )
 
 var SetupOOBOTPEmailSchema = validation.NewSimpleSchema(`
@@ -116,20 +118,20 @@ func (h *SetupOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oc := httproute.GetParam(r, "channel")
-	oobAuthenticatorType, err := model.GetOOBAuthenticatorType(model.AuthenticatorOOBChannel(oc))
+	oobAuthenticatorType, err := model.Deprecated_GetOOBAuthenticatorType(model.AuthenticatorOOBChannel(oc))
 	if err != nil {
 		http.Error(w, "404 page not found", http.StatusNotFound)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -143,8 +145,8 @@ func (h *SetupOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			err = GetValidationSchema(oobAuthenticatorType).Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

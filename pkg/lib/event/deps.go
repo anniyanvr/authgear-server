@@ -1,14 +1,12 @@
 package event
 
 import (
-	"context"
-
 	"github.com/google/wire"
 
 	"github.com/authgear/authgear-server/pkg/lib/audit"
 	"github.com/authgear/authgear-server/pkg/lib/config"
-	"github.com/authgear/authgear-server/pkg/lib/elasticsearch"
 	"github.com/authgear/authgear-server/pkg/lib/hook"
+	"github.com/authgear/authgear-server/pkg/lib/search/reindex"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
 )
@@ -23,7 +21,6 @@ var DependencySet = wire.NewSet(
 )
 
 func NewService(
-	ctx context.Context,
 	appID config.AppID,
 	remoteIP httputil.RemoteIP,
 	userAgentString httputil.UserAgentString,
@@ -35,10 +32,9 @@ func NewService(
 	resolver Resolver,
 	hookSink *hook.Sink,
 	auditSink *audit.Sink,
-	elasticSearchSink *elasticsearch.Sink,
+	searchSink *reindex.Sink,
 ) *Service {
 	return &Service{
-		Context:         ctx,
 		AppID:           appID,
 		RemoteIP:        remoteIP,
 		UserAgentString: userAgentString,
@@ -51,7 +47,7 @@ func NewService(
 		Sinks: []Sink{
 			hookSink,
 			auditSink,
-			elasticSearchSink,
+			searchSink,
 		},
 	}
 }

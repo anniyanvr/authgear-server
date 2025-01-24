@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
 import {
   DetailsList,
   Dialog,
@@ -7,6 +8,7 @@ import {
   MessageBar,
   SelectionMode,
   Text,
+  TooltipHost,
 } from "@fluentui/react";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 
@@ -17,11 +19,11 @@ import { useSystemConfig } from "../../context/SystemConfigContext";
 import ButtonWithLoading from "../../ButtonWithLoading";
 import { useRevokeSessionMutation } from "./mutations/revokeSessionMutation";
 import { useRevokeAllSessionsMutation } from "./mutations/revokeAllSessionsMutation";
-import { useParams } from "react-router-dom";
 import ErrorDialog from "../../error/ErrorDialog";
-import { Session } from "../../types";
+import { OAuthClientConfig, Session } from "../../types";
 import DefaultButton from "../../DefaultButton";
 import ActionButton from "../../ActionButton";
+import Link from "../../Link";
 
 interface RevokeConfirmationDialogProps {
   isHidden: boolean;
@@ -83,6 +85,7 @@ const RevokeConfirmationDialog: React.VFC<RevokeConfirmationDialogProps> =
 
 interface SessionItemViewModel {
   displayName: string;
+  userAgent: string | null;
   clientID: string;
   ipAddress: string;
   lastActivity: string;
@@ -91,6 +94,7 @@ interface SessionItemViewModel {
 
 interface Props {
   sessions: Session[];
+  oauthClients: OAuthClientConfig[];
 }
 
 const UserDetailsSession: React.VFC<Props> = function UserDetailsSession(
@@ -98,8 +102,8 @@ const UserDetailsSession: React.VFC<Props> = function UserDetailsSession(
 ) {
   const { locale, renderToString } = useContext(Context);
   const { themes } = useSystemConfig();
-  const { userID } = useParams() as { userID: string };
-  const { sessions } = props;
+  const { appID, userID } = useParams() as { appID: string; userID: string };
+  const { sessions, oauthClients } = props;
 
   const {
     revokeSession,
@@ -136,6 +140,30 @@ const UserDetailsSession: React.VFC<Props> = function UserDetailsSession(
         className: styles.cell,
         minWidth: 200,
         maxWidth: 200,
+        // eslint-disable-next-line react/no-unstable-nested-components
+        onRender: (item: SessionItemViewModel) => {
+          if (item.displayName !== "") {
+            return item.displayName;
+          }
+
+          if (item.userAgent !== null && item.userAgent !== "") {
+            return item.userAgent;
+          }
+
+          return (
+            <Text
+              variant="small"
+              styles={(_, theme) => ({
+                root: {
+                  color: theme.palette.neutralSecondary,
+                  fontStyle: "italic",
+                },
+              })}
+            >
+              {renderToString("UserDetails.session.devices.unknown")}
+            </Text>
+          );
+        },
       },
       {
         key: "clientID",
@@ -144,6 +172,32 @@ const UserDetailsSession: React.VFC<Props> = function UserDetailsSession(
         className: styles.cell,
         minWidth: 120,
         maxWidth: 120,
+        // eslint-disable-next-line react/no-unstable-nested-components
+        onRender: (item: SessionItemViewModel) => {
+          const client = oauthClients.find(
+            (client) => client.client_id === item.clientID
+          );
+
+          if (client !== undefined) {
+            return (
+              <TooltipHost
+                content={renderToString(
+                  "UserDetails.session.clientID.tooltip.message",
+                  { clientID: item.clientID }
+                )}
+              >
+                <Link
+                  to={`/project/${appID}/configuration/apps/${item.clientID}/edit`}
+                  className={styles.clientID}
+                >
+                  {client.name}
+                </Link>
+              </TooltipHost>
+            );
+          }
+
+          return item.clientID;
+        },
       },
       {
         key: "ipAddress",
@@ -158,8 +212,8 @@ const UserDetailsSession: React.VFC<Props> = function UserDetailsSession(
         fieldName: "lastActivity",
         name: renderToString("UserDetails.session.last-activity"),
         className: styles.cell,
-        minWidth: 140,
-        maxWidth: 140,
+        minWidth: 220,
+        maxWidth: 220,
       },
       {
         key: "action",
@@ -177,7 +231,7 @@ const UserDetailsSession: React.VFC<Props> = function UserDetailsSession(
         ),
       },
     ],
-    [themes.destructive, renderToString]
+    [renderToString, oauthClients, appID, themes.destructive]
   );
 
   const sessionListItems = useMemo(
@@ -185,6 +239,7 @@ const UserDetailsSession: React.VFC<Props> = function UserDetailsSession(
       sessions.map(
         (session): SessionItemViewModel => ({
           displayName: session.displayName,
+          userAgent: session.userAgent ?? null,
           clientID: session.clientID ?? "-",
           ipAddress: session.lastAccessedByIP,
           lastActivity: formatDatetime(locale, session.lastAccessedAt) ?? "",

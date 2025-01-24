@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -14,7 +15,7 @@ import (
 var ErrInvalidSession = errors.New("provided session is invalid")
 
 type Resolver interface {
-	Resolve(rw http.ResponseWriter, r *http.Request) (Session, error)
+	Resolve(ctx context.Context, rw http.ResponseWriter, r *http.Request) (ResolvedSession, error)
 }
 
 type IDPSessionResolver Resolver
@@ -27,7 +28,7 @@ func NewMiddlewareLogger(lf *log.Factory) MiddlewareLogger {
 }
 
 type MeterService interface {
-	TrackActiveUser(userID string) error
+	TrackActiveUser(ctx context.Context, userID string) error
 }
 
 type Middleware struct {
@@ -40,12 +41,11 @@ type Middleware struct {
 	Database                   *appdb.Handle
 	Logger                     MiddlewareLogger
 	MeterService               MeterService
-	IDPSessionOnly             bool
 }
 
 func (m *Middleware) Handle(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		s, err := m.resolve(rw, r)
+		s, err := m.resolve(r.Context(), rw, r)
 
 		if errors.Is(err, ErrInvalidSession) {
 			// Clear invalid session cookie if exist
@@ -66,9 +66,9 @@ func (m *Middleware) Handle(next http.Handler) http.Handler {
 	})
 }
 
-func (m *Middleware) resolve(rw http.ResponseWriter, r *http.Request) (s Session, err error) {
-	err = m.Database.ReadOnly(func() (err error) {
-		s, err = m.resolveSession(rw, r)
+func (m *Middleware) resolve(ctx context.Context, rw http.ResponseWriter, r *http.Request) (s ResolvedSession, err error) {
+	err = m.Database.ReadOnly(ctx, func(ctx context.Context) (err error) {
+		s, err = m.resolveSession(ctx, rw, r)
 		if err != nil {
 			return
 		}
@@ -78,7 +78,7 @@ func (m *Middleware) resolve(rw http.ResponseWriter, r *http.Request) (s Session
 		}
 
 		// Standard session checking consider ErrUserNotFound and disabled as invalid.
-		u, err := m.Users.GetRaw(s.GetAuthenticationInfo().UserID)
+		u, err := m.Users.GetRaw(ctx, s.GetAuthenticationInfo().UserID)
 		if err != nil {
 			if errors.Is(err, user.ErrUserNotFound) {
 				err = ErrInvalidSession
@@ -90,38 +90,21 @@ func (m *Middleware) resolve(rw http.ResponseWriter, r *http.Request) (s Session
 			return
 		}
 
-		event := s.GetAccessInfo().LastAccess
-		err = m.AccessEvents.RecordAccess(s.SessionID(), &event)
-		if err != nil {
-			return
-		}
-
-		err = m.MeterService.TrackActiveUser(u.ID)
-		if err != nil {
-			return
-		}
-
 		return
 	})
 	return
 }
 
-func (m *Middleware) resolveSession(rw http.ResponseWriter, r *http.Request) (Session, error) {
+func (m *Middleware) resolveSession(ctx context.Context, rw http.ResponseWriter, r *http.Request) (ResolvedSession, error) {
 	isInvalid := false
 
-	var resolvers []Resolver
-	if m.IDPSessionOnly {
-		// For some routes, only idp session is accepted. e.g. authz endpoint, continue screen, consent screen...
-		resolvers = []Resolver{m.IDPSessionResolver}
-	} else {
-		// Access token in header/App session token in cookie takes priority over IDP session in cookie
-		// If both the app session and IDP session exist in the cookie
-		// Middleware will read the app session first, so SDK will always open the correct settings page
-		resolvers = []Resolver{m.AccessTokenSessionResolver, m.IDPSessionResolver}
-	}
+	// Access token in header/App session token in cookie takes priority over IDP session in cookie
+	// If both the app session and IDP session exist in the cookie
+	// Middleware will read the app session first, so SDK will always open the correct settings page
+	resolvers := []Resolver{m.AccessTokenSessionResolver, m.IDPSessionResolver}
 
 	for _, resolver := range resolvers {
-		session, err := resolver.Resolve(rw, r)
+		session, err := resolver.Resolve(ctx, rw, r)
 		if errors.Is(err, ErrInvalidSession) {
 			// Continue to attempt resolving session, even if one of the resolver reported invalid.
 			isInvalid = true

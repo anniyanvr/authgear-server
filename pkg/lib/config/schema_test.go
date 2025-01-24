@@ -45,6 +45,9 @@ func TestAppConfigSchema(t *testing.T) {
 		"testdata/login_flow_tests.yaml",
 		"testdata/signup_login_flow_tests.yaml",
 		"testdata/reauth_flow_tests.yaml",
+		"testdata/account_linking_tests.yaml",
+		"testdata/captcha_tests.yaml",
+		"testdata/bot_protection_tests.yaml",
 	}
 
 	type TestCase struct {

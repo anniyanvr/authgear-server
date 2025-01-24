@@ -27,6 +27,8 @@ func NewMockSession() *MockSession {
 	}
 }
 
+func (m MockSession) Session() {}
+
 func (m MockSession) SessionID() string { return m.ID }
 
 func (m MockSession) SessionType() session.Type { return m.Type }
@@ -34,6 +36,8 @@ func (m MockSession) SessionType() session.Type { return m.Type }
 func (m MockSession) GetClientID() string { return "" }
 
 func (m MockSession) GetCreatedAt() time.Time { return time.Time{} }
+
+func (m MockSession) GetExpireAt() time.Time { return time.Time{} }
 
 func (m MockSession) GetAuthenticatedAt() time.Time { return time.Time{} }
 
@@ -53,6 +57,17 @@ func (m MockSession) GetAuthenticationInfo() authenticationinfo.T {
 		UserID:          m.GetUserID(),
 		AMR:             amr,
 		AuthenticatedAt: m.GetAuthenticatedAt(),
+	}
+}
+
+func (m *MockSession) CreateNewAuthenticationInfoByThisSession() authenticationinfo.T {
+	amr, _ := m.GetOIDCAMR()
+	return authenticationinfo.T{
+		UserID:                     m.GetUserID(),
+		AMR:                        amr,
+		AuthenticatedAt:            m.GetAuthenticatedAt(),
+		AuthenticatedBySessionType: string(m.SessionType()),
+		AuthenticatedBySessionID:   m.SessionID(),
 	}
 }
 
@@ -78,10 +93,10 @@ func (s *MockSession) SSOGroupIDPSessionID() string {
 	return ""
 }
 
-func (s *MockSession) IsSameSSOGroup(ss session.Session) bool {
+func (s *MockSession) IsSameSSOGroup(ss session.ListableSession) bool {
 	return false
 }
 
-func (s *MockSession) Equal(ss session.Session) bool {
+func (s *MockSession) Equal(ss session.ListableSession) bool {
 	return false
 }

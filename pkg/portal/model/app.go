@@ -6,8 +6,8 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwk"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
-	"github.com/authgear/authgear-server/pkg/portal/appresource"
 	"github.com/authgear/authgear-server/pkg/util/jwkutil"
+	"github.com/authgear/authgear-server/pkg/util/resource"
 )
 
 type AppListItem struct {
@@ -21,7 +21,7 @@ type App struct {
 }
 
 type AppResource struct {
-	DescriptedPath appresource.DescriptedPath
+	DescriptedPath resource.DescriptedPath
 	Context        *config.AppContext
 }
 
@@ -59,14 +59,43 @@ type OAuthClientSecret struct {
 	Keys     []OAuthClientSecretKey `json:"keys,omitempty"`
 }
 
+type BotProtectionProviderSecret struct {
+	Type      config.BotProtectionProviderType `json:"type,omitempty"`
+	SecretKey *string                          `json:"secretKey,omitempty"`
+}
+
+type SAMLIdpSigningCertificate struct {
+	KeyID                  string `json:"keyID,omitempty"`
+	CertificateFingerprint string `json:"certificateFingerprint,omitempty"`
+	CertificatePEM         string `json:"certificatePEM,omitempty"`
+}
+
+type SAMLIdpSigningSecrets struct {
+	Certificates []SAMLIdpSigningCertificate `json:"certificates,omitempty"`
+}
+
+type SAMLSpSigningCertificate struct {
+	CertificateFingerprint string `json:"certificateFingerprint,omitempty"`
+	CertificatePEM         string `json:"certificatePEM,omitempty"`
+}
+
+type SAMLSpSigningSecrets struct {
+	ClientID     string                     `json:"clientID,omitempty"`
+	Certificates []SAMLSpSigningCertificate `json:"certificates,omitempty"`
+}
+
 type SecretConfig struct {
 	OAuthSSOProviderClientSecrets []OAuthSSOProviderClientSecret `json:"oauthSSOProviderClientSecrets,omitempty"`
 	WebhookSecret                 *WebhookSecret                 `json:"webhookSecret,omitempty"`
 	AdminAPISecrets               []AdminAPISecret               `json:"adminAPISecrets,omitempty"`
 	SMTPSecret                    *SMTPSecret                    `json:"smtpSecret,omitempty"`
 	OAuthClientSecrets            []OAuthClientSecret            `json:"oauthClientSecrets,omitempty"`
+	BotProtectionProviderSecret   *BotProtectionProviderSecret   `json:"botProtectionProviderSecret,omitempty"`
+	SAMLIdpSigningSecrets         *SAMLIdpSigningSecrets         `json:"samlIdpSigningSecrets,omitempty"`
+	SAMLSpSigningSecrets          []SAMLSpSigningSecrets         `json:"samlSpSigningSecrets,omitempty"`
 }
 
+//nolint:gocognit
 func NewSecretConfig(secretConfig *config.SecretConfig, unmaskedSecrets []config.SecretKey, now time.Time) (*SecretConfig, error) {
 	out := &SecretConfig{}
 	var unmaskedSecretsSet map[config.SecretKey]interface{} = map[config.SecretKey]interface{}{}
@@ -199,5 +228,64 @@ func NewSecretConfig(secretConfig *config.SecretConfig, unmaskedSecrets []config
 		}
 	}
 
+	if botProtectionProviderSecrets, ok := secretConfig.LookupData(config.BotProtectionProviderCredentialsKey).(*config.BotProtectionProviderCredentials); ok {
+		bpSecret := &BotProtectionProviderSecret{
+			Type: botProtectionProviderSecrets.Type,
+		}
+
+		if _, exist := unmaskedSecretsSet[config.BotProtectionProviderCredentialsKey]; exist {
+			bpSecret.SecretKey = &botProtectionProviderSecrets.SecretKey
+		}
+
+		out.BotProtectionProviderSecret = bpSecret
+	}
+
+	if samlIdpSigningSecrets, ok := secretConfig.LookupData(config.SAMLIdpSigningMaterialsKey).(*config.SAMLIdpSigningMaterials); ok {
+		out.SAMLIdpSigningSecrets = toPortalSAMLIdpSigningSecrets(samlIdpSigningSecrets)
+	}
+
+	if samlSpSigningSecrets, ok := secretConfig.LookupData(config.SAMLSpSigningMaterialsKey).(*config.SAMLSpSigningMaterials); ok {
+		out.SAMLSpSigningSecrets = toPortalSAMLSpSigningSecrets(samlSpSigningSecrets)
+	}
+
 	return out, nil
+}
+
+func toPortalSAMLIdpSigningSecrets(cfg *config.SAMLIdpSigningMaterials) *SAMLIdpSigningSecrets {
+	result := &SAMLIdpSigningSecrets{
+		Certificates: []SAMLIdpSigningCertificate{},
+	}
+
+	for _, cfgCert := range cfg.Certificates {
+		cert := SAMLIdpSigningCertificate{
+			KeyID:                  cfgCert.Key.KeyID(),
+			CertificateFingerprint: cfgCert.Certificate.Fingerprint(),
+			CertificatePEM:         string(cfgCert.Certificate.Pem),
+		}
+		result.Certificates = append(result.Certificates, cert)
+	}
+
+	return result
+}
+
+func toPortalSAMLSpSigningSecrets(cfg *config.SAMLSpSigningMaterials) []SAMLSpSigningSecrets {
+	result := []SAMLSpSigningSecrets{}
+
+	for _, cfgItem := range *cfg {
+		item := SAMLSpSigningSecrets{
+			ClientID:     cfgItem.ServiceProviderID,
+			Certificates: []SAMLSpSigningCertificate{},
+		}
+
+		for _, cfgCert := range cfgItem.Certificates {
+			item.Certificates = append(item.Certificates, SAMLSpSigningCertificate{
+				CertificateFingerprint: cfgCert.Fingerprint(),
+				CertificatePEM:         string(cfgCert.Pem),
+			})
+		}
+
+		result = append(result, item)
+	}
+
+	return result
 }

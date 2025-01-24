@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -13,13 +14,14 @@ type AppSessionToken struct {
 	AppID          string `json:"app_id"`
 	OfflineGrantID string `json:"offline_grant_id"`
 
-	CreatedAt time.Time `json:"created_at"`
-	ExpireAt  time.Time `json:"expire_at"`
-	TokenHash string    `json:"token_hash"`
+	CreatedAt        time.Time `json:"created_at"`
+	ExpireAt         time.Time `json:"expire_at"`
+	TokenHash        string    `json:"token_hash"`
+	RefreshTokenHash string    `json:"refresh_token_hash"`
 }
 
 type AppSessionTokenServiceOfflineGrantService interface {
-	IsValid(session *OfflineGrant) (valid bool, expiry time.Time, err error)
+	GetOfflineGrant(ctx context.Context, id string) (*OfflineGrant, error)
 }
 
 type AppSessionTokenServiceCookieManager interface {
@@ -34,14 +36,13 @@ type AppSessionTokenInput struct {
 type AppSessionTokenService struct {
 	AppSessions         AppSessionStore
 	AppSessionTokens    AppSessionTokenStore
-	OfflineGrants       OfflineGrantStore
 	OfflineGrantService AppSessionTokenServiceOfflineGrantService
 	Cookies             AppSessionTokenServiceCookieManager
 	Clock               clock.Clock
 }
 
-func (s *AppSessionTokenService) Handle(input AppSessionTokenInput) (httputil.Result, error) {
-	token, err := s.Exchange(input.AppSessionToken)
+func (s *AppSessionTokenService) Handle(ctx context.Context, input AppSessionTokenInput) (httputil.Result, error) {
+	token, err := s.Exchange(ctx, input.AppSessionToken)
 	if err != nil {
 		return nil, err
 	}
@@ -53,27 +54,19 @@ func (s *AppSessionTokenService) Handle(input AppSessionTokenInput) (httputil.Re
 	}, nil
 }
 
-func (s *AppSessionTokenService) Exchange(appSessionToken string) (string, error) {
-	sToken, err := s.AppSessionTokens.GetAppSessionToken(HashToken(appSessionToken))
+func (s *AppSessionTokenService) Exchange(ctx context.Context, appSessionToken string) (string, error) {
+	sToken, err := s.AppSessionTokens.GetAppSessionToken(ctx, HashToken(appSessionToken))
+	if err != nil {
+		return "", err
+	}
+	refreshTokenHash := sToken.RefreshTokenHash
+
+	offlineGrant, err := s.OfflineGrantService.GetOfflineGrant(ctx, sToken.OfflineGrantID)
 	if err != nil {
 		return "", err
 	}
 
-	offlineGrant, err := s.OfflineGrants.GetOfflineGrant(sToken.OfflineGrantID)
-	if err != nil {
-		return "", err
-	}
-
-	isValid, expiry, err := s.OfflineGrantService.IsValid(offlineGrant)
-	if err != nil {
-		return "", err
-	}
-
-	if !isValid {
-		return "", ErrGrantNotFound
-	}
-
-	err = s.AppSessionTokens.DeleteAppSessionToken(sToken)
+	err = s.AppSessionTokens.DeleteAppSessionToken(ctx, sToken)
 	if err != nil {
 		return "", err
 	}
@@ -81,13 +74,14 @@ func (s *AppSessionTokenService) Exchange(appSessionToken string) (string, error
 	// Create app session
 	token := GenerateToken()
 	appSession := &AppSession{
-		AppID:          offlineGrant.AppID,
-		OfflineGrantID: offlineGrant.ID,
-		CreatedAt:      s.Clock.NowUTC(),
-		ExpireAt:       expiry,
-		TokenHash:      HashToken(token),
+		AppID:            offlineGrant.AppID,
+		OfflineGrantID:   offlineGrant.ID,
+		CreatedAt:        s.Clock.NowUTC(),
+		ExpireAt:         offlineGrant.ExpireAtForResolvedSession,
+		TokenHash:        HashToken(token),
+		RefreshTokenHash: refreshTokenHash,
 	}
-	err = s.AppSessions.CreateAppSession(appSession)
+	err = s.AppSessions.CreateAppSession(ctx, appSession)
 	if err != nil {
 		return "", err
 	}

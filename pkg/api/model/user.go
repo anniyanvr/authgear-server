@@ -18,32 +18,21 @@ type User struct {
 	CanReauthenticate  bool                   `json:"can_reauthenticate"`
 	StandardAttributes map[string]interface{} `json:"standard_attributes,omitempty"`
 	CustomAttributes   map[string]interface{} `json:"custom_attributes,omitempty"`
-	Web3               *UserWeb3Info          `json:"x_web3,omitempty"`
-}
+	// Web3 is kept for backwards compatibility purpose.
+	// It is always an empty map.
+	Web3                 map[string]interface{} `json:"x_web3,omitempty"`
+	Roles                []string               `json:"roles,omitempty"`
+	Groups               []string               `json:"groups,omitempty"`
+	MFAGracePeriodtEndAt *time.Time             `json:"mfa_grace_period_end_at,omitempty"`
 
-func (u *User) EndUserAccountID() string {
-	if s, ok := u.StandardAttributes[string(ClaimEmail)].(string); ok && s != "" {
-		return s
-	}
-	if s, ok := u.StandardAttributes[string(ClaimPreferredUsername)].(string); ok && s != "" {
-		return s
-	}
-	if s, ok := u.StandardAttributes[string(ClaimPhoneNumber)].(string); ok && s != "" {
-		return s
-	}
-	if u.Web3 != nil && len(u.Web3.Accounts) > 0 {
-		first := u.Web3.Accounts[0]
-		return first.EndUserAccountID()
-	}
-
-	return ""
+	EndUserAccountID string `json:"-"`
 }
 
 type UserRef struct {
 	Meta
 }
 
-type ElasticsearchUserRaw struct {
+type SearchUserRaw struct {
 	ID                 string
 	AppID              string
 	CreatedAt          time.Time
@@ -55,9 +44,12 @@ type ElasticsearchUserRaw struct {
 	PhoneNumber        []string
 	OAuthSubjectID     []string
 	StandardAttributes map[string]interface{}
+
+	Groups         []*Group
+	EffectiveRoles []*Role
 }
 
-type ElasticsearchUserSource struct {
+type SearchUserSource struct {
 	ID          string     `json:"id,omitempty"`
 	AppID       string     `json:"app_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at,omitempty"`
@@ -102,4 +94,9 @@ type ElasticsearchUserSource struct {
 	Region        string `json:"region,omitempty"`
 	PostalCode    string `json:"postal_code,omitempty"`
 	Country       string `json:"country,omitempty"`
+
+	RoleKey   []string `json:"role_key,omitempty"`
+	RoleName  []string `json:"role_name,omitempty"`
+	GroupKey  []string `json:"group_key,omitempty"`
+	GroupName []string `json:"group_name,omitempty"`
 }

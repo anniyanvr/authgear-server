@@ -11,14 +11,17 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
+	"github.com/lestrrat-go/jwx/v2/jwt"
 	. "github.com/smartystreets/goconvey/convey"
 
+	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticationinfo"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/oauth"
 	"github.com/authgear/authgear-server/pkg/lib/oauth/handler"
 	"github.com/authgear/authgear-server/pkg/lib/oauth/oidc"
 	"github.com/authgear/authgear-server/pkg/lib/oauth/protocol"
+	"github.com/authgear/authgear-server/pkg/lib/session"
 	sessiontest "github.com/authgear/authgear-server/pkg/lib/session/test"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 )
@@ -63,10 +66,11 @@ func TestAuthorizationHandler(t *testing.T) {
 		cookieManager := &mockCookieManager{}
 		oauthSessionService := &mockOAuthSessionService{}
 		clientResolver := &mockClientResolver{}
+		preAuthenticatedURLTokenService := NewMockPreAuthenticatedURLTokenService(ctrl)
+		idTokenIssuer := NewMockIDTokenIssuer(ctrl)
 
 		appID := config.AppID("app-id")
 		h := &handler.AuthorizationHandler{
-			Context:    context.Background(),
 			AppID:      appID,
 			Config:     &config.OAuthConfig{},
 			HTTPOrigin: "http://accounts.example.com",
@@ -74,7 +78,6 @@ func TestAuthorizationHandler(t *testing.T) {
 			UIURLBuilder:              uiURLBuilder,
 			UIInfoResolver:            uiInfoResolver,
 			Authorizations:            authzService,
-			ValidateScopes:            func(*config.OAuthClientConfig, []string) error { return nil },
 			Clock:                     clock,
 			AuthenticationInfoService: authenticationInfoService,
 			Cookies:                   cookieManager,
@@ -85,10 +88,12 @@ func TestAuthorizationHandler(t *testing.T) {
 				CodeGenerator: func() string { return "authz-code" },
 				CodeGrants:    codeGrantStore,
 			},
-			ClientResolver: clientResolver,
+			ClientResolver:                  clientResolver,
+			PreAuthenticatedURLTokenService: preAuthenticatedURLTokenService,
+			IDTokenIssuer:                   idTokenIssuer,
 		}
-		handle := func(r protocol.AuthorizationRequest) *httptest.ResponseRecorder {
-			result := h.Handle(r)
+		handle := func(ctx context.Context, r protocol.AuthorizationRequest) *httptest.ResponseRecorder {
+			result := h.Handle(ctx, r)
 			req, _ := http.NewRequest("GET", "/authorize", nil)
 			resp := httptest.NewRecorder()
 			result.WriteResponse(resp, req)
@@ -105,7 +110,8 @@ func TestAuthorizationHandler(t *testing.T) {
 				CustomUIURI: "https://ui.custom.com",
 			}
 			Convey("missing client ID", func() {
-				resp := handle(protocol.AuthorizationRequest{})
+				ctx := context.Background()
+				resp := handle(ctx, protocol.AuthorizationRequest{})
 				So(resp.Result().StatusCode, ShouldEqual, 400)
 				So(resp.Body.String(), ShouldEqual,
 					"Invalid OAuth authorization request:\n"+
@@ -113,7 +119,8 @@ func TestAuthorizationHandler(t *testing.T) {
 						"error_description: invalid client ID\n")
 			})
 			Convey("disallowed redirect URI", func() {
-				resp := handle(protocol.AuthorizationRequest{
+				ctx := context.Background()
+				resp := handle(ctx, protocol.AuthorizationRequest{
 					"client_id":    "client-id",
 					"redirect_uri": "https://example.com",
 				})
@@ -124,7 +131,8 @@ func TestAuthorizationHandler(t *testing.T) {
 						"error_description: redirect URI is not allowed\n")
 			})
 			Convey("implicitly allowed redirect URI on AS", func() {
-				resp := handle(protocol.AuthorizationRequest{
+				ctx := context.Background()
+				resp := handle(ctx, protocol.AuthorizationRequest{
 					"client_id":    "client-id",
 					"redirect_uri": "http://accounts.example.com/settings",
 				})
@@ -141,7 +149,8 @@ func TestAuthorizationHandler(t *testing.T) {
 				RedirectURIs: []string{"https://example.com/cb?from=sso"},
 				CustomUIURI:  "https://ui.custom.com",
 			}
-			resp := handle(protocol.AuthorizationRequest{
+			ctx := context.Background()
+			resp := handle(ctx, protocol.AuthorizationRequest{
 				"client_id":     "client-id",
 				"response_type": "code",
 			})
@@ -160,7 +169,8 @@ func TestAuthorizationHandler(t *testing.T) {
 			clientResolver.ClientConfig = mockedClient
 			Convey("request validation", func() {
 				Convey("missing scope", func() {
-					resp := handle(protocol.AuthorizationRequest{
+					ctx := context.Background()
+					resp := handle(ctx, protocol.AuthorizationRequest{
 						"client_id":     "client-id",
 						"response_type": "code",
 					})
@@ -170,7 +180,8 @@ func TestAuthorizationHandler(t *testing.T) {
 					))
 				})
 				Convey("missing PKCE code challenge", func() {
-					resp := handle(protocol.AuthorizationRequest{
+					ctx := context.Background()
+					resp := handle(ctx, protocol.AuthorizationRequest{
 						"client_id":     "client-id",
 						"response_type": "code",
 						"scope":         "openid",
@@ -181,7 +192,8 @@ func TestAuthorizationHandler(t *testing.T) {
 					))
 				})
 				Convey("unsupported PKCE transform", func() {
-					resp := handle(protocol.AuthorizationRequest{
+					ctx := context.Background()
+					resp := handle(ctx, protocol.AuthorizationRequest{
 						"client_id":             "client-id",
 						"response_type":         "code",
 						"scope":                 "openid",
@@ -195,23 +207,14 @@ func TestAuthorizationHandler(t *testing.T) {
 				})
 			})
 			Convey("scope validation", func() {
-				validated := false
-				h.ValidateScopes = func(client *config.OAuthClientConfig, scopes []string) error {
-					validated = true
-					if strings.Join(scopes, " ") != "openid" {
-						return protocol.NewError("invalid_scope", "must request 'openid' scope")
-					}
-					return nil
-				}
-
-				resp := handle(protocol.AuthorizationRequest{
+				ctx := context.Background()
+				resp := handle(ctx, protocol.AuthorizationRequest{
 					"client_id":             "client-id",
 					"response_type":         "code",
 					"scope":                 "email",
 					"code_challenge_method": "S256",
 					"code_challenge":        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 				})
-				So(validated, ShouldBeTrue)
 				So(resp.Result().StatusCode, ShouldEqual, 200)
 				So(resp.Body.String(), ShouldEqual, redirectHTML(
 					"https://example.com/?error=invalid_scope&error_description=must+request+%27openid%27+scope",
@@ -227,20 +230,22 @@ func TestAuthorizationHandler(t *testing.T) {
 					"ui_locales":            "ja",
 				}
 				uiInfoResolver.EXPECT().ResolveForAuthorizationEndpoint(
+					gomock.Any(),
 					mockedClient,
 					req,
 				).Times(1).Return(&oidc.UIInfo{}, &oidc.UIInfoByProduct{}, nil)
-				uiURLBuilder.EXPECT().Build(mockedClient, req, gomock.Any()).Times(1).Return(&url.URL{
+				uiURLBuilder.EXPECT().BuildAuthenticationURL(mockedClient, req, gomock.Any()).Times(1).Return(&url.URL{
 					Scheme: "https",
 					Host:   "auth",
 					Path:   "/authenticate",
 				}, nil)
-				resp := handle(req)
+				ctx := context.Background()
+				resp := handle(ctx, req)
 				So(resp.Result().StatusCode, ShouldEqual, 302)
 				So(redirection(resp), ShouldEqual, "https://auth/authenticate")
 			})
 			Convey("return authorization code", func() {
-				h.Context = sessiontest.NewMockSession().
+				ctx := sessiontest.NewMockSession().
 					SetUserID("user-id").
 					SetSessionID("session-id").
 					ToContext(context.Background())
@@ -266,18 +271,20 @@ func TestAuthorizationHandler(t *testing.T) {
 						Scopes:    []string{"openid"},
 					}
 					uiInfoResolver.EXPECT().ResolveForAuthorizationEndpoint(
+						gomock.Any(),
 						mockedClient,
 						req,
 					).Times(1).Return(&oidc.UIInfo{
 						Prompt: []string{"none"},
 					}, &oidc.UIInfoByProduct{}, nil)
 					authzService.EXPECT().CheckAndGrant(
+						gomock.Any(),
 						"client-id",
 						"user-id",
 						[]string{"openid"},
 					).Times(1).Return(authorization, nil)
 
-					resp := handle(req)
+					resp := handle(ctx, req)
 					So(resp.Result().StatusCode, ShouldEqual, 200)
 					So(resp.Body.String(), ShouldEqual, redirectHTML(
 						"https://example.com/?code=authz-code&state=my-state",
@@ -287,9 +294,10 @@ func TestAuthorizationHandler(t *testing.T) {
 					So(codeGrantStore.grants[0], ShouldResemble, oauth.CodeGrant{
 						AppID:           "app-id",
 						AuthorizationID: authorization.ID,
-						IDPSessionID:    "session-id",
 						AuthenticationInfo: authenticationinfo.T{
-							UserID: "user-id",
+							UserID:                     "user-id",
+							AuthenticatedBySessionID:   "session-id",
+							AuthenticatedBySessionType: string(session.TypeIdentityProvider),
 						},
 						CreatedAt:            time.Date(2020, 2, 1, 0, 0, 0, 0, time.UTC),
 						ExpireAt:             time.Date(2020, 2, 1, 0, 5, 0, 0, time.UTC),
@@ -310,6 +318,7 @@ func TestAuthorizationHandler(t *testing.T) {
 						Scopes:    []string{"openid", "offline_access"},
 					}
 					authzService.EXPECT().CheckAndGrant(
+						gomock.Any(),
 						"client-id",
 						"user-id",
 						[]string{"openid", "offline_access"},
@@ -323,13 +332,14 @@ func TestAuthorizationHandler(t *testing.T) {
 						"prompt":                "none",
 					}
 					uiInfoResolver.EXPECT().ResolveForAuthorizationEndpoint(
+						gomock.Any(),
 						mockedClient,
 						req,
 					).Times(1).Return(&oidc.UIInfo{
 						Prompt: []string{"none"},
 					}, &oidc.UIInfoByProduct{}, nil)
 
-					resp := handle(req)
+					resp := handle(ctx, req)
 					So(resp.Result().StatusCode, ShouldEqual, 200)
 					So(resp.Body.String(), ShouldEqual, redirectHTML(
 						"https://example.com/?code=authz-code",
@@ -339,9 +349,10 @@ func TestAuthorizationHandler(t *testing.T) {
 					So(codeGrantStore.grants[0], ShouldResemble, oauth.CodeGrant{
 						AppID:           "app-id",
 						AuthorizationID: "authz-id",
-						IDPSessionID:    "session-id",
 						AuthenticationInfo: authenticationinfo.T{
-							UserID: "user-id",
+							UserID:                     "user-id",
+							AuthenticatedBySessionID:   "session-id",
+							AuthenticatedBySessionType: string(session.TypeIdentityProvider),
 						},
 						CreatedAt:            time.Date(2020, 2, 1, 0, 0, 0, 0, time.UTC),
 						ExpireAt:             time.Date(2020, 2, 1, 0, 5, 0, 0, time.UTC),
@@ -360,35 +371,13 @@ func TestAuthorizationHandler(t *testing.T) {
 				CustomUIURI:   "https://ui.custom.com",
 			}
 			clientResolver.ClientConfig = mockedClient
-			Convey("request validation", func() {
-				Convey("not allowed response types", func() {
-					mockedClient.ResponseTypes = nil
-					resp := handle(protocol.AuthorizationRequest{
-						"client_id":     "client-id",
-						"response_type": "none",
-					})
-					So(resp.Result().StatusCode, ShouldEqual, 200)
-					So(resp.Body.String(), ShouldEqual, redirectHTML(
-						"https://example.com/?error=unauthorized_client&error_description=response+type+is+not+allowed+for+this+client",
-					))
-				})
-			})
 			Convey("scope validation", func() {
-				validated := false
-				h.ValidateScopes = func(client *config.OAuthClientConfig, scopes []string) error {
-					validated = true
-					if strings.Join(scopes, " ") != "openid" {
-						return protocol.NewError("invalid_scope", "must request 'openid' scope")
-					}
-					return nil
-				}
-
-				resp := handle(protocol.AuthorizationRequest{
+				ctx := context.Background()
+				resp := handle(ctx, protocol.AuthorizationRequest{
 					"client_id":     "client-id",
 					"response_type": "none",
 					"scope":         "email",
 				})
-				So(validated, ShouldBeTrue)
 				So(resp.Result().StatusCode, ShouldEqual, 200)
 				So(resp.Body.String(), ShouldEqual, redirectHTML(
 					"https://example.com/?error=invalid_scope&error_description=must+request+%27openid%27+scope",
@@ -401,20 +390,22 @@ func TestAuthorizationHandler(t *testing.T) {
 					"scope":         "openid",
 				}
 				uiInfoResolver.EXPECT().ResolveForAuthorizationEndpoint(
+					gomock.Any(),
 					mockedClient,
 					req,
 				).Times(1).Return(&oidc.UIInfo{}, &oidc.UIInfoByProduct{}, nil)
-				uiURLBuilder.EXPECT().Build(mockedClient, req, gomock.Any()).Times(1).Return(&url.URL{
+				uiURLBuilder.EXPECT().BuildAuthenticationURL(mockedClient, req, gomock.Any()).Times(1).Return(&url.URL{
 					Scheme: "https",
 					Host:   "auth",
 					Path:   "/authenticate",
 				}, nil)
-				resp := handle(req)
+				ctx := context.Background()
+				resp := handle(ctx, req)
 				So(resp.Result().StatusCode, ShouldEqual, 302)
 				So(redirection(resp), ShouldEqual, "https://auth/authenticate")
 			})
 			Convey("redirect to URI", func() {
-				h.Context = sessiontest.NewMockSession().
+				ctx := sessiontest.NewMockSession().
 					SetUserID("user-id").
 					SetSessionID("session-id").
 					ToContext(context.Background())
@@ -437,18 +428,20 @@ func TestAuthorizationHandler(t *testing.T) {
 						"prompt":        "none",
 					}
 					authzService.EXPECT().CheckAndGrant(
+						gomock.Any(),
 						"client-id",
 						"user-id",
 						[]string{"openid"},
 					).Times(1).Return(authorization, nil)
 					uiInfoResolver.EXPECT().ResolveForAuthorizationEndpoint(
+						gomock.Any(),
 						mockedClient,
 						req,
 					).Times(1).Return(&oidc.UIInfo{
 						Prompt: []string{"none"},
 					}, &oidc.UIInfoByProduct{}, nil)
 
-					resp := handle(req)
+					resp := handle(ctx, req)
 					So(resp.Result().StatusCode, ShouldEqual, 200)
 					So(resp.Body.String(), ShouldEqual, redirectHTML(
 						"https://example.com/?state=my-state",
@@ -456,6 +449,71 @@ func TestAuthorizationHandler(t *testing.T) {
 
 					So(codeGrantStore.grants, ShouldBeEmpty)
 				})
+			})
+		})
+
+		Convey("pre-authenticated-url", func() {
+			mockedClient := &config.OAuthClientConfig{
+				ClientID:      "client-id",
+				RedirectURIs:  []string{"https://example.com/"},
+				ResponseTypes: []string{"none", "urn:authgear:params:oauth:response-type:pre-authenticated-url token"},
+			}
+			clientResolver.ClientConfig = mockedClient
+
+			Convey("exchange for access token in cookie", func() {
+				testOfflineGrantID := "TEST_OFFLINE_GRANT_ID"
+				testOfflineGrant := &oauth.OfflineGrant{
+					ID: testOfflineGrantID,
+				}
+				testSID := oauth.EncodeSID(testOfflineGrant)
+
+				// nolint:gosec
+				testPreAuthenticatedURLToken := "TEST_PRE_AUTHENTICATED_URL_TOKEN"
+				testIDToken := "TEST_ID_TOKEN"
+
+				testVerifiedIDToken := jwt.New()
+				_ = testVerifiedIDToken.Set(string(model.ClaimSID), testSID)
+
+				idTokenIssuer.EXPECT().VerifyIDToken(testIDToken).
+					Times(1).
+					Return(testVerifiedIDToken, nil)
+
+				testAccessToken := "TEST_ACCESS_TOKEN"
+
+				preAuthenticatedURLTokenService.EXPECT().ExchangeForAccessToken(
+					gomock.Any(),
+					mockedClient,
+					testOfflineGrantID,
+					testPreAuthenticatedURLToken,
+				).
+					Times(1).
+					Return(testAccessToken, nil)
+
+				req := protocol.AuthorizationRequest{
+					"client_id":                     "client-id",
+					"response_type":                 "urn:authgear:params:oauth:response-type:pre-authenticated-url token",
+					"x_pre_authenticated_url_token": testPreAuthenticatedURLToken,
+					"prompt":                        "none",
+					"response_mode":                 "cookie",
+					"state":                         "my-state",
+					"redirect_uri":                  "https://example.com/",
+					"id_token_hint":                 testIDToken,
+				}
+
+				ctx := context.Background()
+				resp := handle(ctx, req)
+				So(resp.Result().StatusCode, ShouldEqual, 200)
+				So(resp.Body.String(), ShouldEqual, redirectHTML(
+					"https://example.com/?state=my-state",
+				))
+				cookieSet := false
+				for _, cookie := range resp.Result().Cookies() {
+					if cookie.Name == "app_access_token" && cookie.Value == testAccessToken {
+						cookieSet = true
+					}
+				}
+				So(cookieSet, ShouldEqual, true)
+
 			})
 		})
 	})

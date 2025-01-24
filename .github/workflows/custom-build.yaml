@@ -1,0 +1,132 @@
+name: Custom Build
+
+on:
+  push:
+    branches:
+    - '*'
+    - '!gh-pages'
+    tags:
+    - '*'
+
+# We need to set id-token to write.
+# But we cannot simply write
+#   permissions:
+#     id-token: write
+# because those unspecified permissions are 'none', instead of taking their default values, as documented in
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions#permissions
+# So we repeat the defaults here.
+permissions:
+  # The following are the default values we have to repeat here.
+  actions: "write"
+  attestations: "write"
+  checks: "write"
+  contents: "write"
+  deployments: "write"
+  discussions: "write"
+  issues: "write"
+  packages: "write"
+  pages: "write"
+  pull-requests: "write"
+  repository-projects: "write"
+  security-events: "write"
+  statuses: "write"
+  # The above are the default values we have to repeat here.
+  # We need to set id-token: write so that we can fetch the ID token.
+  # See https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect#adding-permissions-settings
+  # The ID token is used in Workload Identity Federation.
+  id-token: "write"
+
+jobs:
+  authgear-image-custom:
+    runs-on: ubuntu-24.04
+    if: ${{ github.repository == 'authgear/authgear-server' }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install qemu for multi arch build
+      run: docker run --privileged --rm tonistiigi/binfmt --install all
+    - uses: ./.github/actions/docker-buildx-create
+
+    # https://aran.dev/posts/github-actions-go-private-modules/
+    - name: Set up SSH key
+      env:
+        SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        AUTHGEAR_PRIVATE_DEPLOY_KEY: ${{ secrets.AUTHGEAR_PRIVATE_DEPLOY_KEY }}
+      run: |
+        mkdir -p ~/.ssh
+        eval $(ssh-agent -a $SSH_AUTH_SOCK)
+        printf "$AUTHGEAR_PRIVATE_DEPLOY_KEY" | base64 --decode | ssh-add -
+        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+        echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+    - name: Build and push to HK
+      uses: ./.github/actions/build-custom-image
+      with:
+        target: authgearx
+        image_name: "${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_PREFIX_HK }}/authgear-server"
+        gcp_project_id: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_PROJECT_ID_HK }}
+        gcp_workload_identity_provider: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_WORKLOAD_IDENTITY_PROVIDER_HK }}
+        docker_repo: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_HK }}
+
+    - name: Build and push to US
+      uses: ./.github/actions/build-custom-image
+      with:
+        target: authgearx
+        image_name: "${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_PREFIX_US }}/authgear-server"
+        gcp_project_id: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_PROJECT_ID_US }}
+        gcp_workload_identity_provider: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_WORKLOAD_IDENTITY_PROVIDER_US }}
+        docker_repo: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_US }}
+
+    - name: Clean up SSH key
+      if: ${{ always() }}
+      run: |
+        ssh-add -D
+        ssh-agent -k
+        echo "SSH_AUTH_SOCK=" >> "$GITHUB_ENV"
+        echo "SSH_AGENT_PID=" >> "$GITHUB_ENV"
+
+  portal-image-custom:
+    runs-on: ubuntu-24.04
+    if: ${{ github.repository == 'authgear/authgear-server' }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install qemu for multi arch build
+      run: docker run --privileged --rm tonistiigi/binfmt --install all
+    - uses: ./.github/actions/docker-buildx-create
+
+    # https://aran.dev/posts/github-actions-go-private-modules/
+    - name: Set up SSH key
+      env:
+        SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        AUTHGEAR_PRIVATE_DEPLOY_KEY: ${{ secrets.AUTHGEAR_PRIVATE_DEPLOY_KEY }}
+      run: |
+        mkdir -p ~/.ssh
+        eval $(ssh-agent -a $SSH_AUTH_SOCK)
+        printf "$AUTHGEAR_PRIVATE_DEPLOY_KEY" | base64 --decode | ssh-add -
+        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+        echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+    - name: Build and push to HK
+      uses: ./.github/actions/build-custom-image
+      with:
+        target: portalx
+        image_name: "${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_PREFIX_HK }}/authgear-portal"
+        gcp_project_id: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_PROJECT_ID_HK }}
+        gcp_workload_identity_provider: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_WORKLOAD_IDENTITY_PROVIDER_HK }}
+        docker_repo: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_HK }}
+
+    - name: Build and push to US
+      uses: ./.github/actions/build-custom-image
+      with:
+        target: portalx
+        image_name: "${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_PREFIX_US }}/authgear-portal"
+        gcp_project_id: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_PROJECT_ID_US }}
+        gcp_workload_identity_provider: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_GOOGLE_WORKLOAD_IDENTITY_PROVIDER_US }}
+        docker_repo: ${{ secrets.AUTHGEAR_CUSTOM_BUILD_REPO_US }}
+
+    - name: Clean up SSH key
+      if: ${{ always() }}
+      run: |
+        ssh-add -D
+        ssh-agent -k
+        echo "SSH_AUTH_SOCK=" >> "$GITHUB_ENV"
+        echo "SSH_AGENT_PID=" >> "$GITHUB_ENV"

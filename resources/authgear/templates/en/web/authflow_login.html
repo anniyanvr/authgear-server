@@ -38,6 +38,7 @@
 					{{ template "log-in-to-continue" (dict "AppOrClientName" $appName) }}
 					{{ end }}
 				</h1>
+				<input type="hidden" name="x_login_id_input_type" value="{{ $.LoginIDInputType }}"/>
 
 				{{ if $.LoginIDInputType }}{{ if eq $.LoginIDInputType "phone" }}{{ if $.PhoneLoginIDEnabled }}
 				<input
@@ -50,7 +51,7 @@
 					inputmode="tel"
 					autocomplete="tel-national username webauthn"
 					autocapitalize="none"
-					name="q_login_id"
+					name="x_login_id"
 					placeholder="{{ template "phone-number-placeholder" }}"
 					data-controller="intl-tel-input"
 					data-action="input->intl-tel-input#input countrychange->intl-tel-input#input intl-tel-input:input->retain-form-form#input"
@@ -67,16 +68,19 @@
 					type="{{ $.NonPhoneLoginIDInputType }}"
 					autocomplete="username webauthn"
 					autocapitalize="none"
-					name="q_login_id"
+					name="x_login_id"
 					placeholder="{{ template "login-id-placeholder" (dict "variant" $.NonPhoneLoginIDType) }}"
 					data-controller="retain-form-input"
 					data-action="input->retain-form-input#input retain-form-input:input->retain-form-form#input"
 					data-retain-form-form-target="input"
 					data-retain-form-form-name-param="text"
 				>
-				<!-- This field is for Chrome and Safari to consider the above field as username for autocomplete -->
-				<input style="display: none" aria-hidden="true" type="password" autocomplete="current-password" name="">
 				{{ end }}{{ end }}{{ end }}
+
+				<!-- This field is for Chrome and Safari to consider the above field as username for autocomplete -->
+				<!-- both `class="hidden"` and `display:none` do not work for iOS autofill -->
+				<!-- The hash of the style attribute is sha256-fOghyYcDMsLl/lf7piKeVgEljdV7IgqwGymlDo5oDhU= -->
+				<input style="position:absolute;width:0;height:0;" aria-hidden="true" type="password" autocomplete="current-password" name="">
 
 				{{ if $.LoginIDInputType }}{{ if eq $.LoginIDInputType "phone" }}{{ if (or $.EmailLoginIDEnabled $.UsernameLoginIDEnabled) }}
 				<a class="link text-sm self-start block" href="{{ call $.MakeURL "" "q_login_id_input_type" $.NonPhoneLoginIDInputType }}" data-turbo-action="replace">{{ template "use-text-login-id-description" (dict "variant" $.NonPhoneLoginIDType) }}</a>
@@ -124,7 +128,8 @@
 						type="button"
 						data-action="click->authflow-passkey-request#use"
 						data-authflow-passkey-request-target="button"
-						data-authgear-event="authgear.button.use_passkey">
+						data-authgear-event="authgear.button.use_passkey"
+						disabled>
 						<span class="passkey-btn-content">
 							<div class="passkey-btn-icon authgear-icons authgear-icons-passkey"></div>
 							<span class="text-base">

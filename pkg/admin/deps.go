@@ -13,27 +13,28 @@ import (
 	authenticatorservice "github.com/authgear/authgear-server/pkg/lib/authn/authenticator/service"
 	identityservice "github.com/authgear/authgear-server/pkg/lib/authn/identity/service"
 	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
 	"github.com/authgear/authgear-server/pkg/lib/authn/user"
 	"github.com/authgear/authgear-server/pkg/lib/deps"
-	libes "github.com/authgear/authgear-server/pkg/lib/elasticsearch"
-	"github.com/authgear/authgear-server/pkg/lib/endpoints"
 	"github.com/authgear/authgear-server/pkg/lib/event"
 	libfacade "github.com/authgear/authgear-server/pkg/lib/facade"
 	featurecustomattrs "github.com/authgear/authgear-server/pkg/lib/feature/customattrs"
 	"github.com/authgear/authgear-server/pkg/lib/feature/forgotpassword"
 	featurestdattrs "github.com/authgear/authgear-server/pkg/lib/feature/stdattrs"
 	"github.com/authgear/authgear-server/pkg/lib/infra/middleware"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redisqueue"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/lib/nonce"
 	"github.com/authgear/authgear-server/pkg/lib/oauth"
 	oauthhandler "github.com/authgear/authgear-server/pkg/lib/oauth/handler"
-	"github.com/authgear/authgear-server/pkg/lib/oauth/oidc"
 	"github.com/authgear/authgear-server/pkg/lib/oauthclient"
 	"github.com/authgear/authgear-server/pkg/lib/presign"
+	"github.com/authgear/authgear-server/pkg/lib/rolesgroups"
+	"github.com/authgear/authgear-server/pkg/lib/search"
 	"github.com/authgear/authgear-server/pkg/lib/session"
 	"github.com/authgear/authgear-server/pkg/lib/sessionlisting"
-	"github.com/authgear/authgear-server/pkg/lib/tester"
+	"github.com/authgear/authgear-server/pkg/lib/usage"
+	"github.com/authgear/authgear-server/pkg/lib/userexport"
+	"github.com/authgear/authgear-server/pkg/lib/userimport"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
 )
 
@@ -50,12 +51,16 @@ var DependencySet = wire.NewSet(
 	wire.Bind(new(loader.UserLoaderUserService), new(*user.Queries)),
 	wire.Bind(new(loader.IdentityLoaderIdentityService), new(*identityservice.Service)),
 	wire.Bind(new(loader.AuthenticatorLoaderAuthenticatorService), new(*authenticatorservice.Service)),
+	wire.Bind(new(loader.RoleLoaderRoles), new(*rolesgroups.Queries)),
+	wire.Bind(new(loader.GroupLoaderGroups), new(*rolesgroups.Queries)),
 	wire.Bind(new(loader.AuditLogQuery), new(*audit.Query)),
 
 	facade.DependencySet,
 	wire.Bind(new(facade.UserService), new(*libfacade.UserFacade)),
-	wire.Bind(new(facade.UserSearchService), new(*libes.Service)),
-	wire.Bind(new(facade.IdentityService), new(*identityservice.Service)),
+	wire.Bind(new(facade.RolesGroupsCommands), new(*rolesgroups.Commands)),
+	wire.Bind(new(facade.RolesGroupsQueries), new(*rolesgroups.Queries)),
+	wire.Bind(new(facade.IdentityService), new(*libfacade.IdentityFacade)),
+	wire.Bind(new(facade.UserSearchService), new(*search.Service)),
 	wire.Bind(new(facade.AuthenticatorService), new(*authenticatorservice.Service)),
 	wire.Bind(new(facade.InteractionService), new(*service.InteractionService)),
 	wire.Bind(new(facade.VerificationService), new(*libfacade.AdminVerificationFacade)),
@@ -68,7 +73,6 @@ var DependencySet = wire.NewSet(
 	wire.Bind(new(facade.OAuthAuthorizationService), new(*oauth.AuthorizationService)),
 	wire.Bind(new(facade.OAuthTokenService), new(*oauthhandler.TokenService)),
 
-	wire.Bind(new(oauth.OAuthClientResolver), new(*oauthclient.Resolver)),
 	wire.Bind(new(facade.OAuthClientResolver), new(*oauthclient.Resolver)),
 
 	graphql.DependencySet,
@@ -76,7 +80,10 @@ var DependencySet = wire.NewSet(
 	wire.Bind(new(graphql.IdentityLoader), new(*loader.IdentityLoader)),
 	wire.Bind(new(graphql.AuthenticatorLoader), new(*loader.AuthenticatorLoader)),
 	wire.Bind(new(graphql.AuditLogLoader), new(*loader.AuditLogLoader)),
+	wire.Bind(new(graphql.RoleLoader), new(*loader.RoleLoader)),
+	wire.Bind(new(graphql.GroupLoader), new(*loader.GroupLoader)),
 	wire.Bind(new(graphql.UserFacade), new(*facade.UserFacade)),
+	wire.Bind(new(graphql.RolesGroupsFacade), new(*facade.RolesGroupsFacade)),
 	wire.Bind(new(graphql.IdentityFacade), new(*facade.IdentityFacade)),
 	wire.Bind(new(graphql.AuthenticatorFacade), new(*facade.AuthenticatorFacade)),
 	wire.Bind(new(graphql.VerificationFacade), new(*facade.VerificationFacade)),
@@ -93,20 +100,17 @@ var DependencySet = wire.NewSet(
 	service.DependencySet,
 	wire.Bind(new(service.InteractionGraphService), new(*interaction.Service)),
 
-	wire.NewSet(
-		endpoints.DependencySet,
-		wire.Bind(new(sso.EndpointsProvider), new(*endpoints.Endpoints)),
-		wire.Bind(new(otp.EndpointsProvider), new(*endpoints.Endpoints)),
-		wire.Bind(new(oauth.EndpointsProvider), new(*endpoints.Endpoints)),
-		wire.Bind(new(oauth.BaseURLProvider), new(*endpoints.Endpoints)),
-		wire.Bind(new(oidc.BaseURLProvider), new(*endpoints.Endpoints)),
-		wire.Bind(new(tester.EndpointsProvider), new(*endpoints.Endpoints)),
-		wire.Bind(new(interaction.OAuthRedirectURIBuilder), new(*endpoints.Endpoints)),
-	),
-
 	transport.DependencySet,
 	wire.Bind(new(transport.JSONResponseWriter), new(*httputil.JSONResponseWriter)),
 	wire.Bind(new(transport.PresignProvider), new(*presign.Provider)),
+	wire.Bind(new(transport.UserImportJobEnqueuer), new(*userimport.JobManager)),
+	wire.Bind(new(transport.UserImportJobGetter), new(*userimport.JobManager)),
+	wire.Bind(new(transport.UserExportCreateProducer), new(*redisqueue.UserExportProducer)),
+	wire.Bind(new(transport.UserExportGetProducer), new(*redisqueue.UserExportProducer)),
+	wire.Bind(new(transport.UserExportUsageLimiter), new(*usage.Limiter)),
+	wire.Bind(new(transport.UserExportCreateHandlerCloudStorage), new(userexport.UserExportCloudStorage)),
+	wire.Bind(new(transport.UserExportGetHandlerCloudStorage), new(userexport.UserExportCloudStorage)),
+	wire.Bind(new(transport.UserExportCreateHandlerUserExportService), new(*userexport.UserExportService)),
 
 	adminauthz.DependencySet,
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/authgear/authgear-server/pkg/util/log"
 )
@@ -60,8 +60,9 @@ type PubSub struct {
 }
 
 // NewPubSub creates a running PubSub actor.
-func NewPubSub(logger *log.Logger, client *redis.Client, connKey string, supervisorMailbox chan interface{}) *PubSub {
-	ctx := context.Background()
+//
+//nolint:gocognit
+func NewPubSub(ctx context.Context, logger *log.Logger, client *redis.Client, connKey string, supervisorMailbox chan interface{}) *PubSub {
 	redisPubSub := client.Subscribe(ctx)
 	mailbox := make(chan interface{})
 	pubsub := &PubSub{
@@ -111,7 +112,6 @@ func NewPubSub(logger *log.Logger, client *redis.Client, connKey string, supervi
 					// Subscribe if it is the first subscriber.
 					if len(pubsub.Subscriber[n.ChannelName]) == 1 {
 						pubsub.Logger.Debugf("subscribe because the first subscriber is joining")
-						ctx := context.Background()
 						err := pubsub.PubSub.Subscribe(ctx, n.ChannelName)
 						if err != nil {
 							pubsub.Logger.WithError(err).Errorf("failed to subscribe: %v", n.ChannelName)
@@ -144,7 +144,6 @@ func NewPubSub(logger *log.Logger, client *redis.Client, connKey string, supervi
 					// Unsubscribe if subscriber is the last one subscribing the channelName.
 					if numRemaining == 0 {
 						pubsub.Logger.Debugf("unsubscribe because the last subscriber is leaving")
-						ctx := context.Background()
 						err := pubsub.PubSub.Unsubscribe(ctx, n.ChannelName)
 						if err != nil {
 							pubsub.Logger.WithError(err).Errorf("failed to unsubscribe: %v", n.ChannelName)
@@ -206,7 +205,7 @@ type Hub struct {
 	// 3. HubMessagePubSubDead
 }
 
-func NewHub(pool *Pool, lf *log.Factory) *Hub {
+func NewHub(ctx context.Context, pool *Pool, lf *log.Factory) *Hub {
 	mailbox := make(chan interface{})
 	h := &Hub{
 		Pool:         pool,
@@ -225,6 +224,7 @@ func NewHub(pool *Pool, lf *log.Factory) *Hub {
 				if !ok {
 					client := h.Pool.Client(n.ConnectionOptions)
 					pubsub = NewPubSub(
+						ctx,
 						h.Logger,
 						client,
 						connKey,

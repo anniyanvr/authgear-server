@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -16,7 +17,7 @@ import (
 
 var TemplateWebConnectWeb3AccountHTML = template.RegisterHTML(
 	"web/connect_web3_account.html",
-	components...,
+	Components...,
 )
 
 var Web3AccountConfirmationSchema = validation.NewSimpleSchema(`
@@ -92,7 +93,7 @@ func (h *ConnectWeb3AccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
 	opts := webapp.SessionOptions{
 		RedirectURI: ctrl.RedirectURI(),
@@ -110,8 +111,8 @@ func (h *ConnectWeb3AccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 		SuppressIDPSessionCookie: suppressIDPSessionCookie,
 	}
 
-	ctrl.Get(func() error {
-		graph, err := ctrl.EntryPointGet(opts, intent)
+	ctrl.Get(func(ctx context.Context) error {
+		graph, err := ctrl.EntryPointGet(ctx, opts, intent)
 		if err != nil {
 			return err
 		}
@@ -125,8 +126,8 @@ func (h *ConnectWeb3AccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 		return nil
 	})
 
-	ctrl.PostAction("submit", func() error {
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+	ctrl.PostAction("submit", func(ctx context.Context) error {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			err = Web3AccountConfirmationSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

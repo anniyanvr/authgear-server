@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	goredis "github.com/go-redis/redis/v8"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/appredis"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 )
@@ -17,16 +18,15 @@ import (
 var ErrPromotionCodeNotFound = errors.New("promotion code not found")
 
 type StoreRedis struct {
-	Context context.Context
-	Redis   *appredis.Handle
-	AppID   config.AppID
-	Clock   clock.Clock
+	Redis *appredis.Handle
+	AppID config.AppID
+	Clock clock.Clock
 }
 
-func (s *StoreRedis) GetPromotionCode(codeHash string) (*PromotionCode, error) {
+func (s *StoreRedis) GetPromotionCode(ctx context.Context, codeHash string) (*PromotionCode, error) {
 	c := &PromotionCode{}
-	err := s.Redis.WithConn(func(conn *goredis.Conn) error {
-		data, err := s.get(conn, promotionCodeKey(string(s.AppID), codeHash))
+	err := s.Redis.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
+		data, err := s.get(ctx, conn, promotionCodeKey(string(s.AppID), codeHash))
 		if err != nil {
 			return err
 		}
@@ -42,20 +42,19 @@ func (s *StoreRedis) GetPromotionCode(codeHash string) (*PromotionCode, error) {
 	return c, nil
 }
 
-func (s *StoreRedis) CreatePromotionCode(code *PromotionCode) error {
-	return s.Redis.WithConn(func(conn *goredis.Conn) error {
-		return s.save(conn, promotionCodeKey(code.AppID, code.CodeHash), code, code.ExpireAt)
+func (s *StoreRedis) CreatePromotionCode(ctx context.Context, code *PromotionCode) error {
+	return s.Redis.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
+		return s.save(ctx, conn, promotionCodeKey(code.AppID, code.CodeHash), code, code.ExpireAt)
 	})
 }
 
-func (s *StoreRedis) DeletePromotionCode(code *PromotionCode) error {
-	return s.Redis.WithConn(func(conn *goredis.Conn) error {
-		return s.del(conn, promotionCodeKey(code.AppID, code.CodeHash))
+func (s *StoreRedis) DeletePromotionCode(ctx context.Context, code *PromotionCode) error {
+	return s.Redis.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
+		return s.del(ctx, conn, promotionCodeKey(code.AppID, code.CodeHash))
 	})
 }
 
-func (s *StoreRedis) get(conn *goredis.Conn, key string) ([]byte, error) {
-	ctx := context.Background()
+func (s *StoreRedis) get(ctx context.Context, conn redis.Redis_6_0_Cmdable, key string) ([]byte, error) {
 	data, err := conn.Get(ctx, key).Bytes()
 	if errors.Is(err, goredis.Nil) {
 		return nil, ErrPromotionCodeNotFound
@@ -65,8 +64,7 @@ func (s *StoreRedis) get(conn *goredis.Conn, key string) ([]byte, error) {
 	return data, nil
 }
 
-func (s *StoreRedis) save(conn *goredis.Conn, key string, value interface{}, expireAt time.Time) error {
-	ctx := context.Background()
+func (s *StoreRedis) save(ctx context.Context, conn redis.Redis_6_0_Cmdable, key string, value interface{}, expireAt time.Time) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -82,8 +80,7 @@ func (s *StoreRedis) save(conn *goredis.Conn, key string, value interface{}, exp
 	return nil
 }
 
-func (s *StoreRedis) del(conn *goredis.Conn, key string) error {
-	ctx := context.Background()
+func (s *StoreRedis) del(ctx context.Context, conn redis.Redis_6_0_Cmdable, key string) error {
 	_, err := conn.Del(ctx, key).Result()
 	return err
 }

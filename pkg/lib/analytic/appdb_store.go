@@ -1,9 +1,12 @@
 package analytic
 
 import (
+	"context"
+	"database/sql"
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
+
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
 )
 
@@ -12,7 +15,46 @@ type AppDBStore struct {
 	SQLExecutor *appdb.SQLExecutor
 }
 
-func (s *AppDBStore) GetNewUserIDs(appID string, rangeFrom *time.Time, rangeTo *time.Time) ([]string, error) {
+type User struct {
+	ID    string
+	Email string
+}
+
+func (s *AppDBStore) GetAllUsers(ctx context.Context, appID string) ([]*User, error) {
+	builder := s.SQLBuilder.WithAppID(appID).
+		Select(
+			"id",
+			"standard_attributes ->> 'email'",
+		).
+		From(s.SQLBuilder.TableName("_auth_user"))
+
+	rows, err := s.SQLExecutor.QueryWith(ctx, builder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*User
+	for rows.Next() {
+		var id string
+		var email sql.NullString
+		err = rows.Scan(
+			&id,
+			&email,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, &User{
+			ID:    id,
+			Email: email.String,
+		})
+	}
+
+	return result, nil
+}
+
+func (s *AppDBStore) GetNewUserIDs(ctx context.Context, appID string, rangeFrom *time.Time, rangeTo *time.Time) ([]string, error) {
 	builder := s.SQLBuilder.WithAppID(appID).
 		Select(
 			"id",
@@ -20,7 +62,7 @@ func (s *AppDBStore) GetNewUserIDs(appID string, rangeFrom *time.Time, rangeTo *
 		From(s.SQLBuilder.TableName("_auth_user")).
 		Where("created_at >= ?", rangeFrom).
 		Where("created_at < ?", rangeTo)
-	rows, err := s.SQLExecutor.QueryWith(builder)
+	rows, err := s.SQLExecutor.QueryWith(ctx, builder)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +82,7 @@ func (s *AppDBStore) GetNewUserIDs(appID string, rangeFrom *time.Time, rangeTo *
 }
 
 // GetUserVerifiedEmails returns userID to email map
-func (s *AppDBStore) GetUserVerifiedEmails(appID string, userIDs []string) (result map[string]string, err error) {
+func (s *AppDBStore) GetUserVerifiedEmails(ctx context.Context, appID string, userIDs []string) (result map[string]string, err error) {
 	getUserVerifiedEmails := func(appID string, userIDs []string, result map[string]string) error {
 		builder := s.SQLBuilder.WithAppID(appID).
 			Select(
@@ -51,7 +93,7 @@ func (s *AppDBStore) GetUserVerifiedEmails(appID string, userIDs []string) (resu
 			Where("name = ?", "email").
 			Where(sq.Eq{"user_id": userIDs})
 
-		rows, err := s.SQLExecutor.QueryWith(builder)
+		rows, err := s.SQLExecutor.QueryWith(ctx, builder)
 		if err != nil {
 			return err
 		}
@@ -89,12 +131,12 @@ func (s *AppDBStore) GetUserVerifiedEmails(appID string, userIDs []string) (resu
 	return
 }
 
-func (s *AppDBStore) GetUserCountBeforeTime(appID string, beforeTime *time.Time) (int, error) {
+func (s *AppDBStore) GetUserCountBeforeTime(ctx context.Context, appID string, beforeTime *time.Time) (int, error) {
 	builder := s.SQLBuilder.WithAppID(appID).
 		Select("count(*)").
 		From(s.SQLBuilder.TableName("_auth_user")).
 		Where("created_at < ?", beforeTime)
-	row, err := s.SQLExecutor.QueryRowWith(builder)
+	row, err := s.SQLExecutor.QueryRowWith(ctx, builder)
 	if err != nil {
 		return 0, err
 	}

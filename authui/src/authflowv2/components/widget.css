@@ -1,0 +1,105 @@
+@layer components {
+  :root {
+    --widget__bg-color: var(--color-surface-primary);
+    --widget__width: 100%;
+    --widget__max-width: 400px;
+    --widget__border-radius: 0;
+    --widget__box-shadow: none;
+    --widget__border: none;
+    --widget__bg_position: center;
+    --widget__bg_repeat: no-repeat;
+    --widget__bg_size: cover;
+
+    --widget__max-width--settings: 605px;
+
+    @media (min-width: theme("screens.tablet")) {
+      --widget__border-radius: var(--border-radius-large);
+      --widget__box-shadow: none;
+      --widget__border: none;
+    }
+
+    /* Internal use */
+    --widget-content-item__x-spaceing--settings: 2rem;
+  }
+
+  :root.dark {
+    --widget__bg-color: var(--color-surface-primary);
+    --widget__bg-image: ;
+  }
+
+  .widget {
+    width: var(--widget__width);
+    border-radius: var(--widget__border-radius);
+    border: var(--widget__border);
+    box-shadow: var(--widget__box-shadow);
+    background-color: var(--widget__bg-color);
+    background-image: var(--widget__bg-image);
+    background-repeat: var(--widget__bg_repeat);
+    background-position: var(--widget__bg_position);
+    background-size: var(--widget__bg_size);
+    @apply flex flex-col overflow-hidden;
+  }
+
+  .widget-content {
+    @apply relative;
+    @apply h-full w-full;
+    @apply flex flex-col;
+    @apply self-center;
+
+    @apply px-6 py-10;
+    max-width: var(--widget__max-width);
+  }
+
+  .widget-content.widget-content--settings {
+    @apply px-0 py-6;
+    @apply gap-y-5 tablet:gap-y-8;
+    max-width: var(--widget__max-width--settings);
+  }
+
+  .widget-content-item__px--settings {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+
+  /* In __html_head.html, there is a <noscript> element to revert this visibility. */
+  :root:not([alignment-content]) .widget {
+    /* This rule is to prevent ui shifting before the attribute added */
+    @apply invisible;
+  }
+
+  @media (min-width: theme("screens.tablet")) {
+    .widget {
+      max-width: var(--widget__max-width);
+    }
+
+    .widget.widget--settings {
+      max-width: var(--widget__max-width--settings);
+    }
+
+    .widget-content {
+      @apply self-stretch;
+    }
+
+    .widget-content.widget-content--settings {
+      @apply px-0 py-8;
+    }
+
+    .widget-content-item__px--settings {
+      padding-left: var(--widget-content-item__x-spaceing--settings);
+      padding-right: var(--widget-content-item__x-spaceing--settings);
+    }
+
+    .widget-content-item__mx--settings {
+      margin-left: var(--widget-content-item__x-spaceing--settings);
+      margin-right: var(--widget-content-item__x-spaceing--settings);
+    }
+  }
+
+  .widget-content__item--settings {
+    @apply widget-content-item__px--settings;
+  }
+
+  .widget-content__alert--settings {
+    @apply widget-content-item__mx--settings;
+  }
+}

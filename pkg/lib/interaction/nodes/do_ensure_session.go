@@ -1,6 +1,7 @@
 package nodes
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -30,7 +31,7 @@ type EdgeDoEnsureSession struct {
 	Mode         EnsureSessionMode
 }
 
-func (e *EdgeDoEnsureSession) Instantiate(ctx *interaction.Context, graph *interaction.Graph, input interface{}) (interaction.Node, error) {
+func (e *EdgeDoEnsureSession) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, input interface{}) (interaction.Node, error) {
 	amr := graph.GetAMR()
 	userID := graph.MustGetUserID()
 
@@ -41,17 +42,15 @@ func (e *EdgeDoEnsureSession) Instantiate(ctx *interaction.Context, graph *inter
 
 	attrs := session.NewAttrs(userID)
 	attrs.SetAMR(amr)
-	sessionToCreate, token := ctx.Sessions.MakeSession(attrs)
+	var sessionToCreate *idpsession.IDPSession
+	newSession, token := ctx.Sessions.MakeSession(attrs)
+	sessionToCreate = newSession
 	sessionCookie := ctx.CookieManager.ValueCookie(ctx.SessionCookie.Def, token)
-
-	authenticationInfo := sessionToCreate.GetAuthenticationInfo()
-	authenticationInfo.ShouldFireAuthenticatedEventWhenIssueOfflineGrant = mode == EnsureSessionModeNoop && e.CreateReason == session.CreateReasonLogin
-	authenticationInfoEntry := authenticationinfo.NewEntry(authenticationInfo, ctx.OAuthSessionID)
 
 	var updateSessionID string
 	var updateSessionAMR []string
 	if mode == EnsureSessionModeUpdateOrCreate {
-		s := session.GetSession(ctx.Request.Context())
+		s := session.GetSession(goCtx)
 		if idp, ok := s.(*idpsession.IDPSession); ok && idp.GetUserID() == userID {
 			updateSessionID = idp.ID
 			updateSessionAMR = amr
@@ -73,6 +72,15 @@ func (e *EdgeDoEnsureSession) Instantiate(ctx *interaction.Context, graph *inter
 	)
 
 	now := ctx.Clock.NowUTC()
+
+	var authenticationInfo authenticationinfo.T
+	if sessionToCreate == nil {
+		authenticationInfo = newSession.GetAuthenticationInfo()
+	} else {
+		authenticationInfo = sessionToCreate.CreateNewAuthenticationInfoByThisSession()
+	}
+	authenticationInfo.ShouldFireAuthenticatedEventWhenIssueOfflineGrant = mode == EnsureSessionModeNoop && e.CreateReason == session.CreateReasonLogin
+	authenticationInfoEntry := authenticationinfo.NewEntry(authenticationInfo, ctx.OAuthSessionID, "")
 
 	return &NodeDoEnsureSession{
 		CreateReason:            e.CreateReason,
@@ -114,16 +122,17 @@ func (n *NodeDoEnsureSession) GetAuthenticationInfoEntry() *authenticationinfo.E
 	return n.AuthenticationInfoEntry
 }
 
-func (n *NodeDoEnsureSession) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeDoEnsureSession) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeDoEnsureSession) GetEffects() ([]interaction.Effect, error) {
+// nolint:gocognit
+func (n *NodeDoEnsureSession) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return []interaction.Effect{
-		interaction.EffectOnCommit(func(ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
-			return ctx.AuthenticationInfoService.Save(n.AuthenticationInfoEntry)
+		interaction.EffectOnCommit(func(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
+			return ctx.AuthenticationInfoService.Save(goCtx, n.AuthenticationInfoEntry)
 		}),
-		interaction.EffectOnCommit(func(ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
+		interaction.EffectOnCommit(func(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
 			if n.CreateReason != session.CreateReasonPromote {
 				return nil
 			}
@@ -151,7 +160,7 @@ func (n *NodeDoEnsureSession) GetEffects() ([]interaction.Effect, error) {
 				identityModels = append(identityModels, info.ToModel())
 			}
 
-			err := ctx.Events.DispatchEvent(&nonblocking.UserAnonymousPromotedEventPayload{
+			err := ctx.Events.DispatchEventOnCommit(goCtx, &nonblocking.UserAnonymousPromotedEventPayload{
 				AnonymousUserRef: anonUserRef,
 				UserRef:          newUserRef,
 				Identities:       identityModels,
@@ -163,12 +172,12 @@ func (n *NodeDoEnsureSession) GetEffects() ([]interaction.Effect, error) {
 
 			return nil
 		}),
-		interaction.EffectOnCommit(func(ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
+		interaction.EffectOnCommit(func(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, nodeIndex int) error {
 			userID := graph.MustGetUserID()
 
 			var err error
 			if !n.UpdateLoginTime.IsZero() {
-				err = ctx.Users.UpdateLoginTime(userID, n.UpdateLoginTime)
+				err = ctx.Users.UpdateLoginTime(goCtx, userID, n.UpdateLoginTime)
 				if err != nil {
 					return err
 				}
@@ -186,7 +195,7 @@ func (n *NodeDoEnsureSession) GetEffects() ([]interaction.Effect, error) {
 					// For authentication that involves IDP session will dispatch user.authenticated event here
 					// For authentication that suppresses IDP session. e.g. biometric login
 					// They are handled in their own node.
-					err = ctx.Events.DispatchEvent(&nonblocking.UserAuthenticatedEventPayload{
+					err = ctx.Events.DispatchEventOnCommit(goCtx, &nonblocking.UserAuthenticatedEventPayload{
 						UserRef:  userRef,
 						Session:  *n.SessionToCreate.ToAPIModel(),
 						AdminAPI: n.IsAdminAPI,
@@ -198,15 +207,15 @@ func (n *NodeDoEnsureSession) GetEffects() ([]interaction.Effect, error) {
 			}
 
 			if n.SessionToCreate != nil {
-				err = ctx.Sessions.Create(n.SessionToCreate)
+				err = ctx.Sessions.Create(goCtx, n.SessionToCreate)
 				if err != nil {
 					return err
 				}
 
 				// Clean up unreachable IdP Session.
-				s := session.GetSession(ctx.Request.Context())
+				s := session.GetSession(goCtx)
 				if s != nil && s.SessionType() == session.TypeIdentityProvider {
-					err = ctx.SessionManager.RevokeWithoutEvent(s)
+					err = ctx.SessionManager.RevokeWithoutEvent(goCtx, s)
 					if err != nil {
 						return err
 					}
@@ -214,7 +223,7 @@ func (n *NodeDoEnsureSession) GetEffects() ([]interaction.Effect, error) {
 			}
 
 			if n.UpdateSessionID != "" {
-				err = ctx.Sessions.Reauthenticate(n.UpdateSessionID, n.UpdateSessionAMR)
+				err = ctx.Sessions.Reauthenticate(goCtx, n.UpdateSessionID, n.UpdateSessionAMR)
 				if err != nil {
 					return err
 				}
@@ -225,6 +234,6 @@ func (n *NodeDoEnsureSession) GetEffects() ([]interaction.Effect, error) {
 	}, nil
 }
 
-func (n *NodeDoEnsureSession) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
-	return graph.Intent.DeriveEdgesForNode(graph, n)
+func (n *NodeDoEnsureSession) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
+	return graph.Intent.DeriveEdgesForNode(goCtx, graph, n)
 }

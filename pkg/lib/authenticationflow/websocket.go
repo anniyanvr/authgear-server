@@ -1,12 +1,13 @@
 package authenticationflow
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 
-	goredis "github.com/go-redis/redis/v8"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/appredis"
@@ -71,7 +72,7 @@ func NewWebsocketEventStore(appID config.AppID, handle *appredis.Handle, store S
 	return s
 }
 
-func (s *WebsocketEventStore) Publish(websocketChannelName string, e Event) error {
+func (s *WebsocketEventStore) Publish(ctx context.Context, websocketChannelName string, e Event) error {
 	channelName := s.ChannelName(websocketChannelName)
 
 	b, err := json.Marshal(e)
@@ -79,7 +80,7 @@ func (s *WebsocketEventStore) Publish(websocketChannelName string, e Event) erro
 		return err
 	}
 
-	err = s.publisher.Publish(channelName, b)
+	err = s.publisher.Publish(ctx, channelName, b)
 	if err != nil {
 		return err
 	}

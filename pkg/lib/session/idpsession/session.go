@@ -8,6 +8,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/session"
 	"github.com/authgear/authgear-server/pkg/lib/session/access"
 	"github.com/authgear/authgear-server/pkg/util/geoip"
+	"github.com/authgear/authgear-server/pkg/util/setutil"
 )
 
 type IDPSession struct {
@@ -24,12 +25,26 @@ type IDPSession struct {
 	AccessInfo access.Info `json:"access_info"`
 
 	TokenHash string `json:"token_hash"`
+
+	ParticipatedSAMLServiceProviderIDs []string `json:"participated_saml_service_provider_ids,omitempty"`
+
+	// ExpireAtForResolvedSession is a transient field that tells when the session will exire at, computed now.
+	// Note that ExpireAtForResolvedSession will keep changing if idle timeout is enabled.
+	// This is NOT supposed to be stored, hence it is json-ignored.
+	ExpireAtForResolvedSession time.Time `json:"-"`
 }
+
+var _ session.ResolvedSession = &IDPSession{}
+var _ session.ListableSession = &IDPSession{}
+
+func (s *IDPSession) Session()         {}
+func (s *IDPSession) ListableSession() {}
 
 func (s *IDPSession) SessionID() string         { return s.ID }
 func (s *IDPSession) SessionType() session.Type { return session.TypeIdentityProvider }
 
 func (s *IDPSession) GetCreatedAt() time.Time                       { return s.CreatedAt }
+func (s *IDPSession) GetExpireAt() time.Time                        { return s.ExpireAtForResolvedSession }
 func (s *IDPSession) GetAuthenticatedAt() time.Time                 { return s.AuthenticatedAt }
 func (s *IDPSession) GetClientID() string                           { return "" }
 func (s *IDPSession) GetAccessInfo() *access.Info                   { return &s.AccessInfo }
@@ -56,9 +71,10 @@ func (s *IDPSession) ToAPIModel() *model.Session {
 		LastAccessedByIP: s.AccessInfo.LastAccess.RemoteIP,
 
 		DisplayName: ua.Format(),
+		UserAgent:   ua.Raw,
 	}
 
-	ipInfo, ok := geoip.DefaultDatabase.IPString(s.AccessInfo.LastAccess.RemoteIP)
+	ipInfo, ok := geoip.IPString(s.AccessInfo.LastAccess.RemoteIP)
 	if ok {
 		apiModel.LastAccessedByIPCountryCode = ipInfo.CountryCode
 		apiModel.LastAccessedByIPEnglishCountryName = ipInfo.EnglishCountryName
@@ -76,6 +92,17 @@ func (s *IDPSession) GetAuthenticationInfo() authenticationinfo.T {
 	}
 }
 
+func (s *IDPSession) CreateNewAuthenticationInfoByThisSession() authenticationinfo.T {
+	amr, _ := s.GetOIDCAMR()
+	return authenticationinfo.T{
+		UserID:                     s.GetUserID(),
+		AuthenticatedAt:            s.GetAuthenticatedAt(),
+		AMR:                        amr,
+		AuthenticatedBySessionType: string(s.SessionType()),
+		AuthenticatedBySessionID:   s.SessionID(),
+	}
+}
+
 func (s *IDPSession) SSOGroupIDPSessionID() string {
 	return s.SessionID()
 }
@@ -83,8 +110,8 @@ func (s *IDPSession) SSOGroupIDPSessionID() string {
 // IsSameSSOGroup returns true when the session argument
 // - is the same idp session
 // - is sso enabled offline grant that in the same sso group
-func (s *IDPSession) IsSameSSOGroup(ss session.Session) bool {
-	if s.Equal(ss) {
+func (s *IDPSession) IsSameSSOGroup(ss session.SessionBase) bool {
+	if s.EqualSession(ss) {
 		return true
 	}
 	if s.SSOGroupIDPSessionID() == "" {
@@ -93,6 +120,10 @@ func (s *IDPSession) IsSameSSOGroup(ss session.Session) bool {
 	return s.SSOGroupIDPSessionID() == ss.SSOGroupIDPSessionID()
 }
 
-func (s *IDPSession) Equal(ss session.Session) bool {
+func (s *IDPSession) EqualSession(ss session.SessionBase) bool {
 	return s.SessionID() == ss.SessionID() && s.SessionType() == ss.SessionType()
+}
+
+func (s *IDPSession) GetParticipatedSAMLServiceProviderIDsSet() setutil.Set[string] {
+	return setutil.NewSetFromSlice(s.ParticipatedSAMLServiceProviderIDs, setutil.Identity)
 }

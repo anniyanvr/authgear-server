@@ -1,0 +1,82 @@
+{{/* Example usage
+{{ template "authflowv2/__settings_item.html"
+  (dict
+    "Label" (include "some-key" nil)
+    "WithArrow" true
+    "MaterialIconName" `email`
+    "CustomIcon" (include "some_template" nil)
+    "SupplementaryNote" "some content"
+    "Children" $.Emails
+    "ActionButton" (include "some_template" nil)
+  )
+}}
+*/}}
+{{ define "authflowv2/__settings_item.html" }}
+<div
+  class="settings-item
+    {{ if or $.MaterialIconName $.CustomIcon }}
+      with-icon
+    {{ end }}
+    {{ if $.Children }}
+      with-content
+    {{ else }}
+      without-content
+    {{ end }}
+    {{ if $.SupplementaryNote }}
+      with-note
+    {{end }}
+    "
+  {{ if $.Href }}
+  href="{{ $.Href }}"
+  {{ end }}
+>
+  {{ if $.MaterialIconName }}
+    <div class="settings-item_icon-container">
+      <i class="settings-item-icon material-icons">
+        {{ $.MaterialIconName }}
+      </i>
+    </div>
+  {{ else if $.CustomIcon }}
+    <div class="settings-item_icon-container">
+      {{ $.CustomIcon }}
+    </div>
+  {{ end }}
+  <p class="settings-item__label">
+    {{ $.Label }}
+  </p>
+
+  {{ if $.SupplementaryNote }}
+    <div class="settings-item__note">
+      {{ $.SupplementaryNote }}
+    </div>
+  {{ end }}
+
+  {{/* If there is content */}}
+  {{ if $.Children }}
+    {{ $length := len $.Children }}
+    <p class="settings-item__content block tablet:hidden">
+      {{ $item := index $.Children  0}}
+      {{ if gt $length 1 }}
+        <span> {{ include "v2.page.settings.default.and-more-button-label" (dict "item" $item ) }} </span>
+      {{ else }}
+        {{ $item }}
+      {{ end }}
+    </p>
+    <ul class="settings-item__content hidden tablet:block break-all">
+      {{ range $i, $child := $.Children }}
+      <li>
+        {{ $child }}
+      </li>
+      {{ end }}
+    </ul>
+  {{ end }}
+
+  {{ if $.WithArrow }}
+    <div class="settings-item__forward_arrow"></div>
+  {{ else if $.ActionButton }}
+    <div class="settings-item__action">
+      {{ $.ActionButton }}
+    </div>
+  {{ end }}
+</div>
+{{ end}}

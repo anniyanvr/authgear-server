@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { QueryResult, useQuery } from "@apollo/client";
 
-import { client } from "../apollo";
+import { usePortalClient } from "../apollo";
 import {
   AppTemplatesQueryQuery,
   AppTemplatesQueryQueryVariables,
@@ -32,6 +32,7 @@ export function useAppTemplatesQuery(
   appID: string,
   specifiers: ResourceSpecifier[]
 ): AppTemplatesQueryResult {
+  const client = usePortalClient();
   const pairs: SpecifierPathPair[] = useMemo(() => {
     const pairs = [];
     for (const specifier of specifiers) {
@@ -55,7 +56,6 @@ export function useAppTemplatesQuery(
     },
   });
 
-  // eslint-disable-next-line complexity
   const resources = useMemo(() => {
     const appNode = data?.node?.__typename === "App" ? data.node : null;
     const resources: Resource[] = [];
@@ -96,6 +96,7 @@ export function useAppTemplatesQuery(
         path,
         nullableValue: value,
         effectiveData: effectiveData,
+        checksum: resource?.checksum,
       });
     }
 

@@ -19,13 +19,21 @@ type IntentInspectDeviceToken struct {
 
 var _ authflow.Intent = &IntentInspectDeviceToken{}
 var _ authflow.Milestone = &IntentInspectDeviceToken{}
+var _ MilestoneFlowSelectAuthenticationMethod = &IntentInspectDeviceToken{}
+var _ MilestoneFlowAuthenticate = &IntentInspectDeviceToken{}
 var _ MilestoneDeviceTokenInspected = &IntentInspectDeviceToken{}
 
 func (*IntentInspectDeviceToken) Kind() string {
 	return "IntentInspectDeviceToken"
 }
 
-func (*IntentInspectDeviceToken) Milestone()                     {}
+func (*IntentInspectDeviceToken) Milestone() {}
+func (i *IntentInspectDeviceToken) MilestoneFlowSelectAuthenticationMethod(flows authflow.Flows) (MilestoneDidSelectAuthenticationMethod, authflow.Flows, bool) {
+	return authflow.FindMilestoneInCurrentFlow[MilestoneDidSelectAuthenticationMethod](flows)
+}
+func (i *IntentInspectDeviceToken) MilestoneFlowAuthenticate(flows authflow.Flows) (MilestoneDidAuthenticate, authflow.Flows, bool) {
+	return authflow.FindMilestoneInCurrentFlow[MilestoneDidAuthenticate](flows)
+}
 func (*IntentInspectDeviceToken) MilestoneDeviceTokenInspected() {}
 
 func (*IntentInspectDeviceToken) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
@@ -48,7 +56,7 @@ func (i *IntentInspectDeviceToken) ReactTo(ctx context.Context, deps *authflow.D
 
 		deviceToken := deviceTokenCookie.Value
 
-		err = deps.MFA.VerifyDeviceToken(i.UserID, deviceToken)
+		err = deps.MFA.VerifyDeviceToken(ctx, i.UserID, deviceToken)
 		if errors.Is(err, mfa.ErrDeviceTokenNotFound) {
 			deviceTokenCookie = deps.Cookies.ClearCookie(deps.MFADeviceTokenCookie.Def)
 			return authflow.NewNodeSimple(&NodeDoClearDeviceTokenCookie{

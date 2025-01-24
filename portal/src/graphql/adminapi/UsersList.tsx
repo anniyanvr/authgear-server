@@ -12,11 +12,17 @@ import {
   PersonaSize,
   Text,
   MessageBar,
+  IListProps,
 } from "@fluentui/react";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 import { Link, useParams } from "react-router-dom";
 import { UsersListFragment } from "./query/usersListQuery.generated";
-import { UserSortBy, SortDirection } from "./globalTypes.generated";
+import {
+  UserSortBy,
+  SortDirection,
+  Role,
+  Group,
+} from "./globalTypes.generated";
 
 import PaginationWidget from "../../PaginationWidget";
 import SetUserDisabledDialog from "./SetUserDisabledDialog";
@@ -25,9 +31,14 @@ import { extractRawID } from "../../util/graphql";
 import { formatDatetime } from "../../util/formatDatetime";
 
 import styles from "./UsersList.module.css";
-import { useSystemConfig } from "../../context/SystemConfigContext";
 import useDelayedValue from "../../hook/useDelayedValue";
-import ActionButton from "../../ActionButton";
+import TextCell from "../../components/roles-and-groups/list/common/TextCell";
+import ActionButtonCell from "../../components/roles-and-groups/list/common/ActionButtonCell";
+import BaseCell from "../../components/roles-and-groups/list/common/BaseCell";
+
+function onShouldVirtualize(_: IListProps): boolean {
+  return false;
+}
 
 interface UsersListProps {
   className?: string;
@@ -41,6 +52,20 @@ interface UsersListProps {
   onColumnClick?: (columnKey: UserSortBy) => void;
   sortBy?: UserSortBy;
   sortDirection?: SortDirection;
+  showRolesAndGroups: boolean;
+}
+
+interface UserListRoleItem extends Pick<Role, "id" | "name" | "key"> {}
+interface UserListGroupItem extends Pick<Group, "id" | "name" | "key"> {}
+
+interface UserListRoles {
+  totalCount: number;
+  items: UserListRoleItem[];
+}
+
+interface UserListGroups {
+  totalCount: number;
+  items: UserListGroupItem[];
 }
 
 interface UserListItem {
@@ -60,6 +85,8 @@ interface UserListItem {
   username: string | null;
   phone: string | null;
   email: string | null;
+  roles: UserListRoles;
+  groups: UserListGroups;
 }
 
 interface DisableUserDialogData {
@@ -136,71 +163,91 @@ const UsersList: React.VFC<UsersListProps> = function UsersList(props) {
     onColumnClick,
     sortBy,
     sortDirection,
+    showRolesAndGroups,
   } = props;
   const edges = props.users?.edges;
 
   const loading = useDelayedValue(rawLoading, 500);
 
   const { renderToString, locale } = useContext(Context);
-  const { themes } = useSystemConfig();
   const { appID } = useParams() as { appID: string };
 
-  const columns: IColumn[] = [
-    {
-      key: "info",
-      name: renderToString("UsersList.column.raw-id"),
-      minWidth: 300,
-      columnActionsMode: ColumnActionsMode.disabled,
-    },
-    {
-      key: "username",
-      fieldName: "username",
-      name: renderToString("UsersList.column.username"),
-      minWidth: 150,
-      columnActionsMode: ColumnActionsMode.disabled,
-    },
-    {
-      key: "email",
-      fieldName: "email",
-      name: renderToString("UsersList.column.email"),
-      minWidth: 150,
-      columnActionsMode: ColumnActionsMode.disabled,
-    },
-    {
-      key: "phone",
-      fieldName: "phone",
-      name: renderToString("UsersList.column.phone"),
-      minWidth: 120,
-      columnActionsMode: ColumnActionsMode.disabled,
-    },
-    {
-      key: "createdAt",
-      fieldName: "createdAt",
-      name: renderToString("UsersList.column.signed-up"),
-      minWidth: 150,
-      isSorted: sortBy === "CREATED_AT",
-      isSortedDescending: sortDirection === SortDirection.Desc,
-      iconName: "SortLines",
-      iconClassName: styles.sortIcon,
-    },
-    {
-      key: "lastLoginAt",
-      fieldName: "lastLoginAt",
-      name: renderToString("UsersList.column.last-login-at"),
-      minWidth: 150,
-      isSorted: sortBy === "LAST_LOGIN_AT",
-      isSortedDescending: sortDirection === SortDirection.Desc,
-      iconName: "SortLines",
-      iconClassName: styles.sortIcon,
-    },
-    {
-      key: "action",
-      fieldName: "action",
-      name: renderToString("action"),
-      minWidth: 150,
-      columnActionsMode: ColumnActionsMode.disabled,
-    },
-  ];
+  const columns: IColumn[] = useMemo(() => {
+    const rolesAndGroupsColumns = showRolesAndGroups
+      ? [
+          {
+            key: "roles",
+            name: renderToString("UsersList.column.roles"),
+            minWidth: 150,
+            columnActionsMode: ColumnActionsMode.disabled,
+          },
+          {
+            key: "groups",
+            name: renderToString("UsersList.column.groups"),
+            minWidth: 150,
+            columnActionsMode: ColumnActionsMode.disabled,
+          },
+        ]
+      : [];
+
+    return [
+      {
+        key: "info",
+        name: renderToString("UsersList.column.raw-id"),
+        minWidth: 300,
+        columnActionsMode: ColumnActionsMode.disabled,
+      },
+      {
+        key: "username",
+        fieldName: "username",
+        name: renderToString("UsersList.column.username"),
+        minWidth: 150,
+        columnActionsMode: ColumnActionsMode.disabled,
+      },
+      {
+        key: "email",
+        fieldName: "email",
+        name: renderToString("UsersList.column.email"),
+        minWidth: 150,
+        columnActionsMode: ColumnActionsMode.disabled,
+      },
+      {
+        key: "phone",
+        fieldName: "phone",
+        name: renderToString("UsersList.column.phone"),
+        minWidth: 120,
+        columnActionsMode: ColumnActionsMode.disabled,
+      },
+      ...rolesAndGroupsColumns,
+      {
+        key: "createdAt",
+        fieldName: "createdAt",
+        name: renderToString("UsersList.column.signed-up"),
+        minWidth: 240,
+        isSorted: sortBy === "CREATED_AT",
+        isSortedDescending: sortDirection === SortDirection.Desc,
+        iconName: "SortLines",
+        iconClassName: styles.sortIcon,
+      },
+      {
+        key: "lastLoginAt",
+        fieldName: "lastLoginAt",
+        name: renderToString("UsersList.column.last-login-at"),
+        minWidth: 240,
+        isSorted: sortBy === "LAST_LOGIN_AT",
+        isSortedDescending: sortDirection === SortDirection.Desc,
+        iconName: "SortLines",
+        iconClassName: styles.sortIcon,
+      },
+      {
+        key: "action",
+        fieldName: "action",
+        name: renderToString("action"),
+        minWidth: 150,
+        columnActionsMode: ColumnActionsMode.disabled,
+      },
+    ];
+  }, [renderToString, showRolesAndGroups, sortBy, sortDirection]);
 
   const [isDisableUserDialogHidden, setIsDisableUserDialogHidden] =
     useState(true);
@@ -230,6 +277,18 @@ const UsersList: React.VFC<UsersListProps> = function UsersList(props) {
             username: node.standardAttributes.preferred_username ?? null,
             phone: node.standardAttributes.phone_number ?? null,
             email: node.standardAttributes.email ?? null,
+            roles: {
+              totalCount: node.effectiveRoles?.totalCount ?? 0,
+              items: (node.effectiveRoles?.edges ?? []).flatMap(
+                (edge) => edge?.node ?? []
+              ),
+            },
+            groups: {
+              totalCount: node.groups?.totalCount ?? 0,
+              items: (node.groups?.edges ?? []).flatMap(
+                (edge) => edge?.node ?? []
+              ),
+            },
           });
         }
       }
@@ -270,54 +329,107 @@ const UsersList: React.VFC<UsersListProps> = function UsersList(props) {
     []
   );
 
+  const renderUserInfoCell = useCallback((item: UserListItem) => {
+    return <UserInfo item={item} />;
+  }, []);
+  const renderActionCell = useCallback(
+    (item: UserListItem) => {
+      let variant: "destructive" | "default" | "no-action";
+      let text: string;
+      if (item.deleteAt != null) {
+        variant = "default";
+        text = renderToString("UsersList.cancel-removal");
+      } else if (item.isAnonymized) {
+        // This condition should precede isDisabled
+        variant = "no-action";
+        text = "-";
+      } else if (item.anonymizeAt != null) {
+        // This condition should precede isDisabled
+        // This condition takes place when the scheduled anonymization is not yet triggered
+        variant = "destructive";
+        text = renderToString("UsersList.cancel-anonymization");
+      } else if (item.isDisabled) {
+        variant = "default";
+        text = renderToString("UsersList.reenable-user");
+      } else {
+        variant = "destructive";
+        text = renderToString("UsersList.disable-user");
+      }
+
+      return (
+        <ActionButtonCell
+          variant={variant}
+          onClick={(e) => onUserActionClick(e, item)}
+          text={text}
+        />
+      );
+    },
+    [onUserActionClick, renderToString]
+  );
+  const renderRoleCell = useCallback((item: UserListItem) => {
+    let text = "-";
+    if (item.roles.totalCount !== 0) {
+      const addtionalInfo =
+        item.roles.totalCount === 1 ? "" : ` +${item.roles.totalCount - 1}`;
+      text = `${item.roles.items[0].name}${addtionalInfo}`;
+    }
+    return (
+      <BaseCell>
+        <Text className={"whitespace-normal"}>{text}</Text>
+      </BaseCell>
+    );
+  }, []);
+  const renderGroupCell = useCallback((item: UserListItem) => {
+    let text = "-";
+    if (item.groups.totalCount !== 0) {
+      const addtionalInfo =
+        item.groups.totalCount === 1 ? "" : ` +${item.groups.totalCount - 1}`;
+      text = `${item.groups.items[0].name}${addtionalInfo}`;
+    }
+    return (
+      <BaseCell>
+        <Text className={"whitespace-normal"}>{text}</Text>
+      </BaseCell>
+    );
+  }, []);
+  const renderDefaultCell = useCallback(
+    (item: UserListItem, column: IColumn | undefined) => {
+      return (
+        <TextCell>
+          {item[column?.key as keyof UserListItem] ?? USER_LIST_PLACEHOLDER}
+        </TextCell>
+      );
+    },
+    []
+  );
+
   const onRenderUserItemColumn = useCallback(
     (item: UserListItem, _index?: number, column?: IColumn) => {
       switch (column?.key) {
         case "info": {
-          return <UserInfo item={item} />;
+          return renderUserInfoCell(item);
         }
         case "action": {
-          const theme =
-            item.deleteAt != null
-              ? themes.actionButton
-              : item.isDisabled
-              ? themes.actionButton
-              : themes.destructive;
-
-          const children =
-            item.deleteAt != null ? (
-              <FormattedMessage id="UsersList.cancel-removal" />
-            ) : item.isAnonymized ? null : item.anonymizeAt != null ? (
-              <FormattedMessage id="UsersList.cancel-anonymization" />
-            ) : item.isDisabled ? (
-              <FormattedMessage id="UsersList.reenable-user" />
-            ) : (
-              <FormattedMessage id="UsersList.disable-user" />
-            );
-
-          return (
-            <div className={styles.cell}>
-              <ActionButton
-                className={styles.actionButton}
-                theme={theme}
-                onClick={(event) => onUserActionClick(event, item)}
-                text={children}
-              />
-            </div>
-          );
+          return renderActionCell(item);
         }
-        default:
-          return (
-            <div className={styles.cell}>
-              <div className={styles.cellText}>
-                {item[column?.key as keyof UserListItem] ??
-                  USER_LIST_PLACEHOLDER}
-              </div>
-            </div>
-          );
+        case "groups": {
+          return renderGroupCell(item);
+        }
+        case "roles": {
+          return renderRoleCell(item);
+        }
+        default: {
+          return renderDefaultCell(item, column);
+        }
       }
     },
-    [onUserActionClick, themes.actionButton, themes.destructive]
+    [
+      renderActionCell,
+      renderDefaultCell,
+      renderGroupCell,
+      renderRoleCell,
+      renderUserInfoCell,
+    ]
   );
 
   const dismissDisableUserDialog = useCallback(() => {
@@ -345,6 +457,7 @@ const UsersList: React.VFC<UsersListProps> = function UsersList(props) {
       <div className={cn(styles.root, className)}>
         <div className={cn(styles.listWrapper, isEmpty && styles.empty)}>
           <ShimmeredDetailsList
+            className={styles.list}
             enableShimmer={loading}
             enableUpdateAnimations={false}
             onRenderRow={onRenderUserRow}
@@ -354,6 +467,8 @@ const UsersList: React.VFC<UsersListProps> = function UsersList(props) {
             layoutMode={DetailsListLayoutMode.justified}
             columns={columns}
             items={items}
+            // UserList always render fixed number of items, which is not infinite scroll, so no need virtualization
+            onShouldVirtualize={onShouldVirtualize}
           />
         </div>
         {!isSearch ? (

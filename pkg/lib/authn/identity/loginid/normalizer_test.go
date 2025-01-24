@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
+	"github.com/authgear/authgear-server/pkg/api/internalinterface"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 )
 
@@ -13,7 +14,7 @@ func TestNormalizers(t *testing.T) {
 		LoginID           string
 		NormalizedLoginID string
 	}
-	f := func(c Case, n Normalizer) {
+	f := func(c Case, n internalinterface.LoginIDNormalizer) {
 		result, _ := n.Normalize(c.LoginID)
 		So(result, ShouldEqual, c.NormalizedLoginID)
 	}
@@ -158,6 +159,28 @@ func TestNormalizers(t *testing.T) {
 					CaseSensitive: newTrue(),
 				},
 			}
+
+			for _, c := range cases {
+				f(c, n)
+			}
+		})
+	})
+
+	Convey("PhoneNumberNormalizer", t, func() {
+		Convey("normalize to e164", func() {
+			cases := []Case{
+				{"+85298887766", "+85298887766"},
+				{
+					"+852-98887766",
+					"+85298887766",
+				},
+				{
+					"+852-98-88-77-66",
+					"+85298887766",
+				},
+			}
+
+			n := &PhoneNumberNormalizer{}
 
 			for _, c := range cases {
 				f(c, n)

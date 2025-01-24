@@ -4,21 +4,18 @@ import (
 	"time"
 )
 
-type PreparedOTPTemplate struct {
-	TemplateName string
-	TemplateType string
-	Language     string
-	Components   []TemplateComponent
-	Namespace    string
+type SendAuthenticationOTPOptions struct {
+	To  string
+	OTP string
 }
 
-type SendTemplateOptions struct {
-	TemplateName string
-	To           string
-	TemplateType string
-	Language     string
-	Components   []TemplateComponent
-	Namespace    string
+type ResolvedSendAuthenticationOTPOptions struct {
+	To                 string
+	OTP                string
+	TemplateName       string
+	TemplateLanguage   string
+	TemplateNamespace  string
+	TemplateComponents []TemplateComponent
 }
 
 type SendTemplateRequest struct {
@@ -130,3 +127,24 @@ func (j *LoginResponseUserExpiresTime) UnmarshalText(textb []byte) error {
 func (j LoginResponseUserExpiresTime) MarshalText() ([]byte, error) {
 	return []byte(time.Time(j).Format(LoginResponseUserExpiresTimeLayout)), nil
 }
+
+type WhatsappAPIErrorResponse struct {
+	Errors []WhatsappAPIErrorDetail `json:"errors,omitempty"`
+}
+
+func (r *WhatsappAPIErrorResponse) FirstErrorCode() (int, bool) {
+	if r.Errors != nil && len(r.Errors) > 0 {
+		return (r.Errors)[0].Code, true
+	}
+	return -1, false
+}
+
+type WhatsappAPIErrorDetail struct {
+	Code    int    `json:"code"`
+	Title   string `json:"title"`
+	Details string `json:"details"`
+}
+
+const (
+	errorCodeInvalidUser = 1013
+)

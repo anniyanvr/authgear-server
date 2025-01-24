@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -12,7 +13,7 @@ import (
 
 var TemplateWebPromptCreatePasskeyHTML = template.RegisterHTML(
 	"web/prompt_create_passkey.html",
-	components...,
+	Components...,
 )
 
 func ConfigurePromptCreatePasskeyRoute(route httproute.Route) httproute.Route {
@@ -43,15 +44,15 @@ func (h *PromptCreatePasskeyHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -65,8 +66,8 @@ func (h *PromptCreatePasskeyHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		return nil
 	})
 
-	ctrl.PostAction("skip", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("skip", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 
 			input = &InputPromptCreatePasskeyAttestationResponse{
 				Skipped: true,
@@ -81,8 +82,8 @@ func (h *PromptCreatePasskeyHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			attestationResponseStr := r.Form.Get("x_attestation_response")
 			attestationResponse := []byte(attestationResponseStr)
 

@@ -6,24 +6,13 @@ import (
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
+	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
-var InputTakeNewPasswordSchemaBuilder validation.SchemaBuilder
-
-func init() {
-	InputTakeNewPasswordSchemaBuilder = validation.SchemaBuilder{}.
-		Type(validation.TypeObject).
-		Required("new_password")
-
-	InputTakeNewPasswordSchemaBuilder.Properties().Property(
-		"new_password",
-		validation.SchemaBuilder{}.Type(validation.TypeString),
-	)
-}
-
 type InputSchemaTakeNewPassword struct {
-	JSONPointer jsonpointer.T
+	JSONPointer    jsonpointer.T
+	FlowRootObject config.AuthenticationFlowObject
 }
 
 var _ authflow.InputSchema = &InputSchemaTakeNewPassword{}
@@ -32,8 +21,20 @@ func (i *InputSchemaTakeNewPassword) GetJSONPointer() jsonpointer.T {
 	return i.JSONPointer
 }
 
-func (*InputSchemaTakeNewPassword) SchemaBuilder() validation.SchemaBuilder {
-	return InputTakeNewPasswordSchemaBuilder
+func (i *InputSchemaTakeNewPassword) GetFlowRootObject() config.AuthenticationFlowObject {
+	return i.FlowRootObject
+}
+
+func (i *InputSchemaTakeNewPassword) SchemaBuilder() validation.SchemaBuilder {
+	inputTakeNewPasswordSchemaBuilder := validation.SchemaBuilder{}.
+		Type(validation.TypeObject).
+		Required("new_password")
+
+	inputTakeNewPasswordSchemaBuilder.Properties().Property(
+		"new_password",
+		validation.SchemaBuilder{}.Type(validation.TypeString),
+	)
+	return inputTakeNewPasswordSchemaBuilder
 }
 
 func (i *InputSchemaTakeNewPassword) MakeInput(rawMessage json.RawMessage) (authflow.Input, error) {

@@ -1,0 +1,17 @@
+{{ template "__csrf_error_page_layout.html" . }}
+
+{{ define "page-content" }}
+<div class="mt-6 tablet:mt-16">
+  {{ template "authflowv2/__header.html" . }}
+  <div class="text-center">
+    <h1 class="mb-5 screen-title text-2xl">
+      {{ include "v2.page.csrf-error.default.title" nil }}
+    </h1>
+
+    <p class="body-text--md max-w-85 mx-auto">
+      {{ include "v2.page.csrf-error.default.message" nil }}
+      <a href="{{ call $.MakeURL "/errors/cookie_instruction" }}"> {{ include "v2.page.csrf-error.default.see-instructions" nil }}</a>
+    </p> 
+  </div>
+</div>
+{{ end }}

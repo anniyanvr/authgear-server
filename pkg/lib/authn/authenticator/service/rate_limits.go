@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
@@ -16,8 +18,8 @@ const (
 )
 
 type RateLimiter interface {
-	Reserve(spec ratelimit.BucketSpec) *ratelimit.Reservation
-	Cancel(r *ratelimit.Reservation)
+	Reserve(ctx context.Context, spec ratelimit.BucketSpec) (*ratelimit.Reservation, *ratelimit.FailedReservation, error)
+	Cancel(ctx context.Context, r *ratelimit.Reservation)
 }
 
 type Reservation struct {
@@ -25,25 +27,12 @@ type Reservation struct {
 	perIP        *ratelimit.Reservation
 }
 
-func (r *Reservation) Error() error {
-	if r == nil {
-		return nil
-	}
-	if err := r.perUserPerIP.Error(); err != nil {
-		return err
-	}
-	if err := r.perIP.Error(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *Reservation) Consume() {
+func (r *Reservation) PreventCancel() {
 	if r == nil {
 		return
 	}
-	r.perUserPerIP.Consume()
-	r.perIP.Consume()
+	r.perUserPerIP.PreventCancel()
+	r.perIP.PreventCancel()
 }
 
 type RateLimits struct {
@@ -130,17 +119,33 @@ func (l *RateLimits) specPerUserPerIP(userID string, authType model.Authenticato
 	}
 }
 
-func (l *RateLimits) Cancel(r *Reservation) {
-	l.RateLimiter.Cancel(r.perIP)
-	l.RateLimiter.Cancel(r.perUserPerIP)
+func (l *RateLimits) Cancel(ctx context.Context, r *Reservation) {
+	l.RateLimiter.Cancel(ctx, r.perIP)
+	l.RateLimiter.Cancel(ctx, r.perUserPerIP)
 }
 
-func (l *RateLimits) Reserve(userID string, authType model.AuthenticatorType) *Reservation {
+func (l *RateLimits) Reserve(ctx context.Context, userID string, authType model.AuthenticatorType) (*Reservation, error) {
 	specPerUserPerIP := l.specPerUserPerIP(userID, authType)
 	specPerIP := l.specPerIP(authType)
 
-	return &Reservation{
-		perUserPerIP: l.RateLimiter.Reserve(specPerUserPerIP),
-		perIP:        l.RateLimiter.Reserve(specPerIP),
+	rPerUserPerIP, failedPerUserPerIP, err := l.RateLimiter.Reserve(ctx, specPerUserPerIP)
+	if err != nil {
+		return nil, err
 	}
+	if err := failedPerUserPerIP.Error(); err != nil {
+		return nil, err
+	}
+
+	rPerIP, failedPerIP, err := l.RateLimiter.Reserve(ctx, specPerIP)
+	if err != nil {
+		return nil, err
+	}
+	if err := failedPerIP.Error(); err != nil {
+		return nil, err
+	}
+
+	return &Reservation{
+		perUserPerIP: rPerUserPerIP,
+		perIP:        rPerIP,
+	}, nil
 }

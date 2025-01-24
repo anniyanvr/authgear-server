@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,9 @@ import (
 
 	"github.com/lib/pq"
 
+	"github.com/authgear/oauthrelyingparty/pkg/api/oauthrelyingparty"
+
+	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/config"
@@ -56,7 +60,7 @@ func (s *Store) scan(scn db.Scanner) (*identity.OAuth, error) {
 		&claims,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, identity.ErrIdentityNotFound
+		return nil, api.ErrIdentityNotFound
 	} else if err != nil {
 		return nil, err
 	}
@@ -73,9 +77,9 @@ func (s *Store) scan(scn db.Scanner) (*identity.OAuth, error) {
 
 	alias := ""
 	for _, providerConfig := range s.IdentityConfig.OAuth.Providers {
-		providerID := providerConfig.ProviderID()
-		if providerID.Equal(&i.ProviderID) {
-			alias = providerConfig.Alias
+		providerID := providerConfig.AsProviderConfig().ProviderID()
+		if providerID.Equal(i.ProviderID) {
+			alias = providerConfig.Alias()
 		}
 	}
 	if alias != "" {
@@ -85,10 +89,10 @@ func (s *Store) scan(scn db.Scanner) (*identity.OAuth, error) {
 	return i, nil
 }
 
-func (s *Store) GetMany(ids []string) ([]*identity.OAuth, error) {
+func (s *Store) GetMany(ctx context.Context, ids []string) ([]*identity.OAuth, error) {
 	builder := s.selectQuery().Where("p.id = ANY (?)", pq.Array(ids))
 
-	rows, err := s.SQLExecutor.QueryWith(builder)
+	rows, err := s.SQLExecutor.QueryWith(ctx, builder)
 	if err != nil {
 		return nil, err
 	}
@@ -106,10 +110,10 @@ func (s *Store) GetMany(ids []string) ([]*identity.OAuth, error) {
 	return is, nil
 }
 
-func (s *Store) List(userID string) ([]*identity.OAuth, error) {
+func (s *Store) List(ctx context.Context, userID string) ([]*identity.OAuth, error) {
 	q := s.selectQuery().Where("p.user_id = ?", userID)
 
-	rows, err := s.SQLExecutor.QueryWith(q)
+	rows, err := s.SQLExecutor.QueryWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -127,11 +131,11 @@ func (s *Store) List(userID string) ([]*identity.OAuth, error) {
 	return is, nil
 }
 
-func (s *Store) ListByClaim(name string, value string) ([]*identity.OAuth, error) {
+func (s *Store) ListByClaim(ctx context.Context, name string, value string) ([]*identity.OAuth, error) {
 	q := s.selectQuery().
 		Where("(o.claims ->> ?) = ?", name, value)
 
-	rows, err := s.SQLExecutor.QueryWith(q)
+	rows, err := s.SQLExecutor.QueryWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -149,9 +153,9 @@ func (s *Store) ListByClaim(name string, value string) ([]*identity.OAuth, error
 	return is, nil
 }
 
-func (s *Store) Get(userID string, id string) (*identity.OAuth, error) {
+func (s *Store) Get(ctx context.Context, userID string, id string) (*identity.OAuth, error) {
 	q := s.selectQuery().Where("p.user_id = ? AND p.id = ?", userID, id)
-	rows, err := s.SQLExecutor.QueryRowWith(q)
+	rows, err := s.SQLExecutor.QueryRowWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -159,16 +163,16 @@ func (s *Store) Get(userID string, id string) (*identity.OAuth, error) {
 	return s.scan(rows)
 }
 
-func (s *Store) GetByProviderSubject(provider config.ProviderID, subjectID string) (*identity.OAuth, error) {
-	providerKeys, err := json.Marshal(provider.Keys)
+func (s *Store) GetByProviderSubject(ctx context.Context, providerID oauthrelyingparty.ProviderID, subjectID string) (*identity.OAuth, error) {
+	providerKeys, err := json.Marshal(providerID.Keys)
 	if err != nil {
 		return nil, err
 	}
 
 	q := s.selectQuery().Where(
 		"o.provider_type = ? AND o.provider_keys = ? AND o.provider_user_id = ?",
-		provider.Type, providerKeys, subjectID)
-	rows, err := s.SQLExecutor.QueryRowWith(q)
+		providerID.Type, providerKeys, subjectID)
+	rows, err := s.SQLExecutor.QueryRowWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -176,16 +180,16 @@ func (s *Store) GetByProviderSubject(provider config.ProviderID, subjectID strin
 	return s.scan(rows)
 }
 
-func (s *Store) GetByUserProvider(userID string, provider config.ProviderID) (*identity.OAuth, error) {
-	providerKeys, err := json.Marshal(provider.Keys)
+func (s *Store) GetByUserProvider(ctx context.Context, userID string, providerID oauthrelyingparty.ProviderID) (*identity.OAuth, error) {
+	providerKeys, err := json.Marshal(providerID.Keys)
 	if err != nil {
 		return nil, err
 	}
 
 	q := s.selectQuery().Where(
 		"o.provider_type = ? AND o.provider_keys = ? AND p.user_id = ?",
-		provider.Type, providerKeys, userID)
-	rows, err := s.SQLExecutor.QueryRowWith(q)
+		providerID.Type, providerKeys, userID)
+	rows, err := s.SQLExecutor.QueryRowWith(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +197,7 @@ func (s *Store) GetByUserProvider(userID string, provider config.ProviderID) (*i
 	return s.scan(rows)
 }
 
-func (s *Store) Create(i *identity.OAuth) (err error) {
+func (s *Store) Create(ctx context.Context, i *identity.OAuth) (err error) {
 	builder := s.SQLBuilder.
 		Insert(s.SQLBuilder.TableName("_auth_identity")).
 		Columns(
@@ -211,7 +215,7 @@ func (s *Store) Create(i *identity.OAuth) (err error) {
 			i.UpdatedAt,
 		)
 
-	_, err = s.SQLExecutor.ExecWith(builder)
+	_, err = s.SQLExecutor.ExecWith(ctx, builder)
 	if err != nil {
 		return err
 	}
@@ -248,7 +252,7 @@ func (s *Store) Create(i *identity.OAuth) (err error) {
 			claims,
 		)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -256,7 +260,7 @@ func (s *Store) Create(i *identity.OAuth) (err error) {
 	return nil
 }
 
-func (s *Store) Update(i *identity.OAuth) error {
+func (s *Store) Update(ctx context.Context, i *identity.OAuth) error {
 	profile, err := json.Marshal(i.UserProfile)
 	if err != nil {
 		return err
@@ -272,7 +276,7 @@ func (s *Store) Update(i *identity.OAuth) error {
 		Set("profile", profile).
 		Where("id = ?", i.ID)
 
-	result, err := s.SQLExecutor.ExecWith(q)
+	result, err := s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -283,7 +287,7 @@ func (s *Store) Update(i *identity.OAuth) error {
 	}
 
 	if rowsAffected == 0 {
-		return identity.ErrIdentityNotFound
+		return api.ErrIdentityNotFound
 	} else if rowsAffected > 1 {
 		panic(fmt.Sprintf("identity_oauth: want 1 row updated, got %v", rowsAffected))
 	}
@@ -293,7 +297,7 @@ func (s *Store) Update(i *identity.OAuth) error {
 		Set("updated_at", i.UpdatedAt).
 		Where("id = ?", i.ID)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -301,12 +305,12 @@ func (s *Store) Update(i *identity.OAuth) error {
 	return nil
 }
 
-func (s *Store) Delete(i *identity.OAuth) error {
+func (s *Store) Delete(ctx context.Context, i *identity.OAuth) error {
 	q := s.SQLBuilder.
 		Delete(s.SQLBuilder.TableName("_auth_identity_oauth")).
 		Where("id = ?", i.ID)
 
-	_, err := s.SQLExecutor.ExecWith(q)
+	_, err := s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}
@@ -315,7 +319,7 @@ func (s *Store) Delete(i *identity.OAuth) error {
 		Delete(s.SQLBuilder.TableName("_auth_identity")).
 		Where("id = ?", i.ID)
 
-	_, err = s.SQLExecutor.ExecWith(q)
+	_, err = s.SQLExecutor.ExecWith(ctx, q)
 	if err != nil {
 		return err
 	}

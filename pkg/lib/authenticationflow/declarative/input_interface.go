@@ -6,7 +6,6 @@ import (
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/attrs"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 )
 
@@ -26,6 +25,12 @@ type inputTakeAccountRecoveryDestinationOptionIndex interface {
 	GetAccountRecoveryDestinationOptionIndex() int
 }
 
+type inputTakeAccountLinkingIdentification interface {
+	GetAccountLinkingIdentificationIndex() int
+	GetAccountLinkingOAuthRedirectURI() string
+	GetAccountLinkingOAuthResponseMode() string
+}
+
 type inputTakeAuthenticationMethod interface {
 	GetAuthenticationMethod() config.AuthenticationFlowAuthentication
 }
@@ -41,7 +46,7 @@ type inputTakeIDToken interface {
 type inputTakeOAuthAuthorizationRequest interface {
 	GetOAuthAlias() string
 	GetOAuthRedirectURI() string
-	GetOAuthResponseMode() sso.ResponseMode
+	GetOAuthResponseMode() string
 	// We used to accept `state`.
 	// But it turns out to be confusing.
 	// `state` is used to maintain state between the request and the callback.
@@ -52,14 +57,17 @@ type inputTakeOAuthAuthorizationRequest interface {
 }
 
 type inputTakeOAuthAuthorizationResponse interface {
-	GetOAuthAuthorizationCode() string
-	GetOAuthError() string
-	GetOAuthErrorDescription() string
-	GetOAuthErrorURI() string
+	GetQuery() string
 }
 
 type inputTakePasskeyAssertionResponse interface {
 	GetAssertionResponse() *protocol.CredentialAssertionResponse
+}
+
+type inputTakeLDAP interface {
+	GetServerName() string
+	GetUsername() string
+	GetPassword() string
 }
 
 type inputTakeOOBOTPChannel interface {
@@ -75,6 +83,13 @@ type inputTakeNewPassword interface {
 }
 
 type inputNodeVerifyClaim interface {
+	IsCode() bool
+	IsResend() bool
+	IsCheck() bool
+	GetCode() string
+}
+
+type inputNodeAuthenticationOOB interface {
 	IsCode() bool
 	IsResend() bool
 	IsCheck() bool
@@ -123,4 +138,10 @@ type inputNodePromptCreatePasskey interface {
 	IsSkip() bool
 	IsCreationResponse() bool
 	GetCreationResponse() *protocol.CredentialCreationResponse
+}
+
+type inputTakeBotProtection interface {
+	GetBotProtectionProvider() *InputTakeBotProtectionBody
+	GetBotProtectionProviderType() config.BotProtectionProviderType
+	GetBotProtectionProviderResponse() string
 }

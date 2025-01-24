@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/alicebob/miniredis/v2"
-	goredis "github.com/go-redis/redis/v8"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 type testEntry struct {
@@ -44,7 +44,7 @@ func TestLockout(t *testing.T) {
 			s.FlushAll()
 
 			cli := goredis.NewClient(&goredis.Options{Addr: s.Addr()})
-			conn := cli.Conn(ctx)
+			conn := cli.Conn()
 
 			historyDuration, _ := time.ParseDuration(cfg.historyDuration)
 			maxAttempts := cfg.maxAttempts
@@ -53,7 +53,7 @@ func TestLockout(t *testing.T) {
 			backoffFactor := cfg.backoffFactor
 			isGlobal := cfg.isGlobal
 
-			now := time.Unix(epoch, 0)
+			now := time.Unix(epoch, 0).UTC()
 			for _, e := range cfg.entries {
 				if e.fn != nil {
 					e.fn(ctx, conn)
@@ -61,7 +61,7 @@ func TestLockout(t *testing.T) {
 				}
 
 				t, _ := time.ParseDuration(e.time)
-				newNow := time.Unix(epoch, 0).Add(t)
+				newNow := time.Unix(epoch, 0).UTC().Add(t)
 				s.SetTime(newNow)
 				s.FastForward(newNow.Sub(now))
 				now = newNow
@@ -160,7 +160,7 @@ func TestLockout(t *testing.T) {
 			entries: []testEntry{
 				{time: "0s", contributor: "127.0.0.1", attempts: 4, expectedIsSucess: true, expectedLockedUntil: makeUnixTime(epoch + 0 + 20)},
 				{time: "0s", fn: func(ctx context.Context, conn *goredis.Conn) {
-					err := clearAttempts(ctx, conn, testKey, "127.0.0.1")
+					err := clearAttempts(ctx, conn, testKey, 300*time.Second, "127.0.0.1")
 					So(err, ShouldBeNil)
 				}},
 				// Clear attempts should not affect existing lock
@@ -181,7 +181,7 @@ func TestLockout(t *testing.T) {
 				{time: "0s", contributor: "127.0.0.1", attempts: 4, expectedIsSucess: true, expectedLockedUntil: makeUnixTime(epoch + 0 + 20)},
 				{time: "0s", contributor: "127.0.0.2", attempts: 5, expectedIsSucess: true, expectedLockedUntil: makeUnixTime(epoch + 0 + 40)},
 				{time: "0s", fn: func(ctx context.Context, conn *goredis.Conn) {
-					err := clearAttempts(ctx, conn, testKey, "127.0.0.1")
+					err := clearAttempts(ctx, conn, testKey, 300*time.Second, "127.0.0.1")
 					So(err, ShouldBeNil)
 				}},
 				// Clear attempts should not affect existing lock
@@ -196,7 +196,47 @@ func TestLockout(t *testing.T) {
 	})
 }
 
+func TestLockoutClearAttempts(t *testing.T) {
+	s := miniredis.RunT(t)
+
+	Convey("clearAttempts should set ttl if the key originally has no ttl set", t, func() {
+		ctx := context.Background()
+		cli := goredis.NewClient(&goredis.Options{Addr: s.Addr()})
+		conn := cli.Conn()
+
+		err := clearAttempts(ctx, conn, testKey, 300*time.Second, "127.0.0.1")
+		So(err, ShouldBeNil)
+
+		ttl, err := conn.TTL(ctx, testKey).Result()
+		So(err, ShouldBeNil)
+		So(ttl, ShouldBeGreaterThan, 295*time.Second)
+		So(ttl, ShouldBeLessThanOrEqualTo, 300*time.Second)
+	})
+
+	Convey("clearAttempts should not set ttl if the key originally has ttl set", t, func() {
+		ctx := context.Background()
+		cli := goredis.NewClient(&goredis.Options{Addr: s.Addr()})
+		conn := cli.Conn()
+
+		_, err := conn.HSet(ctx, testKey, "127.0.0.1", "1").Result()
+		So(err, ShouldBeNil)
+		// The original ttl is 200s
+		_, err = conn.Expire(ctx, testKey, 200*time.Second).Result()
+		So(err, ShouldBeNil)
+
+		// The proposed ttl is 300s
+		err = clearAttempts(ctx, conn, testKey, 300*time.Second, "127.0.0.1")
+		So(err, ShouldBeNil)
+
+		// The actual ttl should still around 200s
+		ttl, err := conn.TTL(ctx, testKey).Result()
+		So(err, ShouldBeNil)
+		So(ttl, ShouldBeGreaterThan, 195*time.Second)
+		So(ttl, ShouldBeLessThanOrEqualTo, 200*time.Second)
+	})
+}
+
 func makeUnixTime(s int64) *time.Time {
-	t := time.Unix(s, 0)
+	t := time.Unix(s, 0).UTC()
 	return &t
 }

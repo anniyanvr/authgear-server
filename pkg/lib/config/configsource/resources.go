@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/model"
+	apimodel "github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/resource"
@@ -18,11 +20,17 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
+//go:generate mockgen -source=resources.go -destination=resources_mock_test.go -package configsource
+
 const (
 	AuthgearYAML        = "authgear.yaml"
 	AuthgearSecretYAML  = "authgear.secrets.yaml"
 	AuthgearFeatureYAML = "authgear.features.yaml"
 )
+
+type DomainService interface {
+	ListDomains(ctx context.Context, appID string) ([]*apimodel.Domain, error)
+}
 
 var ErrEffectiveSecretConfig = apierrors.NewForbidden("cannot view effective secret config")
 
@@ -30,9 +38,21 @@ type contextKeyFeatureConfigType string
 
 const ContextKeyFeatureConfig = contextKeyFeatureConfigType(AuthgearFeatureYAML)
 
+type contextKeyAppHostSuffixes string
+
+var ContextKeyAppHostSuffixes = contextKeyAppHostSuffixes("APP_HOST_SUFFIXES")
+
+type domainServiceContextKeyType struct{}
+
+var ContextKeyDomainService = domainServiceContextKeyType{}
+
 type clockContextKeyType struct{}
 
 var ContextKeyClock = clockContextKeyType{}
+
+type samlEntityIDKeyType struct{}
+
+var ContextKeySAMLEntityID = samlEntityIDKeyType{}
 
 type AuthgearYAMLDescriptor struct{}
 
@@ -112,6 +132,16 @@ func (d AuthgearYAMLDescriptor) UpdateResource(ctx context.Context, _ []resource
 		return nil, fmt.Errorf("missing feature config in context")
 	}
 
+	appHostSuffixes, ok := ctx.Value(ContextKeyAppHostSuffixes).(*config.AppHostSuffixes)
+	if !ok {
+		return nil, fmt.Errorf("missing app host suffixes in context")
+	}
+
+	domainService, ok := ctx.Value(ContextKeyDomainService).(DomainService)
+	if !ok || domainService == nil {
+		return nil, fmt.Errorf("missing domain service in context")
+	}
+
 	original, err := config.Parse(resrc.Data)
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse original app config %w", err)
@@ -122,7 +152,7 @@ func (d AuthgearYAMLDescriptor) UpdateResource(ctx context.Context, _ []resource
 		return nil, fmt.Errorf("cannot parse incoming app config: %w", err)
 	}
 
-	err = d.validate(original, incoming, fc)
+	err = d.validate(ctx, original, incoming, fc, *appHostSuffixes, domainService)
 	if err != nil {
 		return nil, err
 	}
@@ -133,11 +163,22 @@ func (d AuthgearYAMLDescriptor) UpdateResource(ctx context.Context, _ []resource
 	}, nil
 }
 
-// nolint:gocyclo
-func (d AuthgearYAMLDescriptor) validate(original *config.AppConfig, incoming *config.AppConfig, fc *config.FeatureConfig) error {
+func (d AuthgearYAMLDescriptor) validate(ctx context.Context, original *config.AppConfig, incoming *config.AppConfig, fc *config.FeatureConfig, appHostSuffixes []string, domainService DomainService) error {
 	validationCtx := &validation.Context{}
 
-	// Check custom attributes not removed nor edited.
+	d.validateCustomAttributes(validationCtx, original, incoming)
+	d.validateFeatureConfig(validationCtx, incoming, original, fc)
+	err := d.validatePublicOrigin(ctx, validationCtx, incoming, original, appHostSuffixes, domainService)
+	if err != nil {
+		return err
+	}
+	d.validateOAuthClients(validationCtx, incoming, original)
+
+	return validationCtx.Error(fmt.Sprintf("invalid %v", AuthgearYAML))
+}
+
+// Check custom attributes not removed nor edited.
+func (d AuthgearYAMLDescriptor) validateCustomAttributes(validationCtx *validation.Context, original *config.AppConfig, incoming *config.AppConfig) {
 	for _, originalCustomAttr := range original.UserProfile.CustomAttributes.Attributes {
 		found := false
 		for i, incomingCustomAttr := range incoming.UserProfile.CustomAttributes.Attributes {
@@ -169,14 +210,20 @@ func (d AuthgearYAMLDescriptor) validate(original *config.AppConfig, incoming *c
 			)
 		}
 	}
+}
 
-	// Enforce feature config.
+// Enforce feature config.
+func (d AuthgearYAMLDescriptor) validateFeatureConfig(validationCtx *validation.Context, incoming *config.AppConfig, original *config.AppConfig, fc *config.FeatureConfig) {
 	featureConfigErr := func() error {
 		incomingFCError := d.validateBasedOnFeatureConfig(incoming, fc)
 		incomingAggregatedError, ok := incomingFCError.(*validation.AggregatedError)
 		if incomingFCError == nil || !ok {
 			return incomingFCError
 		}
+		// https://github.com/authgear/authgear-server/commit/888e57b4b6fa9de7cd5786111cdc5cc244a85ac0
+		// If the original config has some feature config error, we allow the user
+		// to save the config without correcting them. This is for the case that
+		// the app is downgraded from a higher plan.
 		originalFCError := d.validateBasedOnFeatureConfig(original, fc)
 		originalAggregatedError, ok := originalFCError.(*validation.AggregatedError)
 		if originalFCError == nil || !ok {
@@ -188,8 +235,78 @@ func (d AuthgearYAMLDescriptor) validate(original *config.AppConfig, incoming *c
 	}()
 
 	validationCtx.AddError(featureConfigErr)
+}
 
-	return validationCtx.Error(fmt.Sprintf("invalid %v", AuthgearYAML))
+// Check public origin.
+func (d AuthgearYAMLDescriptor) validatePublicOrigin(ctx context.Context, validationCtx *validation.Context, incoming *config.AppConfig, original *config.AppConfig, appHostSuffixes []string, domainService DomainService) error {
+	if incoming.HTTP.PublicOrigin != original.HTTP.PublicOrigin {
+		validOrigin := false
+
+		incomingUrl, err := url.Parse(incoming.HTTP.PublicOrigin)
+		if err != nil {
+			return err
+		}
+
+		for _, appHostSuffix := range appHostSuffixes {
+			appHost := string(incoming.ID) + appHostSuffix
+			if incomingUrl.Host == appHost {
+				validOrigin = true
+				break
+			}
+		}
+
+		availableDomains, err := domainService.ListDomains(ctx, string(incoming.ID))
+		if err != nil {
+			return err
+		}
+
+		for _, domain := range availableDomains {
+			if incomingUrl.Host == domain.Domain {
+				validOrigin = true
+				break
+			}
+		}
+
+		if !validOrigin {
+			validationCtx.Child(
+				"http",
+				"public_origin",
+			).EmitErrorMessage(
+				fmt.Sprintf("public origin is not allowed"),
+			)
+		}
+	}
+
+	return nil
+}
+
+func (d AuthgearYAMLDescriptor) validateOAuthClients(validationCtx *validation.Context, incoming *config.AppConfig, original *config.AppConfig) {
+	incomingClientIds := map[string]struct{}{}
+	for _, incomingClient := range incoming.OAuth.Clients {
+		incomingClientIds[incomingClient.ClientID] = struct{}{}
+	}
+	origClientIds := map[string]struct{}{}
+	for _, origClient := range original.OAuth.Clients {
+		origClientIds[origClient.ClientID] = struct{}{}
+	}
+	var addedClientIds []string
+	for incomingClientId := range incomingClientIds {
+		if _, origHasIncoming := origClientIds[incomingClientId]; !origHasIncoming {
+			addedClientIds = append(addedClientIds, incomingClientId)
+		}
+	}
+	var removedClientIds []string
+	for origClientId := range origClientIds {
+		if _, incomingHasOrig := incomingClientIds[origClientId]; !incomingHasOrig {
+			removedClientIds = append(removedClientIds, origClientId)
+		}
+	}
+	// Ref DEV-1146 Disallow Changing Client ID
+	// - authgear portal will not add and remove client at the same operation
+	// - if there is both added and removed clients, user is probably modifying client id manually via api
+	if len(addedClientIds) > 0 && len(removedClientIds) > 0 {
+		validationCtx.Child("oauth", "clients").EmitErrorMessage("client ids cannot be changed")
+	}
 }
 
 func (d AuthgearYAMLDescriptor) validateBasedOnFeatureConfig(appConfig *config.AppConfig, fc *config.FeatureConfig) error {
@@ -244,18 +361,6 @@ func (d AuthgearYAMLDescriptor) validateBasedOnFeatureConfig(appConfig *config.A
 		)
 	}
 
-	if len(appConfig.Web3.NFT.Collections) > *fc.Web3.NFT.Maximum {
-		validationCtx.Child(
-			"web3",
-			"nft",
-		).EmitErrorMessage(
-			fmt.Sprintf("exceed the maximum number of nft collections, actual: %d, expected: %d",
-				len(appConfig.Web3.NFT.Collections),
-				*fc.Web3.NFT.Maximum,
-			),
-		)
-	}
-
 	for _, identity := range appConfig.Authentication.Identities {
 		if identity == model.IdentityTypeBiometric && *fc.Identity.Biometric.Disabled {
 			validationCtx.Child(
@@ -295,7 +400,6 @@ func (d AuthgearYAMLDescriptor) validateBasedOnFeatureConfig(appConfig *config.A
 			).EmitErrorMessage("password history is disallowed")
 		}
 	}
-
 	if !fc.OAuth.Client.CustomUIEnabled {
 		for i, oauthClient := range appConfig.OAuth.Clients {
 			if oauthClient.CustomUIURI != "" {
@@ -407,16 +511,20 @@ func (d AuthgearSecretYAMLDescriptor) UpdateResource(ctx context.Context, _ []re
 		return nil, fmt.Errorf("cannot delete '%v'", AuthgearSecretYAML)
 	}
 
+	fc, ok := ctx.Value(ContextKeyFeatureConfig).(*config.FeatureConfig)
+	if !ok || fc == nil {
+		return nil, fmt.Errorf("missing feature config in context")
+	}
+
 	var original *config.SecretConfig
 	original, err := config.ParseSecret(resrc.Data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse original secret config: %w", err)
 	}
 
-	var updateInstruction config.SecretConfigUpdateInstruction
-	err = json.Unmarshal(data, &updateInstruction)
+	updateInstruction, err := ParseAuthgearSecretsYAMLUpdateInstructions(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse secret config update instruction: %w", err)
+		return nil, err
 	}
 
 	c, ok := ctx.Value(ContextKeyClock).(clock.Clock)
@@ -424,19 +532,29 @@ func (d AuthgearSecretYAMLDescriptor) UpdateResource(ctx context.Context, _ []re
 		return nil, fmt.Errorf("missing clock in context")
 	}
 
+	commonName := ctx.Value(ContextKeySAMLEntityID).(string)
+
 	updateInstructionContext := &config.SecretConfigUpdateInstructionContext{
 		Clock: c,
 		// The key generated for client secret doesn't have use usage key
 		// Since the key neither use for sig nor enc
 		GenerateClientSecretOctetKeyFunc: secrets.GenerateOctetKey,
 		GenerateAdminAPIAuthKeyFunc:      secrets.GenerateRSAKey,
+		GenerateSAMLIdpSigningCertificate: func() (*config.SAMLIdpSigningCertificate, error) {
+			return config.GenerateSAMLIdpSigningCertificate(commonName)
+		},
 	}
-	updatedConfig, err := updateInstruction.ApplyTo(updateInstructionContext, original)
+	incoming, err := updateInstruction.ApplyTo(updateInstructionContext, original)
 	if err != nil {
 		return nil, err
 	}
 
-	updatedYAML, err := yaml.Marshal(updatedConfig)
+	err = d.validate(ctx, original, incoming, fc)
+	if err != nil {
+		return nil, err
+	}
+
+	updatedYAML, err := yaml.Marshal(incoming)
 	if err != nil {
 		return nil, err
 	}
@@ -444,6 +562,46 @@ func (d AuthgearSecretYAMLDescriptor) UpdateResource(ctx context.Context, _ []re
 	newResrc := *resrc
 	newResrc.Data = updatedYAML
 	return &newResrc, nil
+}
+
+func (d AuthgearSecretYAMLDescriptor) validate(ctx context.Context, original *config.SecretConfig, incoming *config.SecretConfig, fc *config.FeatureConfig) error {
+	validationCtx := &validation.Context{}
+
+	featureConfigErr := func() error {
+		incomingFCError := d.validateBasedOnFeatureConfig(incoming, fc)
+		incomingAggregatedError, ok := incomingFCError.(*validation.AggregatedError)
+		if incomingFCError == nil || !ok {
+			return incomingFCError
+		}
+		// https://github.com/authgear/authgear-server/commit/888e57b4b6fa9de7cd5786111cdc5cc244a85ac0
+		// If the original config has some feature config error, we allow the user
+		// to save the config without correcting them. This is for the case that
+		// the app is downgraded from a higher plan.
+		originalFCError := d.validateBasedOnFeatureConfig(original, fc)
+		originalAggregatedError, ok := originalFCError.(*validation.AggregatedError)
+		if originalFCError == nil || !ok {
+			return incomingFCError
+		}
+
+		aggregatedError := incomingAggregatedError.Subtract(originalAggregatedError)
+		return aggregatedError
+	}()
+
+	validationCtx.AddError(featureConfigErr)
+
+	return validationCtx.Error(fmt.Sprintf("invalid %v", AuthgearSecretYAML))
+}
+
+func (d AuthgearSecretYAMLDescriptor) validateBasedOnFeatureConfig(secretConfig *config.SecretConfig, fc *config.FeatureConfig) error {
+	validationCtx := &validation.Context{}
+
+	if *fc.Messaging.CustomSMTPDisabled {
+		if _, _, ok := secretConfig.Lookup(config.SMTPServerCredentialsKey); ok {
+			validationCtx.EmitErrorMessage("custom smtp is not allowed")
+		}
+	}
+
+	return validationCtx.Error("features are limited by feature config")
 }
 
 var SecretConfig = resource.RegisterResource(AuthgearSecretYAMLDescriptor{})
@@ -489,31 +647,44 @@ func (d AuthgearFeatureYAMLDescriptor) ViewResources(resources []resource.Resour
 		return target.Data, nil
 	}
 
-	effective := func() (interface{}, error) {
-		bytes, err := app()
-		if err != nil {
-			return nil, err
-		}
-
-		featureConfig, err := config.ParseFeatureConfig(bytes.([]byte))
-		if err != nil {
-			return nil, fmt.Errorf("cannot parse feature config: %w", err)
-		}
-		return featureConfig, nil
-	}
-
 	switch rawView.(type) {
 	case resource.AppFileView:
 		return app()
 	case resource.EffectiveFileView:
 		return app()
 	case resource.EffectiveResourceView:
-		return effective()
+		return d.viewEffectiveResource(resources)
 	case resource.ValidateResourceView:
-		return effective()
+		return d.viewEffectiveResource(resources)
 	default:
 		return nil, fmt.Errorf("unsupported view: %T", rawView)
 	}
+}
+
+func (d AuthgearFeatureYAMLDescriptor) viewEffectiveResource(resources []resource.ResourceFile) (interface{}, error) {
+	var cfgs []*config.FeatureConfig
+	for _, layer := range resources {
+		cfg, err := config.ParseFeatureConfigWithoutDefaults(layer.Data)
+		if err != nil {
+			return nil, fmt.Errorf("malformed feature config: %w", err)
+		}
+		cfgs = append(cfgs, cfg)
+	}
+
+	mergedConfig := &config.FeatureConfig{}
+	for _, cfg := range cfgs {
+		mergedConfig = mergedConfig.Merge(cfg)
+	}
+	mergedYAML, err := yaml.Marshal(mergedConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	featureConfig, err := config.ParseFeatureConfig(mergedYAML)
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse merged feature config: %w", err)
+	}
+	return featureConfig, nil
 }
 
 func (d AuthgearFeatureYAMLDescriptor) UpdateResource(_ context.Context, _ []resource.ResourceFile, resrc *resource.ResourceFile, data []byte) (*resource.ResourceFile, error) {
@@ -521,3 +692,13 @@ func (d AuthgearFeatureYAMLDescriptor) UpdateResource(_ context.Context, _ []res
 }
 
 var FeatureConfig = resource.RegisterResource(AuthgearFeatureYAMLDescriptor{})
+
+func ParseAuthgearSecretsYAMLUpdateInstructions(data []byte) (*config.SecretConfigUpdateInstruction, error) {
+	var out config.SecretConfigUpdateInstruction
+	err := json.Unmarshal(data, &out)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse secret config update instruction: %w", err)
+	}
+
+	return &out, nil
+}

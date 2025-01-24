@@ -2,8 +2,12 @@ import React, { useCallback, useContext, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 import {
+  Checkbox,
   ChoiceGroup,
   IChoiceGroupOption,
+  IChoiceGroupStyleProps,
+  IChoiceGroupStyles,
+  IStyleFunctionOrObject,
   Label,
   MessageBar,
   Text,
@@ -15,7 +19,7 @@ import ScreenContent from "../../ScreenContent";
 import ShowLoading from "../../ShowLoading";
 import ShowError from "../../ShowError";
 import PasswordField from "../../PasswordField";
-import { useTextField } from "../../hook/useInput";
+import { useCheckbox, useTextField } from "../../hook/useInput";
 import {
   PrimaryAuthenticatorType,
   LoginIDKeyType,
@@ -34,12 +38,20 @@ import FormContainer from "../../FormContainer";
 import styles from "./AddUserScreen.module.css";
 import { validatePassword } from "../../error/password";
 
+enum PasswordCreationType {
+  ManualEntry = "manual_entry",
+  AutoGenerate = "auto_generate",
+}
+
 interface FormState {
   selectedLoginIDType: LoginIDKeyType | null;
   username: string;
   email: string;
   phone: string;
   password: string;
+  passwordCreationType: PasswordCreationType;
+  sendPassword: boolean;
+  setPasswordExpired: boolean;
 }
 
 const loginIdTypeNameIds: Record<LoginIDKeyType, string> = {
@@ -56,6 +68,9 @@ function makeDefaultFormState(loginIDTypes: LoginIDKeyType[]): FormState {
       email: "",
       phone: "",
       password: "",
+      passwordCreationType: PasswordCreationType.ManualEntry,
+      sendPassword: false,
+      setPasswordExpired: true,
     };
   }
 
@@ -65,6 +80,9 @@ function makeDefaultFormState(loginIDTypes: LoginIDKeyType[]): FormState {
     email: "",
     phone: "",
     password: "",
+    passwordCreationType: PasswordCreationType.ManualEntry,
+    sendPassword: false,
+    setPasswordExpired: true,
   };
 }
 
@@ -77,16 +95,33 @@ function isPasswordNeeded(
     return false;
   }
 
+  const filterAuthenticators = (allowedTypes: PrimaryAuthenticatorType[]) => {
+    return primaryAuthenticators.filter((authenticator) =>
+      allowedTypes.includes(authenticator)
+    );
+  };
+
+  let relatedAuthenticators: PrimaryAuthenticatorType[];
   switch (loginIdKeySelected) {
     case "email":
-      return !primaryAuthenticators.includes("oob_otp_email");
+      relatedAuthenticators = filterAuthenticators([
+        "oob_otp_email",
+        "password",
+      ]);
+      break;
     case "phone":
-      return !primaryAuthenticators.includes("oob_otp_sms");
+      relatedAuthenticators = filterAuthenticators(["oob_otp_sms", "password"]);
+      break;
     case "username":
-      return true;
+      relatedAuthenticators = filterAuthenticators(["password"]);
+      break;
     default:
-      return false;
+      relatedAuthenticators = filterAuthenticators([]);
   }
+
+  return (
+    relatedAuthenticators.length > 0 && relatedAuthenticators[0] === "password"
+  );
 }
 
 function getEnabledLoginIDTypes(
@@ -155,10 +190,42 @@ const AddUserContent: React.VFC<AddUserContentProps> = function AddUserContent(
     ];
   }, []);
 
+  const passwordCreateionTypeOptions = useMemo(() => {
+    return [
+      {
+        key: PasswordCreationType.ManualEntry,
+        text: renderToString("AddUserScreen.password-creation-type.manual"),
+      },
+      {
+        key: PasswordCreationType.AutoGenerate,
+        text: renderToString("AddUserScreen.password-creation-type.auto"),
+      },
+    ];
+  }, [renderToString]);
+
+  const onChangePasswordCreationType = useCallback(
+    (_e, option: IChoiceGroupOption | undefined) => {
+      if (option != null) {
+        setState((prev) => ({
+          ...prev,
+          password:
+            option.key === PasswordCreationType.AutoGenerate
+              ? ""
+              : prev.password,
+          passwordCreationType: option.key as PasswordCreationType,
+          sendPassword:
+            prev.sendPassword ||
+            option.key === PasswordCreationType.AutoGenerate,
+        }));
+      }
+    },
+    [setState]
+  );
+
   const { username, email, phone, password, selectedLoginIDType } = state;
 
-  const passwordFieldDisabled = useMemo(() => {
-    return !isPasswordNeeded(primaryAuthenticators, selectedLoginIDType);
+  const passwordFieldNeeded = useMemo(() => {
+    return isPasswordNeeded(primaryAuthenticators, selectedLoginIDType);
   }, [primaryAuthenticators, selectedLoginIDType]);
 
   const { onChange: onUsernameChange } = useTextField((value) => {
@@ -172,6 +239,12 @@ const AddUserContent: React.VFC<AddUserContentProps> = function AddUserContent(
   });
   const { onChange: onPasswordChange } = useTextField((value) => {
     setState((prev) => ({ ...prev, password: value }));
+  });
+  const { onChange: onChangeSendPassword } = useCheckbox((value) => {
+    setState((prev) => ({ ...prev, sendPassword: value }));
+  });
+  const { onChange: onChangeForceChangeOnLogin } = useCheckbox((value) => {
+    setState((prev) => ({ ...prev, setPasswordExpired: value }));
   });
 
   const onSelectLoginIdType = useCallback(
@@ -236,30 +309,24 @@ const AddUserContent: React.VFC<AddUserContentProps> = function AddUserContent(
   const loginIdTypeOptions: IChoiceGroupOption[] = useMemo(() => {
     return loginIDTypes.map((loginIdType) => {
       const messageId = loginIdTypeNameIds[loginIdType];
-      const renderTextField =
-        selectedLoginIDType === loginIdType
-          ? textFieldRenderer[loginIdType]
-          : undefined;
       return {
         key: loginIdType,
         text: renderToString(messageId),
-        // eslint-disable-next-line react/no-unstable-nested-components
-        onRenderLabel: (option) => {
-          return option ? (
-            <div className={styles.identityOption}>
-              <Label className={styles.identityOptionLabel}>
-                {option.text}
-              </Label>
-              {renderTextField?.()}
-            </div>
-          ) : null;
-        },
       };
     });
-  }, [loginIDTypes, renderToString, textFieldRenderer, selectedLoginIDType]);
+  }, [loginIDTypes, renderToString]);
 
   // NOTE: cannot add user identity if none of three field is available
   const canAddUser = loginIdTypeOptions.length > 0;
+
+  const loginIDTypeOptionChoiceGroupStyle = useMemo<
+    IStyleFunctionOrObject<IChoiceGroupStyleProps, IChoiceGroupStyles>
+  >(() => {
+    return {
+      flexContainer: { display: "flex", gap: "16px" },
+      label: { fontSize: "14px" },
+    };
+  }, []);
 
   // TODO: improve empty state
   if (!canAddUser) {
@@ -273,34 +340,85 @@ const AddUserContent: React.VFC<AddUserContentProps> = function AddUserContent(
   return (
     <ScreenContent>
       <NavBreadcrumb className={styles.widget} items={navBreadcrumbItems} />
-      {isPasskeyOnly ? (
-        <div className={styles.widget}>
-          <MessageBar>
-            <FormattedMessage id="AddUserScreen.passkey-only.message" />
-          </MessageBar>
-        </div>
-      ) : (
-        <>
-          <ChoiceGroup
-            className={styles.widget}
-            styles={{ label: { marginBottom: "15px", fontSize: "14px" } }}
-            selectedKey={selectedLoginIDType ?? undefined}
-            options={loginIdTypeOptions}
-            onChange={onSelectLoginIdType}
-            label={renderToString("AddUserScreen.user-info.label")}
-          />
-          <PasswordField
-            className={styles.widget}
-            disabled={passwordFieldDisabled}
-            label={renderToString("AddUserScreen.password.label")}
-            value={password}
-            onChange={onPasswordChange}
-            passwordPolicy={passwordPolicy}
-            parentJSONPointer=""
-            fieldName="password"
-          />
-        </>
-      )}
+      <div className={styles.verticalForm}>
+        {isPasskeyOnly ? (
+          <div className={styles.widget}>
+            <MessageBar>
+              <FormattedMessage id="AddUserScreen.passkey-only.message" />
+            </MessageBar>
+          </div>
+        ) : (
+          <>
+            {loginIdTypeOptions.length > 1 ? (
+              <ChoiceGroup
+                className={styles.widget}
+                styles={loginIDTypeOptionChoiceGroupStyle}
+                selectedKey={selectedLoginIDType}
+                options={loginIdTypeOptions}
+                onChange={onSelectLoginIdType}
+                label={renderToString("AddUserScreen.user-info.label")}
+              />
+            ) : null}
+
+            {selectedLoginIDType ? (
+              <div className={styles.identityOption}>
+                <Label className={styles.identityOptionLabel}>
+                  <FormattedMessage
+                    id={loginIdTypeNameIds[selectedLoginIDType]}
+                  />
+                </Label>
+                {textFieldRenderer[selectedLoginIDType]()}
+                {passwordFieldNeeded && selectedLoginIDType === "email" ? (
+                  <ChoiceGroup
+                    className={styles.widget}
+                    selectedKey={state.passwordCreationType}
+                    options={passwordCreateionTypeOptions}
+                    onChange={onChangePasswordCreationType}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            <div className={styles.widget}>
+              {passwordFieldNeeded ? (
+                <PasswordField
+                  label={renderToString("AddUserScreen.password.label")}
+                  value={password}
+                  canRevealPassword={true}
+                  canGeneratePassword={true}
+                  onChange={onPasswordChange}
+                  passwordPolicy={passwordPolicy}
+                  parentJSONPointer=""
+                  fieldName="password"
+                  disabled={
+                    state.passwordCreationType ===
+                    PasswordCreationType.AutoGenerate
+                  }
+                />
+              ) : null}
+              {passwordFieldNeeded && selectedLoginIDType === "email" ? (
+                <Checkbox
+                  className={styles.checkbox}
+                  label={renderToString("AddUserScreen.send-password")}
+                  checked={state.sendPassword}
+                  onChange={onChangeSendPassword}
+                  disabled={
+                    state.passwordCreationType ===
+                    PasswordCreationType.AutoGenerate
+                  }
+                />
+              ) : null}
+              {passwordFieldNeeded ? (
+                <Checkbox
+                  className={styles.checkbox}
+                  label={renderToString("AddUserScreen.force-change-on-login")}
+                  checked={state.setPasswordExpired}
+                  onChange={onChangeForceChangeOnLogin}
+                />
+              ) : null}
+            </div>
+          </>
+        )}
+      </div>
     </ScreenContent>
   );
 };
@@ -364,9 +482,19 @@ const AddUserScreen: React.VFC = function AddUserScreen() {
         state.selectedLoginIDType
       );
       const identityValue = state[loginIDType];
-      const password = needPassword ? state.password : undefined;
+      const password =
+        needPassword &&
+        state.passwordCreationType === PasswordCreationType.ManualEntry
+          ? state.password
+          : undefined;
+      const { sendPassword, setPasswordExpired } = state;
 
-      await createUser({ key: loginIDType, value: identityValue }, password);
+      await createUser({
+        identity: { key: loginIDType, value: identityValue },
+        password,
+        sendPassword,
+        setPasswordExpired,
+      });
     },
     [createUser, primaryAuthenticators]
   );
@@ -386,7 +514,9 @@ const AddUserScreen: React.VFC = function AddUserScreen() {
   const saveButtonProps = useMemo(
     () => ({
       labelId: "AddUserScreen.add-user.label",
-      iconName: "Add",
+      iconProps: {
+        iconName: "Add",
+      },
     }),
     []
   );

@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/google"
 )
 
 func TestGenerateSignupLoginFlowConfig(t *testing.T) {
@@ -48,7 +49,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: signup_login_identify
   type: identify
   one_of:
   - identification: email
@@ -70,7 +71,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: signup_login_identify
   type: identify
   one_of:
   - identification: phone
@@ -92,7 +93,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: signup_login_identify
   type: identify
   one_of:
   - identification: username
@@ -117,7 +118,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: signup_login_identify
   type: identify
   one_of:
   - identification: email
@@ -141,7 +142,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: signup_login_identify
   type: identify
   one_of:
   - identification: oauth
@@ -165,7 +166,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: signup_login_identify
   type: identify
   one_of:
   - identification: email
@@ -175,7 +176,113 @@ steps:
     login_flow: default
 `)
 
+		// ldap
+		test(`
+authentication:
+  identities:
+  - ldap
+identity:
+  ldap:
+    servers:
+    - name: ldap
+`, `
+name: default
+steps:
+- name: signup_login_identify
+  type: identify
+  one_of:
+  - identification: ldap
+    signup_flow: default
+    login_flow: default
+`)
+
 		// all
+		test(`
+authentication:
+  identities:
+  - login_id
+  - oauth
+  - passkey
+  - ldap
+  primary_authenticators:
+  - password
+  - passkey
+  secondary_authenticators:
+  - totp
+  secondary_authentication_mode: required
+  device_token:
+    disabled: true
+  recovery_code:
+    disabled: true
+identity:
+  login_id:
+    keys:
+    - type: email
+    - type: phone
+    - type: username
+  oauth:
+    providers:
+    - alias: google
+      type: google
+  ldap:
+    servers:
+    - name: ldap
+`, `
+name: default
+steps:
+- name: signup_login_identify
+  type: identify
+  one_of:
+  - identification: email
+    signup_flow: default
+    login_flow: default
+  - identification: phone
+    signup_flow: default
+    login_flow: default
+  - identification: username
+    signup_flow: default
+    login_flow: default
+  - identification: oauth
+    signup_flow: default
+    login_flow: default
+  - identification: passkey
+    login_flow: default
+  - identification: ldap
+    signup_flow: default
+    login_flow: default
+`)
+		// bot_protection, 1 branch
+		test(`
+authentication:
+  identities:
+  - login_id
+  primary_authenticators:
+  - password
+identity:
+  login_id:
+    keys:
+    - type: email
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+  requirements:
+    signup_or_login:
+      mode: always
+`, `
+name: default
+steps:
+- name: signup_login_identify
+  type: identify
+  one_of:
+  - identification: email
+    bot_protection:
+      mode: always
+    signup_flow: default
+    login_flow: default
+`)
+		// bot_protection, all loginID branches except oauth & passkey
 		test(`
 authentication:
   identities:
@@ -202,25 +309,110 @@ identity:
     providers:
     - alias: google
       type: google
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+  requirements:
+    signup_or_login:
+      mode: always
 `, `
 name: default
 steps:
-- name: identify
+- name: signup_login_identify
   type: identify
   one_of:
   - identification: email
+    bot_protection:
+      mode: always
     signup_flow: default
     login_flow: default
   - identification: phone
+    bot_protection:
+      mode: always
     signup_flow: default
     login_flow: default
   - identification: username
+    bot_protection:
+      mode: always
     signup_flow: default
     login_flow: default
   - identification: oauth
     signup_flow: default
     login_flow: default
   - identification: passkey
+    login_flow: default
+`)
+
+		// DEV-1972: bot_protection, depends on authenticator, oob_otp_email
+		test(`
+authentication:
+  identities:
+  - login_id
+  primary_authenticators:
+  - oob_otp_email
+identity:
+  login_id:
+    keys:
+    - type: email
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+  requirements:
+    oob_otp_email:
+      mode: always
+    oob_otp_sms:
+      mode: never
+    password:
+      mode: never
+`, `
+name: default
+steps:
+- name: signup_login_identify
+  type: identify
+  one_of:
+  - identification: email
+    bot_protection:
+      mode: always
+    signup_flow: default
+    login_flow: default
+`)
+		// DEV-1972: bot_protection, depends on authenticator, oob_otp_sms
+		test(`
+authentication:
+  identities:
+  - login_id
+  primary_authenticators:
+  - oob_otp_sms
+identity:
+  login_id:
+    keys:
+    - type: phone
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+  requirements:
+    oob_otp_email:
+      mode: never
+    oob_otp_sms:
+      mode: always
+    password:
+      mode: never
+`, `
+name: default
+steps:
+- name: signup_login_identify
+  type: identify
+  one_of:
+  - identification: phone
+    bot_protection:
+      mode: always
+    signup_flow: default
     login_flow: default
 `)
 	})

@@ -15,8 +15,21 @@ func init() {
 	authflow.RegisterIntent(&IntentAccountRecoveryFlowStepIdentify{})
 }
 
+// IntentAccountRecoveryFlowStepIdentify
+//
+//   NodeSentinel
+//
+//   IntentUseAccountRecoveryIdentity (MilestoneDoUseAccountRecoveryIdentificationMethod)
+//     NodeDoUseAccountRecoveryIdentity (MilestoneDoUseAccountRecoveryIdentity)
+
 type IntentAccountRecoveryFlowStepIdentifyData struct {
+	TypedData
 	Options []AccountRecoveryIdentificationOption `json:"options"`
+}
+
+func NewIntentAccountRecoveryFlowStepIdentifyData(d IntentAccountRecoveryFlowStepIdentifyData) IntentAccountRecoveryFlowStepIdentifyData {
+	d.Type = DataTypeAccountRecoveryIdentificationData
+	return d
 }
 
 var _ authflow.Data = IntentAccountRecoveryFlowStepIdentifyData{}
@@ -45,7 +58,7 @@ var _ authflow.Intent = &IntentAccountRecoveryFlowStepIdentify{}
 var _ authflow.DataOutputer = &IntentAccountRecoveryFlowStepIdentify{}
 
 func NewIntentAccountRecoveryFlowStepIdentify(ctx context.Context, deps *authflow.Dependencies, i *IntentAccountRecoveryFlowStepIdentify) (*IntentAccountRecoveryFlowStepIdentify, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	current, err := i.currentFlowObject(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +70,7 @@ func NewIntentAccountRecoveryFlowStepIdentify(ctx context.Context, deps *authflo
 		case config.AuthenticationFlowAccountRecoveryIdentificationEmail:
 			fallthrough
 		case config.AuthenticationFlowAccountRecoveryIdentificationPhone:
-			c := AccountRecoveryIdentificationOption{Identification: b.Identification}
+			c := AccountRecoveryIdentificationOption{Identification: b.Identification, BotProtection: GetBotProtectionData(b.GetBotProtectionConfig(), deps.Config.BotProtection)}
 			options = append(options, c)
 		}
 	}
@@ -78,14 +91,22 @@ func (i *IntentAccountRecoveryFlowStepIdentify) CanReactTo(ctx context.Context, 
 			// When restoring the intent, no input is needed
 			return nil, nil
 		}
+		flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+		if err != nil {
+			return nil, err
+		}
+		shouldBypassBotProtection := ShouldExistingResultBypassBotProtectionRequirement(ctx)
 		return &InputSchemaStepAccountRecoveryIdentify{
-			JSONPointer: i.JSONPointer,
-			Options:     i.Options,
+			FlowRootObject:            flowRootObject,
+			JSONPointer:               i.JSONPointer,
+			Options:                   i.Options,
+			BotProtectionCfg:          deps.Config.BotProtection,
+			ShouldBypassBotProtection: shouldBypassBotProtection,
 		}, nil
 	}
 
-	_, identityUsed := authflow.FindMilestone[MilestoneDoUseAccountRecoveryIdentificationMethod](flows.Nearest)
-	_, nestedStepsHandled := authflow.FindMilestone[MilestoneNestedSteps](flows.Nearest)
+	_, _, identityUsed := authflow.FindMilestoneInCurrentFlow[MilestoneDoUseAccountRecoveryIdentificationMethod](flows)
+	_, _, nestedStepsHandled := authflow.FindMilestoneInCurrentFlow[MilestoneNestedSteps](flows)
 
 	switch {
 	case (identityUsed || isSelectedIdenRestored) && !nestedStepsHandled:
@@ -97,7 +118,7 @@ func (i *IntentAccountRecoveryFlowStepIdentify) CanReactTo(ctx context.Context, 
 }
 
 func (i *IntentAccountRecoveryFlowStepIdentify) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	current, err := i.currentFlowObject(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +142,7 @@ func (i *IntentAccountRecoveryFlowStepIdentify) ReactTo(ctx context.Context, dep
 			case config.AuthenticationFlowAccountRecoveryIdentificationEmail:
 				fallthrough
 			case config.AuthenticationFlowAccountRecoveryIdentificationPhone:
-				return authflow.NewNodeSimple(&NodeUseAccountRecoveryIdentity{
+				return authflow.NewSubFlow(&IntentUseAccountRecoveryIdentity{
 					JSONPointer:    authflow.JSONPointerForOneOf(i.JSONPointer, idx),
 					Identification: identification,
 					OnFailure:      branch.OnFailure,
@@ -131,8 +152,8 @@ func (i *IntentAccountRecoveryFlowStepIdentify) ReactTo(ctx context.Context, dep
 		return nil, authflow.ErrIncompatibleInput
 	}
 
-	_, identityUsed := authflow.FindMilestone[MilestoneDoUseAccountRecoveryIdentificationMethod](flows.Nearest)
-	_, nestedStepsHandled := authflow.FindMilestone[MilestoneNestedSteps](flows.Nearest)
+	_, _, identityUsed := authflow.FindMilestoneInCurrentFlow[MilestoneDoUseAccountRecoveryIdentificationMethod](flows)
+	_, _, nestedStepsHandled := authflow.FindMilestoneInCurrentFlow[MilestoneNestedSteps](flows)
 	restoredIdenJsonPointer, isSelectedIdenRestored := i.restoredIdentificationJsonPointer()
 
 	switch {
@@ -143,7 +164,7 @@ func (i *IntentAccountRecoveryFlowStepIdentify) ReactTo(ctx context.Context, dep
 			StartFrom:     i.StartFrom,
 		}), nil
 	case identityUsed && !nestedStepsHandled:
-		identification := i.identificationMethod(flows.Nearest)
+		identification := i.identificationMethod(flows)
 		return authflow.NewSubFlow(&IntentAccountRecoveryFlowSteps{
 			FlowReference: i.FlowReference,
 			JSONPointer:   i.jsonPointer(step, identification),
@@ -155,9 +176,9 @@ func (i *IntentAccountRecoveryFlowStepIdentify) ReactTo(ctx context.Context, dep
 }
 
 func (i *IntentAccountRecoveryFlowStepIdentify) OutputData(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.Data, error) {
-	return IntentAccountRecoveryFlowStepIdentifyData{
+	return NewIntentAccountRecoveryFlowStepIdentifyData(IntentAccountRecoveryFlowStepIdentifyData{
 		Options: i.Options,
-	}, nil
+	}), nil
 }
 
 func (*IntentAccountRecoveryFlowStepIdentify) step(o config.AuthenticationFlowObject) *config.AuthenticationFlowAccountRecoveryFlowStep {
@@ -167,6 +188,18 @@ func (*IntentAccountRecoveryFlowStepIdentify) step(o config.AuthenticationFlowOb
 	}
 
 	return step
+}
+
+func (i *IntentAccountRecoveryFlowStepIdentify) currentFlowObject(deps *authflow.Dependencies) (config.AuthenticationFlowObject, error) {
+	rootObject, err := flowRootObject(deps, i.FlowReference)
+	if err != nil {
+		return nil, err
+	}
+	current, err := authflow.FlowObject(rootObject, i.JSONPointer)
+	if err != nil {
+		return nil, err
+	}
+	return current, nil
 }
 
 func (*IntentAccountRecoveryFlowStepIdentify) checkIdentificationMethod(
@@ -191,8 +224,8 @@ func (*IntentAccountRecoveryFlowStepIdentify) checkIdentificationMethod(
 	return
 }
 
-func (*IntentAccountRecoveryFlowStepIdentify) identificationMethod(w *authflow.Flow) config.AuthenticationFlowAccountRecoveryIdentification {
-	m, ok := authflow.FindMilestone[MilestoneDoUseAccountRecoveryIdentificationMethod](w)
+func (*IntentAccountRecoveryFlowStepIdentify) identificationMethod(flows authflow.Flows) config.AuthenticationFlowAccountRecoveryIdentification {
+	m, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneDoUseAccountRecoveryIdentificationMethod](flows)
 	if !ok {
 		panic(fmt.Errorf("identification method not yet selected"))
 	}

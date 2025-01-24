@@ -3,9 +3,10 @@ package config
 import (
 	"encoding/json"
 
+	"github.com/lestrrat-go/jwx/v2/jwk"
+
 	"github.com/authgear/authgear-server/pkg/util/jwkutil"
 	"github.com/authgear/authgear-server/pkg/util/slice"
-	"github.com/lestrrat-go/jwx/v2/jwk"
 )
 
 var _ = SecretConfigSchema.Add("DatabaseCredentials", `
@@ -83,6 +84,27 @@ type ElasticsearchCredentials struct {
 
 func (c *ElasticsearchCredentials) SensitiveStrings() []string {
 	return []string{c.ElasticsearchURL}
+}
+
+var _ = SecretConfigSchema.Add("SearchDatabaseCredentials", `
+{
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"database_url": { "type": "string" },
+		"database_schema": { "type": "string" }
+	},
+	"required": ["database_url"]
+}
+`)
+
+type SearchDatabaseCredentials struct {
+	DatabaseURL    string `json:"database_url,omitempty"`
+	DatabaseSchema string `json:"database_schema,omitempty"`
+}
+
+func (c *SearchDatabaseCredentials) SensitiveStrings() []string {
+	return []string{c.DatabaseURL}
 }
 
 var _ = SecretConfigSchema.Add("RedisCredentials", `
@@ -281,17 +303,6 @@ func (c *NexmoCredentials) SensitiveStrings() []string {
 		c.APISecret,
 	}
 }
-
-var _ = SecretConfigSchema.Add("JWK", `
-{
-	"type": "object",
-	"properties": {
-		"kid": { "type": "string" },
-		"kty": { "type": "string" }
-	},
-	"required": ["kid", "kty"]
-}
-`)
 
 var _ = SecretConfigSchema.Add("JWS", `
 {

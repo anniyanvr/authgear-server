@@ -10,17 +10,23 @@ type SentryDSN string
 
 type AuthUISentryDSN string
 
+type AuthUIWindowMessageAllowedOrigins []string
+
 type ImagesCDNHost string
 
 type WebAppCDNHost string
 
 type CORSAllowedOrigins string
 
-type NFTIndexerAPIEndpoint string
-
 type DenoEndpoint string
 
 type AppHostSuffixes []string
+
+type AllowedFrameAncestors []string
+
+type GlobalUIImplementation UIImplementation
+
+type GlobalUISettingsImplementation SettingsUIImplementation
 
 func (s AppHostSuffixes) CheckIsDefaultDomain(host string) bool {
 	for _, suffix := range s {
@@ -54,6 +60,8 @@ type EnvironmentConfig struct {
 	SentryDSN SentryDSN `envconfig:"SENTRY_DSN"`
 	// AuthUISentryDSN sets the sentry DSN for auth ui.
 	AuthUISentryDSN AuthUISentryDSN `envconfig:"AUTH_UI_SENTRY_DSN"`
+	// Origins that are allowd to post message to authui
+	AuthUIWindowMessageAllowedOrigins AuthUIWindowMessageAllowedOrigins `envconfig:"AUTH_UI_WINDOW_MESSAGE_ALLOWED_ORIGINS"`
 	// GlobalDatabase configures the global database
 	GlobalDatabase GlobalDatabaseCredentialsEnvironmentConfig `envconfig:"DATABASE"`
 	// AuditDatabase configures the audit database
@@ -71,12 +79,34 @@ type EnvironmentConfig struct {
 	// CORSAllowOrigins configures a comma-separated list of allowed origins for CORSMiddleware
 	CORSAllowedOrigins CORSAllowedOrigins `envconfig:"CORS_ALLOWED_ORIGINS"`
 
-	NFTIndexerAPIEndpoint NFTIndexerAPIEndpoint `envconfig:"NFT_INDEXER_API_ENDPOINT"`
+	AllowedFrameAncestors AllowedFrameAncestors `envconfig:"ALLOWED_FRAME_ANCESTORS"`
+
+	// NFT_INDEXER_API_ENDPOINT is deprecated. It is ignored.
+	// Deprecated_NFTIndexerAPIEndpoint NFTIndexerAPIEndpoint `envconfig:"NFT_INDEXER_API_ENDPOINT"`
 
 	DenoEndpoint DenoEndpoint `envconfig:"DENO_ENDPOINT"`
 
 	RateLimits RateLimitsEnvironmentConfig `envconfig:"RATE_LIMITS"`
 
+	SAML SAMLEnvironmentConfig `envconfig:"SAML"`
+
 	// AppHostSuffixes originates from the portal config.
 	AppHostSuffixes AppHostSuffixes `envconfig:"APP_HOST_SUFFIXES"`
+
+	// End2EndHTTPProxy sets the HTTP proxy for end-to-end tests
+	End2EndHTTPProxy string `envconfig:"E2E_HTTP_PROXY"`
+	// End2EndTLSCACertFile sets additional CA certificate for end-to-end tests
+	End2EndTLSCACertFile string `envconfig:"E2E_TLS_CA_CERT_FILE"`
+	// End2EndBotProtection sets mocked endpoints for bot protection providers verification
+	End2EndBotProtection End2EndBotProtectionEnvironmentConfig `envconfig:"E2E_BOT_PROTECTION"`
+	// End2EndCSRFProtectionDisabled turns off csrf protection
+	End2EndCSRFProtectionDisabled bool `envconfig:"E2E_CSRF_PROTECTION_DISABLED"`
+
+	UIImplementation GlobalUIImplementation `envconfig:"UI_IMPLEMENTATION"`
+
+	UISettingsImplementation GlobalUISettingsImplementation `envconfig:"UI_SETTINGS_IMPLEMENTATION"`
+
+	UserExportObjectStore *UserExportObjectStoreConfig `envconfig:"USEREXPORT_OBJECT_STORE"`
+
+	SMSGatewayConfig SMSGatewayEnvironmentConfig `envconfig:"SMS_GATEWAY"`
 }

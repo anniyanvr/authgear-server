@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -15,7 +16,7 @@ import (
 
 var TemplateWebSettingsRecoveryCodeHTML = template.RegisterHTML(
 	"web/settings_recovery_code.html",
-	components...,
+	Components...,
 )
 
 func ConfigureSettingsRecoveryCodeRoute(route httproute.Route) httproute.Route {
@@ -36,14 +37,14 @@ type SettingsRecoveryCodeHandler struct {
 	MFA               SettingsMFAService
 }
 
-func (h *SettingsRecoveryCodeHandler) GetData(r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
+func (h *SettingsRecoveryCodeHandler) GetData(ctx context.Context, r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
 	data := map[string]interface{}{}
 	baseViewModel := h.BaseViewModel.ViewModel(r, rw)
-	userID := *session.GetUserID(r.Context())
+	userID := *session.GetUserID(ctx)
 
 	viewModel := SettingsRecoveryCodeViewModel{}
 	if h.Authentication.RecoveryCode.ListEnabled {
-		codes, err := h.MFA.ListRecoveryCodes(userID)
+		codes, err := h.MFA.ListRecoveryCodes(ctx, userID)
 		if err != nil {
 			return nil, err
 		}
@@ -52,7 +53,7 @@ func (h *SettingsRecoveryCodeHandler) GetData(r *http.Request, rw http.ResponseW
 		for i, code := range codes {
 			recoveryCodes[i] = code.Code
 		}
-		viewModel.RecoveryCodes = formatRecoveryCodes(recoveryCodes)
+		viewModel.RecoveryCodes = FormatRecoveryCodes(recoveryCodes)
 	}
 
 	viewmodels.Embed(data, baseViewModel)
@@ -67,20 +68,20 @@ func (h *SettingsRecoveryCodeHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
 	redirectURI := httputil.HostRelative(r.URL).String()
-	userID := ctrl.RequireUserID()
+	userID := ctrl.RequireUserID(r.Context())
 
 	listEnabled := !*h.Authentication.RecoveryCode.Disabled && h.Authentication.RecoveryCode.ListEnabled
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		if !listEnabled {
 			http.Redirect(w, r, "/settings/mfa", http.StatusFound)
 			return nil
 		}
 
-		data, err := h.GetData(r, w)
+		data, err := h.GetData(ctx, r, w)
 		if err != nil {
 			return err
 		}
@@ -89,23 +90,23 @@ func (h *SettingsRecoveryCodeHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		return nil
 	})
 
-	ctrl.PostAction("download", func() error {
+	ctrl.PostAction("download", func(ctx context.Context) error {
 		if !h.Authentication.RecoveryCode.ListEnabled {
 			http.Error(w, "listing recovery code is disabled", http.StatusForbidden)
 			return nil
 		}
 
-		data, err := h.GetData(r, w)
+		data, err := h.GetData(ctx, r, w)
 		if err != nil {
 			return err
 		}
 
-		setRecoveryCodeAttachmentHeaders(w)
+		SetRecoveryCodeAttachmentHeaders(w)
 		h.Renderer.Render(w, r, TemplateWebDownloadRecoveryCodeTXT, data)
 		return nil
 	})
 
-	ctrl.PostAction("regenerate", func() error {
+	ctrl.PostAction("regenerate", func(ctx context.Context) error {
 		if !h.Authentication.RecoveryCode.ListEnabled {
 			http.Error(w, "regenerate recovery code is disabled", http.StatusForbidden)
 			return nil
@@ -116,7 +117,7 @@ func (h *SettingsRecoveryCodeHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		}
 		intent := intents.NewIntentRegenerateRecoveryCode(userID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			return nil, nil
 		})
 		if err != nil {

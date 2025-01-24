@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -16,7 +17,7 @@ func ConfigureErrorRoute(route httproute.Route) httproute.Route {
 
 var TemplateWebFatalErrorHTML = template.RegisterHTML(
 	"web/fatal_error.html",
-	components...,
+	Components...,
 )
 
 type ErrorHandler struct {
@@ -38,9 +39,9 @@ func (h *ErrorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		data, err := h.GetData(r, w)
 		if err != nil {
 			return err

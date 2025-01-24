@@ -11,11 +11,13 @@ import (
 	"github.com/authgear/authgear-server/pkg/auth/api"
 	handlerwebapp "github.com/authgear/authgear-server/pkg/auth/handler/webapp"
 	"github.com/authgear/authgear-server/pkg/auth/webapp"
+	"github.com/authgear/authgear-server/pkg/lib/accountmanagement"
+	"github.com/authgear/authgear-server/pkg/lib/authenticationflow"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
 	"github.com/authgear/authgear-server/pkg/lib/deps"
+	"github.com/authgear/authgear-server/pkg/lib/dpop"
 	"github.com/authgear/authgear-server/pkg/lib/infra/middleware"
 	"github.com/authgear/authgear-server/pkg/lib/session"
-	"github.com/authgear/authgear-server/pkg/lib/uiparam"
 	"github.com/authgear/authgear-server/pkg/lib/workflow"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 )
@@ -50,13 +52,6 @@ func newBodyLimitMiddleware(p *deps.RootProvider) httproute.Middleware {
 	))
 }
 
-func newUIParamMiddleware(p *deps.RequestProvider) httproute.Middleware {
-	panic(wire.Build(
-		DependencySet,
-		wire.Bind(new(httproute.Middleware), new(*uiparam.Middleware)),
-	))
-}
-
 func newPanicWebAppMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	panic(wire.Build(
 		DependencySet,
@@ -78,7 +73,18 @@ func newCORSMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	))
 }
 
-func newDynamicCSPMiddleware(p *deps.RequestProvider, allowInlineScript webapp.AllowInlineScript, allowFrameAncestors webapp.AllowFrameAncestors) httproute.Middleware {
+func newContextHolderMiddleware(p *deps.RequestProvider) httproute.Middleware {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(httproute.Middleware), new(*webapp.ContextHolderMiddleware)),
+	))
+}
+
+func newDynamicCSPMiddleware(
+	p *deps.RequestProvider,
+	allowFrameAncestorsFromEnv webapp.AllowFrameAncestorsFromEnv,
+	allowFrameAncestorsFromCustomUI webapp.AllowFrameAncestorsFromCustomUI,
+) httproute.Middleware {
 	panic(wire.Build(
 		DependencySet,
 		wire.Bind(new(httproute.Middleware), new(*webapp.DynamicCSPMiddleware)),
@@ -88,7 +94,14 @@ func newDynamicCSPMiddleware(p *deps.RequestProvider, allowInlineScript webapp.A
 func newCSRFMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	panic(wire.Build(
 		DependencySet,
-		wire.Bind(new(httproute.Middleware), new(*webapp.CSRFMiddleware)),
+		wire.Bind(new(httproute.Middleware), new(*handlerwebapp.CSRFMiddleware)),
+	))
+}
+
+func newCSRFDebugMiddleware(p *deps.RequestProvider) httproute.Middleware {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(httproute.Middleware), new(*webapp.CSRFDebugMiddleware)),
 	))
 }
 
@@ -99,7 +112,7 @@ func newAuthEntryPointMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	))
 }
 
-func newSessionMiddleware(p *deps.RequestProvider, idpSessionOnly bool) httproute.Middleware {
+func newSessionMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	panic(wire.Build(
 		DependencySet,
 		wire.Bind(new(httproute.Middleware), new(*session.Middleware)),
@@ -190,9 +203,44 @@ func newWorkflowIntlMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	))
 }
 
+func newAuthenticationFlowIntlMiddleware(p *deps.RequestProvider) httproute.Middleware {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(httproute.Middleware), new(*authenticationflow.IntlMiddleware)),
+	))
+}
+
+func newAuthenticationFlowRateLimitMiddleware(p *deps.RequestProvider) httproute.Middleware {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(httproute.Middleware), new(*authenticationflow.RateLimitMiddleware)),
+	))
+}
+
+func newAccountManagementRateLimitMiddleware(p *deps.RequestProvider) httproute.Middleware {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(httproute.Middleware), new(*accountmanagement.RateLimitMiddleware)),
+	))
+}
+
 func newImplementationSwitcherMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	panic(wire.Build(
 		DependencySet,
 		wire.Bind(new(httproute.Middleware), new(*handlerwebapp.ImplementationSwitcherMiddleware)),
+	))
+}
+
+func newSettingImplementationSwitcherMiddleware(p *deps.RequestProvider) httproute.Middleware {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(httproute.Middleware), new(*handlerwebapp.SettingsImplementationSwitcherMiddleware)),
+	))
+}
+
+func newDPoPMiddleware(p *deps.RequestProvider) httproute.Middleware {
+	panic(wire.Build(
+		DependencySet,
+		wire.Bind(new(httproute.Middleware), new(*dpop.Middleware)),
 	))
 }

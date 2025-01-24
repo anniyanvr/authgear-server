@@ -1,0 +1,141 @@
+@layer components {
+  :root {
+    --otp-input__spacing: 21px;
+    --otp-input__bg-color: transparent;
+
+    --otp-input__digit-color: var(--color-neutral-700);
+    --otp-input__digit-ring-color: var(--color-neutral-200);
+    --otp-input__digit-ring-color--focus: var(--color-primary-theme-primary);
+    --otp-input__digit-ring-color--error: var(--color-error);
+    --otp-input__digit-ring-width: 1.5px;
+    --otp-input__digit-ring-width--focus: 1.5px;
+    --otp-input__digit-ring-width--error: 1.5px;
+    --otp-input__digit-border-radius: var(--border-radius-rounded-large);
+    --otp-input__digit-width: 2.5rem;
+    --otp-input__digit-height: 2.75rem;
+
+    /* Not actually using css-masks features, ignoring stylelint false positive */
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features */
+    --otp-input__digit-mask-color: var(--color-neutral-700);
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features */
+    --otp-input__digit-mask-size: 0.625rem;
+
+    --otp-input__dev-1511-color-transparent: transparent;
+
+    --otp-input-error-message__margin-top: 0.5rem;
+    --otp-input-error-message__text-color: var(--color-error);
+    --otp-input-error-message__font-family: var(
+      --typography-body-medium__font-family
+    );
+    --otp-input-error-message__font-size: var(
+      --typography-body-medium__font-size
+    );
+    --otp-input-error-message__line-height: var(
+      --typography-body-medium__line-height
+    );
+    --otp-input-error-message__letter-spacing: var(
+      --typography-body-medium__letter-spacing
+    );
+    --otp-input-error-message__font-weight: var(
+      --typography-body-medium__font-weight
+    );
+  }
+
+  :root.dark {
+    --otp-input__digit-ring-color: var(--color-neutral-500);
+    --otp-input__digit-color: var(--color-neutral-100);
+    /* Not actually using css-masks features, ignoring stylelint false positive */
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features */
+    --otp-input__digit-mask-color: var(--color-neutral-100);
+  }
+
+  .otp-input {
+    @apply relative;
+    @apply w-full;
+
+    input {
+      @apply w-full;
+
+      &.with-js {
+        height: var(--otp-input__digit-height);
+        @apply outline-none;
+        @apply selection:bg-white/0;
+        @apply caret-white/0;
+        /* iOS treats element with `opacity: 0` as not interactable, set text to transparent instead */
+        @apply text-transparent;
+        /* https://linear.app/authgear/issue/DEV-1511 */
+        /* When iOS autofills a code from SMS, the filled text will use -webkit-text-fill-color */
+        /* instead of color as text color, so we need to set both property to transparent. */
+        /* Simple transparent does not work on safari so we have to use var() here https://stackoverflow.com/questions/31289537/webkit-text-fill-color-transparent-not-working-in-safari-7-1-7  */
+        -webkit-text-fill-color: var(--otp-input__dev-1511-color-transparent);
+        background-color: var(--otp-input__bg-color);
+      }
+    }
+  }
+
+  .otp-input__digits-container {
+    @apply absolute;
+    @apply inset-0;
+    @apply flex;
+    @apply items-stretch;
+    @apply gap-x-[var(--otp-input\_\_spacing)];
+    @apply pointer-events-none;
+  }
+
+  .otp-input__digit {
+    @apply relative;
+    @apply flex;
+    @apply items-center;
+    @apply justify-center;
+
+    width: var(--otp-input__digit-width);
+    height: var(--otp-input__digit-height);
+    border-radius: var(--otp-input__digit-border-radius);
+    color: var(--otp-input__digit-color);
+
+    @apply ring-inset
+      ring-[length:var(--otp-input\_\_digit-ring-width)]
+      ring-[color:var(--otp-input\_\_digit-ring-color)];
+
+    &.otp-input__digit--masked {
+      &::before {
+        content: "";
+        @apply absolute;
+        @apply left-1/2;
+        @apply transform;
+        @apply -translate-x-1/2;
+        @apply rounded-full;
+
+        width: var(--otp-input__digit-mask-size);
+        height: var(--otp-input__digit-mask-size);
+        background-color: var(--otp-input__digit-mask-color);
+      }
+    }
+
+    &.otp-input__digit--focus {
+      @apply ring-inset
+        ring-[length:var(--otp-input\_\_digit-ring-width--focus)]
+        ring-[color:var(--otp-input\_\_digit-ring-color--focus)];
+    }
+  }
+
+  .otp-input__error-message {
+    margin-top: var(--otp-input-error-message__margin-top);
+    color: var(--otp-input-error-message__text-color);
+    font-family: var(--otp-input-error-message__font-family);
+    font-size: var(--otp-input-error-message__font-size);
+    line-height: var(--otp-input-error-message__line-height);
+    letter-spacing: var(--otp-input-error-message__letter-spacing);
+    font-weight: var(--otp-input-error-message__font-weight);
+  }
+
+  .otp-input {
+    &.otp-input--error {
+      .otp-input__digit {
+        @apply ring-inset
+          ring-[length:var(--otp-input\_\_digit-ring-width--error)]
+          ring-[color:var(--otp-input\_\_digit-ring-color--error)];
+      }
+    }
+  }
+}

@@ -13,16 +13,16 @@ type Controller struct {
 	logger *log.Logger
 }
 
-func (c *Controller) Start() {
+func (c *Controller) Start(ctx context.Context) {
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		golog.Fatalf("failed to load config: %v", err)
 	}
 
 	p, err := deps.NewBackgroundProvider(
+		ctx,
 		cfg.EnvironmentConfig,
 		cfg.ConfigSource,
-		cfg.BuiltinResourceDirectory,
 		cfg.CustomResourceDirectory,
 	)
 	if err != nil {
@@ -32,16 +32,16 @@ func (c *Controller) Start() {
 	// From now, we should use c.logger to log.
 	c.logger = p.LoggerFactory.New("background")
 
-	configSrcController := newConfigSourceController(p, context.Background())
-	err = configSrcController.Open()
+	configSrcController := newConfigSourceController(p)
+	err = configSrcController.Open(ctx)
 	if err != nil {
 		c.logger.WithError(err).Fatal("cannot open configuration")
 	}
 	defer configSrcController.Close()
 
 	runners := []*backgroundjob.Runner{
-		newAccountDeletionRunner(p, context.Background(), configSrcController),
-		newAccountAnonymizationRunner(p, context.Background(), configSrcController),
+		newAccountDeletionRunner(ctx, p, configSrcController),
+		newAccountAnonymizationRunner(ctx, p, configSrcController),
 	}
-	backgroundjob.Main(c.logger, runners)
+	backgroundjob.Main(ctx, c.logger, runners)
 }

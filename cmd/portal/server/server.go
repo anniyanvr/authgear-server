@@ -9,6 +9,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/log"
 	"github.com/authgear/authgear-server/pkg/util/pprofutil"
 	"github.com/authgear/authgear-server/pkg/util/server"
+	"github.com/authgear/authgear-server/pkg/util/signalutil"
 	"github.com/authgear/authgear-server/pkg/version"
 )
 
@@ -16,7 +17,7 @@ type Controller struct {
 	logger *log.Logger
 }
 
-func (c *Controller) Start() {
+func (c *Controller) Start(ctx context.Context) {
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		golog.Fatalf("failed to load server config: %s", err)
@@ -24,9 +25,7 @@ func (c *Controller) Start() {
 
 	p, err := deps.NewRootProvider(
 		cfg.EnvironmentConfig,
-		cfg.BuiltinResourceDirectory,
 		cfg.CustomResourceDirectory,
-		cfg.App.BuiltinResourceDirectory,
 		cfg.App.CustomResourceDirectory,
 		cfg.ConfigSource,
 		&cfg.Authgear,
@@ -37,10 +36,10 @@ func (c *Controller) Start() {
 		&cfg.Kubernetes,
 		cfg.DomainImplementation,
 		&cfg.Search,
-		&cfg.Web3,
 		&cfg.AuditLog,
 		&cfg.Analytic,
 		&cfg.Stripe,
+		&cfg.Osano,
 		&cfg.GoogleTagManager,
 		&cfg.PortalFrontendSentry,
 	)
@@ -57,8 +56,8 @@ func (c *Controller) Start() {
 		c.logger.Warn("development mode is ON - do not use in production")
 	}
 
-	configSrcController := newConfigSourceController(p, context.Background())
-	err = configSrcController.Open()
+	configSrcController := newConfigSourceController(p)
+	err = configSrcController.Open(ctx)
 	if err != nil {
 		c.logger.WithError(err).Fatal("cannot open configuration")
 	}
@@ -66,16 +65,16 @@ func (c *Controller) Start() {
 
 	p.ConfigSourceController = configSrcController
 
-	var specs []server.Spec
-	specs = append(specs, server.Spec{
-		Name:          "portal server",
+	var specs []signalutil.Daemon
+	specs = append(specs, server.NewSpec(ctx, &server.Spec{
+		Name:          "authgear-portal",
 		ListenAddress: cfg.PortalListenAddr,
 		Handler:       portal.NewRouter(p),
-	})
-	specs = append(specs, server.Spec{
-		Name:          "portal internal server",
+	}))
+	specs = append(specs, server.NewSpec(ctx, &server.Spec{
+		Name:          "authgear-portal-internal",
 		ListenAddress: cfg.PortalInternalListenAddr,
 		Handler:       pprofutil.NewServeMux(),
-	})
-	server.Start(c.logger, specs)
+	}))
+	signalutil.Start(ctx, c.logger, specs...)
 }

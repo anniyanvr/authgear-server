@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/authgear/authgear-server/pkg/util/log"
 )
@@ -44,10 +44,11 @@ type HTTPHandler struct {
 	OriginMatcher WebsocketOriginMatcher
 }
 
+//nolint:gocognit
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logger := h.LoggerFactory.New("pubsub-http-handler")
 
-	rootCtx, cancel := context.WithCancel(context.Background())
+	rootCtx, cancel := context.WithCancel(r.Context())
 	doneChan := make(chan struct{}, 2)
 	errChan := make(chan error, 2)
 

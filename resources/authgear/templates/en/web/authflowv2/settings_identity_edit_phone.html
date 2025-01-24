@@ -1,0 +1,87 @@
+{{ template "authflowv2/__settings_page_frame.html" . }}
+
+{{ define "page-navbar" }}
+  {{ template "authflowv2/__navbar.html"
+     (dict
+        "BackTitle" (translate "v2.component.navbar.default.item-back-button-label" nil)
+        "BackHref" (call $.MakeBackURL "/settings/identity/view_phone" "q_login_id_key" $.LoginIDKey "q_identity_id" $.IdentityID)
+        "Title" (translate "v2.page.settings-identity-edit-phone.default.title" nil)
+     )
+  }}
+{{ end }}
+
+{{ define "page-content" }}
+
+{{ $err_map := (resolveError $.RawError (dict
+  "otpInput" (dict
+    "by_reason"                    (list "ValidationFailed")
+  )
+)) }}
+
+{{ $otp_err := index $err_map "otpInput" }}
+{{ $unknown_err := index $err_map "unknown" }}
+{{ $has_otp_err := not (isNil $otp_err) }}
+{{ $has_unknown_err := not (isNil $unknown_err )}}
+
+{{ $otp_error_message := "" }}
+{{ if $has_otp_err }}
+  {{ $otp_error_message = include "authflowv2/__error.html" (merge (dict "Error" $otp_err) $) }}
+{{ end }}
+
+<form
+  class="settings-content settings-content-form pb-5 tablet:pb-0"
+  method="post"
+  novalidate
+  data-controller="turbo-form"
+  data-action="submit->turbo-form#submitForm">
+
+  {{ $.CSRFField }}
+
+  <input type="hidden" name="x_channel" value="{{ $.Channel }}">
+  <div class="settings-content-form-fields">
+    <span class="screen-description">
+      {{ include "v2.page.settings-identity-edit-phone.default.description"
+        (dict "target" (include "__settings_identity_edit_phone_inline_bold.html" .Target.OriginalLoginID))
+      }}
+    </span>
+
+    {{ template "authflowv2/__phone_input.html"
+      (dict
+        "Placeholder" (include "v2.page.settings-identity-edit-phone.default.phone-input-placeholder" nil)
+        "IsError" $has_otp_err
+        "AutoFocus" $.ShouldFocusInput
+        "PhoneInputAttrs" `
+          data-text-field-target="input"
+        `
+        "InputName" "x_login_id"
+      )
+    }}
+
+    {{ if $has_otp_err }}
+    <p class="input__error-message mt-2">
+      {{ $otp_error_message }}
+    </p>
+    {{ end }}
+  </div>
+
+  <input
+    type="hidden"
+    name="x_identity_id"
+    value="{{ .Target.ID }}"
+  />
+
+  <button
+    class="primary-btn"
+    type="submit"
+    name="x_action"
+    data-authgear-event="authgear.button.change_login_id"
+  >
+    {{ translate "v2.component.button.default.label-continue" nil }}
+  </button>
+</form>
+
+{{ end }}
+
+{{ define "__settings_identity_edit_phone_inline_bold.html" }}
+  <b>{{ . }}</b>
+{{ end }}

@@ -12,7 +12,7 @@ import {
   useTheme,
   DialogFooter,
 } from "@fluentui/react";
-import produce from "immer";
+import { produce } from "immer";
 import ShowError from "../../ShowError";
 import ShowLoading from "../../ShowLoading";
 import ScreenContent from "../../ScreenContent";
@@ -63,6 +63,7 @@ import DefaultButton from "../../DefaultButton";
 import { useSystemConfig } from "../../context/SystemConfigContext";
 import { AppSecretKey } from "./globalTypes.generated";
 import { useAppSecretVisitToken } from "./mutations/generateAppSecretVisitTokenMutation";
+import HorizontalDivider from "../../HorizontalDivider";
 
 const CODE_EDITOR_OPTIONS = {
   minimap: {
@@ -78,7 +79,9 @@ const BLOCKING_EVENT_NAME_TO_TYPE_NAME: Record<string, string | undefined> = {
   "oidc.jwt.pre_create": "EventOIDCJWTPreCreate",
 };
 
-const DENOHOOK_NONBLOCKING_DEFAULT = `import { HookEvent } from "https://deno.land/x/authgear_deno_hook@v1.1.0/mod.ts";
+const authgear_deno_hook_version = "v1.4.0";
+
+const DENOHOOK_NONBLOCKING_DEFAULT = `import { HookEvent } from "https://deno.land/x/authgear_deno_hook@${authgear_deno_hook_version}/mod.ts";
 
 export default async function(e: HookEvent): Promise<void> {
   // Write your hook with the help of the type definition.
@@ -101,7 +104,7 @@ export default async function(e: HookEvent): Promise<void> {
 
 function makeDefaultDenoHookBlockingScript(event: string): string {
   const typeName = BLOCKING_EVENT_NAME_TO_TYPE_NAME[event] ?? "HookEvent";
-  return `import { ${typeName}, HookResponse } from "https://deno.land/x/authgear_deno_hook@v1.1.0/mod.ts";
+  return `import { ${typeName}, HookResponse } from "https://deno.land/x/authgear_deno_hook@${authgear_deno_hook_version}/mod.ts";
 
 export default async function(e: ${typeName}): Promise<HookResponse> {
   // Write your hook with the help of the type definition.
@@ -679,7 +682,6 @@ interface CodeEditorState {
 }
 
 const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentProps> =
-  // eslint-disable-next-line complexity
   function HookConfigurationScreenContent(props) {
     const { appID } = useParams() as { appID: string };
     const { renderToString } = useContext(Context);
@@ -744,9 +746,9 @@ const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentPr
         resources.reset();
         config.reset();
       },
-      save: async () => {
-        await resources.save();
-        await config.save();
+      save: async (ignoreConflict: boolean = false) => {
+        await resources.save(ignoreConflict);
+        await config.save(ignoreConflict);
       },
     };
 
@@ -780,7 +782,6 @@ const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentPr
           }
 
           setState((prev) =>
-            // eslint-disable-next-line complexity
             produce(prev, (prev) => {
               switch (eventKind) {
                 case "blocking": {
@@ -872,7 +873,6 @@ const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentPr
       [setState]
     );
 
-    // eslint-disable-next-line complexity
     const code = useMemo(() => {
       if (codeEditorState == null) {
         return "";
@@ -1071,6 +1071,7 @@ const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentPr
       [navigate, state.secret]
     );
 
+    // eslint-disable-next-line no-useless-assignment
     const { copyButtonProps, Feedback } = useCopyFeedback({
       textToCopy: state.secret ?? "",
     });
@@ -1138,7 +1139,12 @@ const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentPr
     }, [state.diff, state.non_blocking_handlers]);
 
     return (
-      <FormContainer form={form} hideCommandBar={codeEditorState != null}>
+      <FormContainer
+        form={form}
+        hideFooterComponent={codeEditorState != null}
+        stickyFooterComponent={true}
+        showDiscardButton={true}
+      >
         <ScreenContent>
           {codeEditorState != null ? (
             <div className={cn(styles.codeEditorContainer)}>
@@ -1263,7 +1269,9 @@ const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentPr
                   />
                 ) : null}
               </Widget>
-
+              <Widget className={styles.widget}>
+                <HorizontalDivider />
+              </Widget>
               <Widget className={styles.widget}>
                 <WidgetTitle>
                   <FormattedMessage id="HookConfigurationScreen.non-blocking-events" />
@@ -1339,7 +1347,7 @@ const HookConfigurationScreenContent: React.VFC<HookConfigurationScreenContentPr
                   />
                 ) : null}
               </Widget>
-
+              <HorizontalDivider className={styles.separator} />
               <Widget className={styles.widget}>
                 <WidgetTitle>
                   <FormattedMessage id="HookConfigurationScreen.hook-settings" />

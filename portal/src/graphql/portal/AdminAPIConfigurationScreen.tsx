@@ -41,6 +41,7 @@ import { useIsLoading, useLoading } from "../../hook/loading";
 import { useProvideError } from "../../hook/error";
 import { AppSecretKey } from "./globalTypes.generated";
 import { useAppSecretVisitToken } from "./mutations/generateAppSecretVisitTokenMutation";
+import HorizontalDivider from "../../HorizontalDivider";
 
 interface AdminAPIConfigurationScreenContentProps {
   appID: string;
@@ -280,7 +281,7 @@ const AdminAPIConfigurationScreenContent: React.VFC<AdminAPIConfigurationScreenC
           key: "createdAt",
           fieldName: "createdAt",
           name: renderToString("AdminAPIConfigurationScreen.column.created-at"),
-          minWidth: 150,
+          minWidth: 220,
         },
         {
           key: "action",
@@ -319,6 +320,7 @@ const AdminAPIConfigurationScreenContent: React.VFC<AdminAPIConfigurationScreenC
                 <Feedback />
               </div>
             </Widget>
+            <HorizontalDivider className={styles.separator} />
             <Widget className={styles.widget}>
               <WidgetTitle>
                 <FormattedMessage id="AdminAPIConfigurationScreen.graphiql.title" />
@@ -336,6 +338,7 @@ const AdminAPIConfigurationScreenContent: React.VFC<AdminAPIConfigurationScreenC
                 <FormattedMessage id="AdminAPIConfigurationScreen.graphiql.warning" />
               </MessageBar>
             </Widget>
+            <HorizontalDivider className={styles.separator} />
             <Widget className={styles.widget}>
               <WidgetTitle>
                 <FormattedMessage id="AdminAPIConfigurationScreen.keys.title" />
@@ -418,7 +421,10 @@ const AdminAPIConfigurationScreen1: React.VFC<{
         action: "generate",
       },
     };
-    await updateAppAndSecretConfig(appConfig, generateKeyInstruction);
+    await updateAppAndSecretConfig({
+      appConfig,
+      secretConfigUpdateInstructions: generateKeyInstruction,
+    });
     await refetchAppAndSecret();
   }, [queryResult.rawAppConfig, updateAppAndSecretConfig, refetchAppAndSecret]);
 
@@ -436,7 +442,10 @@ const AdminAPIConfigurationScreen1: React.VFC<{
           },
         },
       };
-      await updateAppAndSecretConfig(appConfig, deleteKeyInstruction);
+      await updateAppAndSecretConfig({
+        appConfig,
+        secretConfigUpdateInstructions: deleteKeyInstruction,
+      });
       await refetchAppAndSecret();
     },
     [queryResult.rawAppConfig, updateAppAndSecretConfig, refetchAppAndSecret]

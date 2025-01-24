@@ -1,6 +1,8 @@
 package nodes
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
@@ -9,6 +11,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/feature/verification"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
 )
 
 func init() {
@@ -24,7 +27,7 @@ type EdgeVerifyIdentity struct {
 	RequestedByUser bool
 }
 
-func (e *EdgeVerifyIdentity) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
+func (e *EdgeVerifyIdentity) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
 	var input InputVerifyIdentity
 	if !interaction.Input(rawInput, &input) {
 		return nil, interaction.ErrIncompatibleInput
@@ -34,7 +37,7 @@ func (e *EdgeVerifyIdentity) Instantiate(ctx *interaction.Context, graph *intera
 		Identity:        e.Identity,
 		RequestedByUser: e.RequestedByUser,
 	}
-	result, err := node.SendCode(ctx, true)
+	result, err := node.SendCode(goCtx, ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -79,24 +82,24 @@ func (n *NodeVerifyIdentity) GetRequestedByUser() bool {
 	return n.RequestedByUser
 }
 
-func (n *NodeVerifyIdentity) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeVerifyIdentity) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeVerifyIdentity) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeVerifyIdentity) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return nil, nil
 }
 
-func (n *NodeVerifyIdentity) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
+func (n *NodeVerifyIdentity) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
 	return []interaction.Edge{
 		&EdgeVerifyIdentityCheckCode{Identity: n.Identity},
 		&EdgeVerifyIdentityResendCode{Node: n},
 	}, nil
 }
 
-func (n *NodeVerifyIdentity) SendCode(ctx *interaction.Context, ignoreRatelimitError bool) (*SendOOBCodeResult, error) {
+func (n *NodeVerifyIdentity) SendCode(goCtx context.Context, ctx *interaction.Context, ignoreRatelimitError bool) (*SendOOBCodeResult, error) {
 	loginIDType := n.Identity.LoginID.LoginIDType
-	channel, target := n.Identity.LoginID.ToChannelTarget()
+	channel, target := n.Identity.LoginID.Deprecated_ToChannelTarget()
 
 	result := &SendOOBCodeResult{
 		Channel:    string(channel),
@@ -104,16 +107,15 @@ func (n *NodeVerifyIdentity) SendCode(ctx *interaction.Context, ignoreRatelimitE
 		CodeLength: otp.FormCode.CodeLength(),
 	}
 
-	msg, err := ctx.OTPSender.Prepare(channel, target, otp.FormCode, otp.MessageTypeVerification)
-	if ignoreRatelimitError && apierrors.IsKind(err, ratelimit.RateLimited) {
-		// Ignore the rate limit error and do NOT send the code.
-		return result, nil
-	} else if err != nil {
-		return nil, err
+	// disallow sending sms verification code if phone identity is disabled
+	fc := ctx.FeatureConfig
+	if model.LoginIDKeyType(loginIDType) == model.LoginIDKeyTypePhone {
+		if fc.Identity.LoginID.Types.Phone.Disabled {
+			return nil, feature.ErrFeatureDisabledSendingSMS
+		}
 	}
-	defer msg.Close()
 
-	code, err := ctx.OTPCodeService.GenerateOTP(
+	code, err := ctx.OTPCodeService.GenerateOTP(goCtx,
 		otp.KindVerification(ctx.Config, channel),
 		target,
 		otp.FormCode,
@@ -126,16 +128,20 @@ func (n *NodeVerifyIdentity) SendCode(ctx *interaction.Context, ignoreRatelimitE
 		return nil, err
 	}
 
-	// disallow sending sms verification code if phone identity is disabled
-	fc := ctx.FeatureConfig
-	if model.LoginIDKeyType(loginIDType) == model.LoginIDKeyTypePhone {
-		if fc.Identity.LoginID.Types.Phone.Disabled {
-			return nil, feature.ErrFeatureDisabledSendingSMS
-		}
-	}
-
-	err = ctx.OTPSender.Send(msg, otp.SendOptions{OTP: code})
-	if err != nil {
+	err = ctx.OTPSender.Send(
+		goCtx,
+		otp.SendOptions{
+			Channel: channel,
+			Target:  target,
+			Form:    otp.FormCode,
+			Type:    translation.MessageTypeVerification,
+			OTP:     code,
+		},
+	)
+	if ignoreRatelimitError && apierrors.IsKind(err, ratelimit.RateLimited) {
+		// Ignore the rate limit error and do NOT send the code.
+		return result, nil
+	} else if err != nil {
 		return nil, err
 	}
 
@@ -150,15 +156,15 @@ type EdgeVerifyIdentityCheckCode struct {
 	Identity *identity.Info
 }
 
-func (e *EdgeVerifyIdentityCheckCode) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
+func (e *EdgeVerifyIdentityCheckCode) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
 	var input InputVerifyIdentityCheckCode
 	if !interaction.Input(rawInput, &input) {
 		return nil, interaction.ErrIncompatibleInput
 	}
 	loginIDModel := e.Identity.LoginID
-	channel, target := loginIDModel.ToChannelTarget()
+	channel, target := loginIDModel.Deprecated_ToChannelTarget()
 
-	err := ctx.OTPCodeService.VerifyOTP(
+	err := ctx.OTPCodeService.VerifyOTP(goCtx,
 		otp.KindVerification(ctx.Config, channel),
 		target,
 		input.GetVerificationCode(),
@@ -176,7 +182,7 @@ func (e *EdgeVerifyIdentityCheckCode) Instantiate(ctx *interaction.Context, grap
 		panic("interaction: unexpected login ID key")
 	}
 
-	verifiedClaim := ctx.Verification.NewVerifiedClaim(loginIDModel.UserID, string(claimName), target)
+	verifiedClaim := ctx.Verification.NewVerifiedClaim(goCtx, loginIDModel.UserID, string(claimName), target)
 	return &NodeEnsureVerificationEnd{
 		Identity:         e.Identity,
 		NewVerifiedClaim: verifiedClaim,
@@ -191,13 +197,13 @@ type EdgeVerifyIdentityResendCode struct {
 	Node *NodeVerifyIdentity
 }
 
-func (e *EdgeVerifyIdentityResendCode) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
+func (e *EdgeVerifyIdentityResendCode) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
 	var input InputVerifyIdentityResendCode
 	if !interaction.Input(rawInput, &input) {
 		return nil, interaction.ErrIncompatibleInput
 	}
 
-	_, err := e.Node.SendCode(ctx, false)
+	_, err := e.Node.SendCode(goCtx, ctx, false)
 	if err != nil {
 		return nil, err
 	}

@@ -4,11 +4,11 @@ import { gql } from '@apollo/client';
 import * as Apollo from '@apollo/client';
 const defaultOptions = {} as const;
 export type UnscheduleAccountDeletionMutationMutationVariables = Types.Exact<{
-  userID: Types.Scalars['ID'];
+  userID: Types.Scalars['ID']['input'];
 }>;
 
 
-export type UnscheduleAccountDeletionMutationMutation = { __typename?: 'Mutation', unscheduleAccountDeletion: { __typename?: 'UnscheduleAccountDeletionPayload', user: { __typename?: 'User', id: string, isDisabled: boolean, disableReason?: string | null, isDeactivated: boolean, deleteAt?: any | null } } };
+export type UnscheduleAccountDeletionMutationMutation = { __typename?: 'Mutation', unscheduleAccountDeletion: { __typename?: 'UnscheduleAccountDeletionPayload', user: { __typename?: 'User', id: string, isDisabled: boolean, disableReason?: string | null, isDeactivated: boolean, deleteAt?: any | null, isAnonymized: boolean, anonymizeAt?: any | null } } };
 
 
 export const UnscheduleAccountDeletionMutationDocument = gql`
@@ -20,6 +20,8 @@ export const UnscheduleAccountDeletionMutationDocument = gql`
       disableReason
       isDeactivated
       deleteAt
+      isAnonymized
+      anonymizeAt
     }
   }
 }

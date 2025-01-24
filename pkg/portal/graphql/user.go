@@ -3,8 +3,9 @@ package graphql
 import (
 	"context"
 
-	"github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
+
+	"github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/portal/model"
 )
@@ -28,6 +29,6 @@ var nodeUser = node(
 	&model.User{},
 	func(ctx context.Context, id string) (interface{}, error) {
 		gqlCtx := GQLContext(ctx)
-		return gqlCtx.Users.Load(id).Value, nil
+		return gqlCtx.Users.Load(ctx, id).Value, nil
 	},
 )

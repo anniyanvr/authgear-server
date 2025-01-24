@@ -33,6 +33,7 @@ import {
   PhoneInputConfig,
   AuthenticatorOOBSMSConfig,
   AuthenticatorPasswordConfig,
+  AuthenticatorValidPeriods,
   AuthenticatorPhoneOTPMode,
   VerificationCriteria,
   VerificationClaimsConfig,
@@ -44,6 +45,7 @@ import {
   AuthenticatorEmailOTPMode,
   AuthenticatorOOBEmailConfig,
   RateLimitConfig,
+  UIImplementation,
 } from "../../types";
 import {
   DEFAULT_TEMPLATE_LOCALE,
@@ -95,9 +97,15 @@ import ShowOnlyIfSIWEIsDisabled from "./ShowOnlyIfSIWEIsDisabled";
 import BlueMessageBar from "../../BlueMessageBar";
 import { useTagPickerWithNewTags } from "../../hook/useInput";
 import { fixTagPickerStyles } from "../../bugs";
-import { useResourceForm } from "../../hook/useResourceForm";
+import {
+  ResourcesFormState,
+  useResourceForm,
+} from "../../hook/useResourceForm";
 import { useAppFeatureConfigQuery } from "./query/appFeatureConfigQuery";
-import { makeValidationErrorMatchUnknownKindParseRule } from "../../error/parse";
+import {
+  makeValidationErrorMatchUnknownKindParseRule,
+  makeValidationErrorCustomMessageIDRule,
+} from "../../error/parse";
 import {
   ensureInteger,
   ensurePositiveNumber,
@@ -117,6 +125,7 @@ import {
   LocalValidationError,
   makeLocalValidationError,
 } from "../../error/validation";
+import { useUIImplementation } from "../../hook/useUIImplementation";
 
 function splitByNewline(text: string): string[] {
   return text
@@ -144,6 +153,11 @@ const ERROR_RULES = [
     "const",
     /\/authentication\/identities/,
     "errors.validation.passkey"
+  ),
+  makeValidationErrorCustomMessageIDRule(
+    "minItems",
+    /\/ui\/phone_input\/allowlist/,
+    "errors.validation.minItems.ui.phoneInput.allowList"
   ),
 ];
 
@@ -184,30 +198,6 @@ const specifiers: ResourceSpecifier[] = [
   emailDomainAllowlistSpecifier,
   usernameExcludeKeywordsTXTSpecifier,
 ];
-
-interface ResourcesFormState {
-  resources: Partial<Record<string, Resource>>;
-}
-
-function constructResourcesFormState(
-  resources: Resource[]
-): ResourcesFormState {
-  const resourceMap: Partial<Record<string, Resource>> = {};
-  for (const r of resources) {
-    const id = specifierId(r.specifier);
-    // Multiple resources may use same specifier ID (images),
-    // use the first resource with non-empty values.
-    if ((resourceMap[id]?.nullableValue ?? "") === "") {
-      resourceMap[specifierId(r.specifier)] = r;
-    }
-  }
-
-  return { resources: resourceMap };
-}
-
-function constructResources(state: ResourcesFormState): Resource[] {
-  return Object.values(state.resources).filter(Boolean) as Resource[];
-}
 
 type LoginMethodPasswordlessLoginID = "email" | "phone" | "phone-email";
 type LoginMethodPasswordLoginID =
@@ -472,6 +462,7 @@ function controlListSwap<T>(
 //       max_failed_attempts_revoke_otp: 0
 
 interface ConfigFormState {
+  uiImplementation: UIImplementation | undefined;
   identitiesControl: ControlList<IdentityType>;
   primaryAuthenticatorsControl: ControlList<PrimaryAuthenticatorType>;
   loginIDKeyConfigsControl: ControlList<LoginIDKeyConfig>;
@@ -480,8 +471,10 @@ interface ConfigFormState {
   phoneInputConfig: Required<PhoneInputConfig>;
   authenticatorOOBEmailConfig: AuthenticatorOOBEmailConfig;
   authenticatorOOBSMSConfig: AuthenticatorOOBSMSConfig;
+  authenticatorValidPeriods: AuthenticatorValidPeriods;
   authenticatorPasswordConfig: AuthenticatorPasswordConfig;
   passkeyChecked: boolean;
+  combineSignupLoginFlowChecked: boolean;
   lockout: LockoutFormState;
 
   verificationClaims?: VerificationClaimsConfig;
@@ -561,7 +554,6 @@ function shouldShowFreePlanWarning(formState: FormState): boolean {
   return loginIDEnabled && phoneEnabled && oobOTPSMSEnabled;
 }
 
-// eslint-disable-next-line complexity
 function loginMethodFromFormState(formState: FormState): LoginMethod {
   const {
     identitiesControl,
@@ -692,7 +684,6 @@ function setLoginMethodToFormState(
   }
 }
 
-// eslint-disable-next-line complexity
 function correctInitialFormState(state: ConfigFormState): void {
   // Uncheck "login_id" identity if no login ID is checked.
   const allLoginIDUnchecked = state.loginIDKeyConfigsControl.every(
@@ -726,7 +717,6 @@ function correctInitialFormState(state: ConfigFormState): void {
   }
 }
 
-// eslint-disable-next-line complexity
 function correctCurrentFormState(state: FormState): void {
   // Check or uncheck "login_id" identity.
   const allLoginIDUnchecked = state.loginIDKeyConfigsControl.every(
@@ -882,7 +872,6 @@ function getConsistentValue<T>(...values: T[]): T | undefined {
   return value;
 }
 
-// eslint-disable-next-line complexity
 function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
   const identities = config.authentication?.identities ?? [];
   const primaryAuthenticators =
@@ -901,14 +890,14 @@ function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
 
   const sixDigitOTPValidPeriodSecondsCandidates = [
     parseOptionalDuration(
-      config.authenticator?.oob_otp?.sms?.code_valid_period
+      config.authenticator?.oob_otp?.sms?.valid_periods?.code
     ),
     parseOptionalDuration(config.verification?.code_valid_period),
   ];
   if (config.authenticator?.oob_otp?.email?.email_otp_mode !== "login_link") {
     sixDigitOTPValidPeriodSecondsCandidates.push(
       parseOptionalDuration(
-        config.authenticator?.oob_otp?.email?.code_valid_period
+        config.authenticator?.oob_otp?.email?.valid_periods?.code
       )
     );
   }
@@ -960,6 +949,7 @@ function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
     (config.authentication?.lockout?.max_attempts ?? 0) > 0;
 
   const state: ConfigFormState = {
+    uiImplementation: config.ui?.implementation,
     identitiesControl: controlListOf(
       (a, b) => a === b,
       IDENTITY_TYPES,
@@ -976,58 +966,106 @@ function constructFormState(config: PortalAPIAppConfig): ConfigFormState {
       loginIDKeyConfigs
     ),
     loginIDEmailConfig: {
-      block_plus_sign: false,
-      case_sensitive: false,
-      ignore_dot_sign: false,
-      domain_blocklist_enabled: false,
-      domain_allowlist_enabled: false,
-      block_free_email_provider_domains: false,
-      ...config.identity?.login_id?.types?.email,
+      block_plus_sign:
+        config.identity?.login_id?.types?.email?.block_plus_sign ?? false,
+      case_sensitive:
+        config.identity?.login_id?.types?.email?.case_sensitive ?? false,
+      ignore_dot_sign:
+        config.identity?.login_id?.types?.email?.ignore_dot_sign ?? false,
+      domain_blocklist_enabled:
+        config.identity?.login_id?.types?.email?.domain_blocklist_enabled ??
+        false,
+      domain_allowlist_enabled:
+        config.identity?.login_id?.types?.email?.domain_allowlist_enabled ??
+        false,
+      block_free_email_provider_domains:
+        config.identity?.login_id?.types?.email
+          ?.block_free_email_provider_domains ?? false,
     },
     loginIDUsernameConfig: {
-      block_reserved_usernames: true,
-      exclude_keywords_enabled: false,
-      ascii_only: true,
-      case_sensitive: false,
-      ...config.identity?.login_id?.types?.username,
+      block_reserved_usernames:
+        config.identity?.login_id?.types?.username?.block_reserved_usernames ??
+        true,
+      exclude_keywords_enabled:
+        config.identity?.login_id?.types?.username?.exclude_keywords_enabled ??
+        false,
+      ascii_only:
+        config.identity?.login_id?.types?.username?.ascii_only ?? true,
+      case_sensitive:
+        config.identity?.login_id?.types?.username?.case_sensitive ?? false,
     },
     phoneInputConfig: {
-      allowlist: [],
-      pinned_list: [],
-      preselect_by_ip_disabled: false,
-      ...config.ui?.phone_input,
+      allowlist: config.ui?.phone_input?.allowlist ?? [],
+      pinned_list: config.ui?.phone_input?.pinned_list ?? [],
+      preselect_by_ip_disabled:
+        config.ui?.phone_input?.preselect_by_ip_disabled ?? false,
     },
     verificationClaims: {
-      ...config.verification?.claims,
+      email: {
+        enabled: config.verification?.claims?.email?.enabled,
+        required: config.verification?.claims?.email?.required,
+      },
+      phone_number: {
+        enabled: config.verification?.claims?.phone_number?.enabled,
+        required: config.verification?.claims?.phone_number?.required,
+      },
     },
     verificationCriteria: config.verification?.criteria,
     authenticatorOOBEmailConfig: {
-      email_otp_mode: DEFAULT_EMAIL_OTP_MODE,
-      ...config.authenticator?.oob_otp?.email,
+      email_otp_mode:
+        config.authenticator?.oob_otp?.email?.email_otp_mode ??
+        DEFAULT_EMAIL_OTP_MODE,
+      maximum: config.authenticator?.oob_otp?.email?.maximum,
+      valid_periods: config.authenticator?.oob_otp?.email?.valid_periods,
     },
     authenticatorOOBSMSConfig: {
-      phone_otp_mode: DEFAULT_PHONE_OTP_MODE,
-      ...config.authenticator?.oob_otp?.sms,
+      phone_otp_mode:
+        config.authenticator?.oob_otp?.sms?.phone_otp_mode ??
+        DEFAULT_PHONE_OTP_MODE,
+      maximum: config.authenticator?.oob_otp?.sms?.maximum,
+      valid_periods: config.authenticator?.oob_otp?.sms?.valid_periods,
+    },
+    authenticatorValidPeriods: {
+      code: config.authenticator?.oob_otp?.sms?.valid_periods?.code,
+      link: config.authenticator?.oob_otp?.email?.valid_periods?.link,
     },
     authenticatorPasswordConfig: {
-      ...config.authenticator?.password,
+      force_change: config.authenticator?.password?.force_change,
       policy: {
-        min_length: 8,
-        uppercase_required: false,
-        lowercase_required: false,
-        alphabet_required: false,
-        digit_required: false,
-        symbol_required: false,
-        minimum_guessable_level: 0 as const,
-        excluded_keywords: [],
-        history_size: 0,
-        history_days: 0,
-        ...config.authenticator?.password?.policy,
+        min_length: config.authenticator?.password?.policy?.min_length ?? 8,
+        uppercase_required:
+          config.authenticator?.password?.policy?.uppercase_required ?? false,
+        lowercase_required:
+          config.authenticator?.password?.policy?.lowercase_required ?? false,
+        alphabet_required:
+          config.authenticator?.password?.policy?.alphabet_required ?? false,
+        digit_required:
+          config.authenticator?.password?.policy?.digit_required ?? false,
+        symbol_required:
+          config.authenticator?.password?.policy?.symbol_required ?? false,
+        minimum_guessable_level:
+          config.authenticator?.password?.policy?.minimum_guessable_level ??
+          (0 as const),
+        excluded_keywords:
+          config.authenticator?.password?.policy?.excluded_keywords ?? [],
+        history_size: config.authenticator?.password?.policy?.history_size ?? 0,
+        history_days: config.authenticator?.password?.policy?.history_days ?? 0,
+      },
+      expiry: {
+        force_change: {
+          enabled:
+            config.authenticator?.password?.expiry?.force_change?.enabled,
+          duration_since_last_update:
+            config.authenticator?.password?.expiry?.force_change
+              ?.duration_since_last_update,
+        },
       },
     },
     forgotPasswordLinkValidPeriodSeconds,
     forgotPasswordCodeValidPeriodSeconds,
     passkeyChecked: passkeyIndex != null && passkeyIndex >= 0,
+    combineSignupLoginFlowChecked:
+      config.ui?.signup_login_flow_enabled ?? false,
     lockout: {
       isEnabled: isLockoutEnabled,
       maxAttempts: isLockoutEnabled
@@ -1100,12 +1138,11 @@ function setEnable<T extends string>(
 }
 
 function constructConfig(
-  _config: PortalAPIAppConfig,
+  config: PortalAPIAppConfig,
   _initialState: ConfigFormState,
   currentState: ConfigFormState,
-  config: PortalAPIAppConfig
+  _effectiveConfig: PortalAPIAppConfig
 ): PortalAPIAppConfig {
-  // eslint-disable-next-line complexity
   return produce(config, (config) => {
     config.authentication ??= {};
     config.authentication.rate_limits ??= {};
@@ -1176,11 +1213,16 @@ function constructConfig(
     config.authenticator.oob_otp.email =
       currentState.authenticatorOOBEmailConfig;
     config.authenticator.oob_otp.sms = currentState.authenticatorOOBSMSConfig;
+    config.authenticator.oob_otp.sms.valid_periods =
+      currentState.authenticatorValidPeriods;
+    config.authenticator.oob_otp.email.valid_periods =
+      currentState.authenticatorValidPeriods;
     // currentState.authenticatorPasswordConfig may contain deprecated fields generated by SetDefaults.
     // So we explicitly save force_change and policy here only.
     config.authenticator.password = {
       force_change: currentState.authenticatorPasswordConfig.force_change,
       policy: currentState.authenticatorPasswordConfig.policy,
+      expiry: currentState.authenticatorPasswordConfig.expiry,
     };
 
     if (currentState.forgotPasswordLinkValidPeriodSeconds != null) {
@@ -1208,17 +1250,23 @@ function constructConfig(
         currentState.sixDigitOTPValidPeriodSeconds,
         "s"
       );
-      config.authenticator.oob_otp.sms.code_valid_period = duration;
+      config.authenticator.oob_otp.sms.valid_periods ??= {};
+      config.authenticator.oob_otp.sms.valid_periods.code = duration;
+      // config.authenticator.oob_otp.sms.code_valid_period = duration;
       config.verification.code_valid_period = duration;
       if (isEmailOTPLink) {
         // Currently portal doesn't support setting code_valid_period of login link
       } else {
-        config.authenticator.oob_otp.email.code_valid_period = duration;
+        config.authenticator.oob_otp.email.valid_periods ??= {};
+        config.authenticator.oob_otp.email.valid_periods.code = duration;
       }
     } else {
-      config.authenticator.oob_otp.sms.code_valid_period = undefined;
+      config.authenticator.oob_otp.sms.valid_periods ??= {};
+      config.authenticator.oob_otp.email.valid_periods ??= {};
+
+      config.authenticator.oob_otp.sms.valid_periods.code = undefined;
       config.verification.code_valid_period = undefined;
-      config.authenticator.oob_otp.email.code_valid_period = undefined;
+      config.authenticator.oob_otp.email.valid_periods.code = undefined;
     }
 
     if (currentState.smsOTPCooldownPeriodSeconds != null) {
@@ -1331,6 +1379,9 @@ function constructConfig(
         burst: currentState.emailVerificationDailyLimit,
       };
     }
+
+    config.ui.signup_login_flow_enabled =
+      currentState.combineSignupLoginFlowChecked;
 
     clearEmptyObject(config);
   });
@@ -1549,6 +1600,8 @@ function AuthenticationButton(props: AuthenticationButtonProps) {
   const checked = targetValue === currentValue;
   const iconName = AUTHENTICATION_BUTTON_ICON[targetValue];
 
+  const { renderToString } = useContext(Context);
+
   const IconComponent = useCallback(
     (props) => {
       return (
@@ -1590,16 +1643,12 @@ function AuthenticationButton(props: AuthenticationButtonProps) {
       styles={buttonStyles}
       disabled={disabled}
       checked={checked}
-      text={
-        <FormattedMessage
-          id={`LoginMethodConfigurationScreen.second-level.${targetValue}.title`}
-        />
-      }
-      secondaryText={
-        <FormattedMessage
-          id={`LoginMethodConfigurationScreen.second-level.${targetValue}.description`}
-        />
-      }
+      text={renderToString(
+        `LoginMethodConfigurationScreen.second-level.${targetValue}.title`
+      )}
+      secondaryText={renderToString(
+        `LoginMethodConfigurationScreen.second-level.${targetValue}.description`
+      )}
       IconComponent={IconComponent}
       onClick={onClick}
     />
@@ -1611,9 +1660,12 @@ interface LoginMethodChooserProps {
   showFreePlanWarning: boolean;
   phoneLoginIDDisabled: boolean;
   passkeyChecked: boolean;
+  displayCombineSignupLoginFlowToggle: boolean;
+  combineSignupLoginFlowChecked: boolean;
   appID: string;
   onChangeLoginMethod: (loginMethod: LoginMethod) => void;
   onChangePasskeyChecked?: IToggleProps["onChange"];
+  onChangeCombineSignupLoginFlowCheckedChecked?: IToggleProps["onChange"];
 }
 
 function LoginMethodChooser(props: LoginMethodChooserProps) {
@@ -1625,6 +1677,9 @@ function LoginMethodChooser(props: LoginMethodChooserProps) {
     onChangeLoginMethod,
     passkeyChecked,
     onChangePasskeyChecked,
+    displayCombineSignupLoginFlowToggle,
+    combineSignupLoginFlowChecked,
+    onChangeCombineSignupLoginFlowCheckedChecked,
   } = props;
   const disabled = phoneLoginIDDisabled;
 
@@ -1765,6 +1820,16 @@ function LoginMethodChooser(props: LoginMethodChooserProps) {
             />
           </div>
         </>
+      ) : null}
+      {displayCombineSignupLoginFlowToggle ? (
+        <Toggle
+          inlineLabel={true}
+          label={
+            <FormattedMessage id="LoginMethodConfigurationScreen.combineLoginSignup.title" />
+          }
+          checked={combineSignupLoginFlowChecked}
+          onChange={onChangeCombineSignupLoginFlowCheckedChecked}
+        />
       ) : null}
       {loginMethod === "oauth" ? (
         <LinkToOAuth appID={appID} />
@@ -2026,7 +2091,8 @@ function useUpdateLinesValue(
 
 function useOnChangeModifyDisabled(
   setState: FormModel["setState"],
-  typ: LoginIDKeyType
+  typ: LoginIDKeyType,
+  fieldKey: "create_disabled" | "update_disabled" | "delete_disabled"
 ) {
   return useCallback(
     (_e, checked) => {
@@ -2039,12 +2105,12 @@ function useOnChangeModifyDisabled(
             (a) => a.value.type === typ
           );
           if (c != null) {
-            c.value.modify_disabled = checked;
+            c.value[fieldKey] = checked;
           }
         })
       );
     },
-    [setState, typ]
+    [setState, typ, fieldKey]
   );
 }
 
@@ -2146,7 +2212,21 @@ function EmailSettings(props: EmailSettingsProps) {
     [setState]
   );
 
-  const onChangeModifyDisabled = useOnChangeModifyDisabled(setState, "email");
+  const onChangeCreateDisabled = useOnChangeModifyDisabled(
+    setState,
+    "email",
+    "create_disabled"
+  );
+  const onChangeUpdateDisabled = useOnChangeModifyDisabled(
+    setState,
+    "email",
+    "update_disabled"
+  );
+  const onChangeDeleteDisabled = useOnChangeModifyDisabled(
+    setState,
+    "email",
+    "delete_disabled"
+  );
 
   return (
     <Widget>
@@ -2233,13 +2313,33 @@ function EmailSettings(props: EmailSettingsProps) {
       </CheckboxWithContentLayout>
       <Checkbox
         label={renderToString(
-          "LoginIDConfigurationScreen.email.modify-disabled"
+          "LoginIDConfigurationScreen.email.create-disabled"
         )}
         checked={
           loginIDKeyConfigsControl.find((a) => a.value.type === "email")?.value
-            .modify_disabled ?? false
+            .create_disabled ?? false
         }
-        onChange={onChangeModifyDisabled}
+        onChange={onChangeCreateDisabled}
+      />
+      <Checkbox
+        label={renderToString(
+          "LoginIDConfigurationScreen.email.update-disabled"
+        )}
+        checked={
+          loginIDKeyConfigsControl.find((a) => a.value.type === "email")?.value
+            .update_disabled ?? false
+        }
+        onChange={onChangeUpdateDisabled}
+      />
+      <Checkbox
+        label={renderToString(
+          "LoginIDConfigurationScreen.email.delete-disabled"
+        )}
+        checked={
+          loginIDKeyConfigsControl.find((a) => a.value.type === "email")?.value
+            .delete_disabled ?? false
+        }
+        onChange={onChangeDeleteDisabled}
       />
     </Widget>
   );
@@ -2281,7 +2381,21 @@ function PhoneSettings(props: PhoneSettingsProps) {
     [setState]
   );
 
-  const onChangeModifyDisabled = useOnChangeModifyDisabled(setState, "phone");
+  const onChangeCreateDisabled = useOnChangeModifyDisabled(
+    setState,
+    "phone",
+    "create_disabled"
+  );
+  const onChangeUpdateDisabled = useOnChangeModifyDisabled(
+    setState,
+    "phone",
+    "update_disabled"
+  );
+  const onChangeDeleteDisabled = useOnChangeModifyDisabled(
+    setState,
+    "phone",
+    "delete_disabled"
+  );
 
   return (
     <Widget>
@@ -2306,13 +2420,33 @@ function PhoneSettings(props: PhoneSettingsProps) {
       />
       <Checkbox
         label={renderToString(
-          "LoginIDConfigurationScreen.phone.modify-disabled"
+          "LoginIDConfigurationScreen.phone.create-disabled"
         )}
         checked={
           loginIDKeyConfigsControl.find((a) => a.value.type === "phone")?.value
-            .modify_disabled ?? false
+            .create_disabled ?? false
         }
-        onChange={onChangeModifyDisabled}
+        onChange={onChangeCreateDisabled}
+      />
+      <Checkbox
+        label={renderToString(
+          "LoginIDConfigurationScreen.phone.update-disabled"
+        )}
+        checked={
+          loginIDKeyConfigsControl.find((a) => a.value.type === "phone")?.value
+            .update_disabled ?? false
+        }
+        onChange={onChangeUpdateDisabled}
+      />
+      <Checkbox
+        label={renderToString(
+          "LoginIDConfigurationScreen.phone.delete-disabled"
+        )}
+        checked={
+          loginIDKeyConfigsControl.find((a) => a.value.type === "phone")?.value
+            .delete_disabled ?? false
+        }
+        onChange={onChangeDeleteDisabled}
       />
     </Widget>
   );
@@ -2383,9 +2517,20 @@ function UsernameSettings(props: UsernameSettingsProps) {
     "ascii_only"
   );
 
-  const onChangeModifyDisabled = useOnChangeModifyDisabled(
+  const onChangeCreateDisabled = useOnChangeModifyDisabled(
     setState,
-    "username"
+    "username",
+    "create_disabled"
+  );
+  const onChangeUpdateDisabled = useOnChangeModifyDisabled(
+    setState,
+    "username",
+    "update_disabled"
+  );
+  const onChangeDeleteDisabled = useOnChangeModifyDisabled(
+    setState,
+    "username",
+    "delete_disabled"
   );
 
   return (
@@ -2440,13 +2585,33 @@ function UsernameSettings(props: UsernameSettingsProps) {
       />
       <Checkbox
         label={renderToString(
-          "LoginIDConfigurationScreen.username.modify-disabled"
+          "LoginIDConfigurationScreen.username.create-disabled"
         )}
         checked={
           loginIDKeyConfigsControl.find((a) => a.value.type === "username")
-            ?.value.modify_disabled ?? false
+            ?.value.create_disabled ?? false
         }
-        onChange={onChangeModifyDisabled}
+        onChange={onChangeCreateDisabled}
+      />
+      <Checkbox
+        label={renderToString(
+          "LoginIDConfigurationScreen.username.update-disabled"
+        )}
+        checked={
+          loginIDKeyConfigsControl.find((a) => a.value.type === "username")
+            ?.value.update_disabled ?? false
+        }
+        onChange={onChangeUpdateDisabled}
+      />
+      <Checkbox
+        label={renderToString(
+          "LoginIDConfigurationScreen.username.delete-disabled"
+        )}
+        checked={
+          loginIDKeyConfigsControl.find((a) => a.value.type === "username")
+            ?.value.delete_disabled ?? false
+        }
+        onChange={onChangeDeleteDisabled}
       />
     </Widget>
   );
@@ -2530,7 +2695,6 @@ interface VerificationSettingsProps {
   setState: FormModel["setState"];
 }
 
-// eslint-disable-next-line complexity
 function VerificationSettings(props: VerificationSettingsProps) {
   const {
     isPasswordlessEnabled,
@@ -2914,7 +3078,7 @@ function VerificationSettings(props: VerificationSettingsProps) {
         />
         {anyOTPRevokeFailedAttemptsEnabled ? (
           <FormTextField
-            parentJSONPointer="/otp/ratelimit/failed_attempt"
+            parentJSONPointer="/authentication/rate_limits/oob_otp/email/max_failed_attempts_revoke_otp"
             fieldName="size"
             type="text"
             value={anyOTPRevokeFailedAttempts?.toFixed(0) ?? ""}
@@ -2935,7 +3099,6 @@ interface LoginMethodConfigurationContentProps {
 }
 
 const LoginMethodConfigurationContent: React.VFC<LoginMethodConfigurationContentProps> =
-  // eslint-disable-next-line complexity
   function LoginMethodConfigurationContent(props) {
     const { appID } = props;
     const { state, setState } = props.form;
@@ -2943,6 +3106,7 @@ const LoginMethodConfigurationContent: React.VFC<LoginMethodConfigurationContent
     const { renderToString } = useContext(Context);
 
     const {
+      uiImplementation: projectUIImplementation,
       identitiesControl,
       primaryAuthenticatorsControl,
       loginIDKeyConfigsControl,
@@ -2957,6 +3121,7 @@ const LoginMethodConfigurationContent: React.VFC<LoginMethodConfigurationContent
       resetPasswordWithEmailBy,
       resetPasswordWithPhoneBy,
       passkeyChecked,
+      combineSignupLoginFlowChecked,
 
       verificationClaims,
       verificationCriteria,
@@ -3051,6 +3216,20 @@ const LoginMethodConfigurationContent: React.VFC<LoginMethodConfigurationContent
       [setState]
     );
 
+    const onChangeCombineSignupLoginFlowChecked = useCallback(
+      (_e, checked) => {
+        if (checked == null) {
+          return;
+        }
+        setState((prev) =>
+          produce(prev, (prev) => {
+            prev.combineSignupLoginFlowChecked = checked;
+          })
+        );
+      },
+      [setState]
+    );
+
     const onChangeLoginIDChecked = useCallback(
       (typ: LoginIDKeyType, checked: boolean) => {
         setState((prev) =>
@@ -3125,6 +3304,8 @@ const LoginMethodConfigurationContent: React.VFC<LoginMethodConfigurationContent
       [setState]
     );
 
+    const uiImplementation = useUIImplementation(projectUIImplementation);
+
     return (
       <ScreenContent>
         <ScreenTitle className={styles.widget}>
@@ -3135,18 +3316,27 @@ const LoginMethodConfigurationContent: React.VFC<LoginMethodConfigurationContent
             loginMethod={loginMethod}
             passkeyChecked={passkeyChecked}
           />
+          <HorizontalDivider className={styles.separator} />
           <LoginMethodChooser
             showFreePlanWarning={showFreePlanWarning}
             loginMethod={loginMethod}
             phoneLoginIDDisabled={phoneLoginIDDisabled}
             passkeyChecked={passkeyChecked}
             onChangePasskeyChecked={onChangePasskeyChecked}
+            displayCombineSignupLoginFlowToggle={
+              uiImplementation === "authflowv2"
+            }
+            combineSignupLoginFlowChecked={combineSignupLoginFlowChecked}
+            onChangeCombineSignupLoginFlowCheckedChecked={
+              onChangeCombineSignupLoginFlowChecked
+            }
             appID={appID}
             onChangeLoginMethod={onChangeLoginMethod}
           />
           {/* Pivot is intentionally uncontrolled */}
           {/* It is because it is troublesome to keep track of the selected key */}
           {/* And making it controlled does not bring any benefits */}
+          <HorizontalDivider className={styles.separator} />
           <Pivot
             className={styles.widget}
             styles={PIVOT_STYLES}
@@ -3335,12 +3525,7 @@ const LoginMethodConfigurationScreen: React.VFC =
       validate: validateFormState,
     });
 
-    const resourceForm = useResourceForm(
-      appID,
-      specifiers,
-      constructResourcesFormState,
-      constructResources
-    );
+    const resourceForm = useResourceForm(appID, specifiers);
 
     const state = useMemo<FormState>(() => {
       return {
@@ -3386,9 +3571,9 @@ const LoginMethodConfigurationScreen: React.VFC =
         configForm.reset();
         resourceForm.reset();
       },
-      save: async () => {
-        await configForm.save();
-        await resourceForm.save();
+      save: async (ignoreConflict: boolean = false) => {
+        await configForm.save(ignoreConflict);
+        await resourceForm.save(ignoreConflict);
       },
     };
 
@@ -3401,7 +3586,12 @@ const LoginMethodConfigurationScreen: React.VFC =
     }
 
     return (
-      <FormContainer form={form} errorRules={ERROR_RULES}>
+      <FormContainer
+        form={form}
+        errorRules={ERROR_RULES}
+        stickyFooterComponent={true}
+        showDiscardButton={true}
+      >
         <LoginMethodConfigurationContent appID={appID} form={form} />
       </FormContainer>
     );

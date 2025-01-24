@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -11,7 +12,7 @@ import (
 
 var TemplateWebSettingsProfileHTML = template.RegisterHTML(
 	"web/settings_profile.html",
-	components...,
+	Components...,
 )
 
 func ConfigureSettingsProfileRoute(route httproute.Route) httproute.Route {
@@ -33,9 +34,9 @@ func (h *SettingsProfileHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		userID := session.GetUserID(r.Context())
 
 		data := map[string]interface{}{}
@@ -43,7 +44,7 @@ func (h *SettingsProfileHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		baseViewModel := h.BaseViewModel.ViewModel(r, w)
 		viewmodels.Embed(data, baseViewModel)
 
-		viewModelPtr, err := h.SettingsProfileViewModel.ViewModel(*userID)
+		viewModelPtr, err := h.SettingsProfileViewModel.ViewModel(ctx, *userID)
 		if err != nil {
 			return err
 		}

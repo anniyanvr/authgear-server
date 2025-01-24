@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"fmt"
 	"mime"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 
 var TemplateWebSetupRecoveryCodeHTML = template.RegisterHTML(
 	"web/setup_recovery_code.html",
-	components...,
+	Components...,
 )
 
 var TemplateWebDownloadRecoveryCodeTXT = template.RegisterPlainText(
@@ -49,7 +50,7 @@ func (h *SetupRecoveryCodeHandler) MakeViewModel(graph *interaction.Graph) Setup
 	}
 
 	recoveryCodes := node.GetRecoveryCodes()
-	recoveryCodes = formatRecoveryCodes(recoveryCodes)
+	recoveryCodes = FormatRecoveryCodes(recoveryCodes)
 
 	return SetupRecoveryCodeViewModel{
 		RecoveryCodes: recoveryCodes,
@@ -72,10 +73,10 @@ func (h *SetupRecoveryCodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		graph, err := ctrl.InteractionGet()
+	ctrl.Get(func(ctx context.Context) error {
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -89,8 +90,8 @@ func (h *SetupRecoveryCodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		return nil
 	})
 
-	ctrl.PostAction("download", func() error {
-		graph, err := ctrl.InteractionGet()
+	ctrl.PostAction("download", func(ctx context.Context) error {
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -100,13 +101,13 @@ func (h *SetupRecoveryCodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 
-		setRecoveryCodeAttachmentHeaders(w)
+		SetRecoveryCodeAttachmentHeaders(w)
 		h.Renderer.Render(w, r, TemplateWebDownloadRecoveryCodeTXT, data)
 		return nil
 	})
 
-	ctrl.PostAction("proceed", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("proceed", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			input = &InputSetupRecoveryCode{}
 			return
 		})
@@ -119,7 +120,7 @@ func (h *SetupRecoveryCodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func formatRecoveryCodes(recoveryCodes []string) []string {
+func FormatRecoveryCodes(recoveryCodes []string) []string {
 	out := make([]string, len(recoveryCodes))
 	for i, code := range recoveryCodes {
 		out[i] = secretcode.RecoveryCode.FormatForHuman(code)
@@ -127,7 +128,7 @@ func formatRecoveryCodes(recoveryCodes []string) []string {
 	return out
 }
 
-func setRecoveryCodeAttachmentHeaders(w http.ResponseWriter) {
+func SetRecoveryCodeAttachmentHeaders(w http.ResponseWriter) {
 	// No need to use FormatMediaType because the value is constant.
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{

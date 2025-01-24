@@ -8,9 +8,11 @@ import (
 type AuthorizationRequest map[string]string
 
 // OAuth 2.0
-func (r AuthorizationRequest) ClientID() string     { return r["client_id"] }
-func (r AuthorizationRequest) RedirectURI() string  { return r["redirect_uri"] }
-func (r AuthorizationRequest) ResponseType() string { return r["response_type"] }
+func (r AuthorizationRequest) ClientID() string    { return r["client_id"] }
+func (r AuthorizationRequest) RedirectURI() string { return r["redirect_uri"] }
+func (r AuthorizationRequest) ResponseType() ResponseType {
+	return ParseResponseType(r["response_type"])
+}
 func (r AuthorizationRequest) ResponseMode() string { return r["response_mode"] }
 func (r AuthorizationRequest) Scope() []string      { return parseSpaceDelimitedString(r["scope"]) }
 func (r AuthorizationRequest) State() string        { return r["state"] }
@@ -61,10 +63,16 @@ func (r AuthorizationRequest) MaxAge() (duration time.Duration, ok bool) {
 func (r AuthorizationRequest) CodeChallenge() string       { return r["code_challenge"] }
 func (r AuthorizationRequest) CodeChallengeMethod() string { return r["code_challenge_method"] }
 
+// DPoP
+func (r AuthorizationRequest) DPoPJKT() string { return r["dpop_jkt"] }
+
 // Proprietary
 func (r AuthorizationRequest) Platform() string          { return r["x_platform"] }
 func (r AuthorizationRequest) WeChatRedirectURI() string { return r["x_wechat_redirect_uri"] }
 func (r AuthorizationRequest) Page() string              { return r["x_page"] }
+func (r AuthorizationRequest) AuthenticationFlowGroup() string {
+	return r["x_authentication_flow_group"]
+}
 func (r AuthorizationRequest) SuppressIDPSessionCookie() bool {
 	// Read x_sso_enabled first if it is provided in the request
 	// x_suppress_idp_session_cookie is for backward compatibility only
@@ -86,6 +94,10 @@ func (r AuthorizationRequest) SSOEnabled() bool {
 }
 func (r AuthorizationRequest) ColorScheme() string        { return r["x_color_scheme"] }
 func (r AuthorizationRequest) OAuthProviderAlias() string { return r["x_oauth_provider_alias"] }
+func (r AuthorizationRequest) SettingsAction() string     { return r["x_settings_action"] }
+func (r AuthorizationRequest) PreAuthenticatedURLToken() string {
+	return r["x_pre_authenticated_url_token"]
+}
 
 type AuthorizationResponse map[string]string
 

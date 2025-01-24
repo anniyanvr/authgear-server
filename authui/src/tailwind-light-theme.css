@@ -295,6 +295,25 @@
     border-color: var(--color-text-shaded-2);
   }
 
+  .outlined-btn {
+    @apply border border-solid;
+    color: var(--color-text-unshaded);
+    background-color: transparent;
+    border-color: var(--color-text-unshaded);
+  }
+
+  .outlined-btn--destructive {
+    color: var(--color-error-unshaded);
+    border-color: var(--color-error-unshaded);
+  }
+
+  .outlined-btn--destructive:focus,
+  .outlined-btn--destructive:hover,
+  .outlined-btn--destructive:active {
+    color: var(--color-error-shaded-6);
+    border-color: var(--color-error-shaded-6);
+  }
+
   .action-btn {
     @apply border border-solid;
     color: var(--color-text-unshaded);
@@ -538,6 +557,30 @@
   }
   .wechat:disabled {
     background-color: var(--color-wechat-shaded-2);
+  }
+
+  .sso-btn.iamsmart {
+    @apply border border-solid;
+    border-color: var(--color-separator);
+  }
+  .iamsmart {
+    color: var(--color-black-unshaded);
+    background-color: var(--color-white-unshaded);
+  }
+  .iamsmart:focus {
+    background-color: var(--color-white-unshaded);
+  }
+  .iamsmart:hover {
+    background-color: var(--color-white-shaded-4);
+  }
+  .iamsmart:active {
+    background-color: var(--color-white-shaded-7);
+  }
+  .iamsmart:disabled {
+    background-color: var(--color-white-shaded-2);
+  }
+  .sso-btn-icon.iamsmart-icon {
+    background-image: url("./img/icon-iamsmart-light.png");
   }
 
   .wallet-btn.metamask {

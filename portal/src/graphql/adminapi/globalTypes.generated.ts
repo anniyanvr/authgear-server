@@ -3,63 +3,154 @@ export type InputMaybe<T> = Maybe<T>;
 export type Exact<T extends { [key: string]: unknown }> = { [K in keyof T]: T[K] };
 export type MakeOptional<T, K extends keyof T> = Omit<T, K> & { [SubKey in K]?: Maybe<T[SubKey]> };
 export type MakeMaybe<T, K extends keyof T> = Omit<T, K> & { [SubKey in K]: Maybe<T[SubKey]> };
+export type MakeEmpty<T extends { [key: string]: unknown }, K extends keyof T> = { [_ in K]?: never };
+export type Incremental<T> = T | { [P in keyof T]?: P extends ' $fragmentName' | '__typename' ? T[P] : never };
 /** All built-in and custom scalars, mapped to their actual values */
 export type Scalars = {
-  ID: string;
-  String: string;
-  Boolean: boolean;
-  Int: number;
-  Float: number;
+  ID: { input: string; output: string; }
+  String: { input: string; output: string; }
+  Boolean: { input: boolean; output: boolean; }
+  Int: { input: number; output: number; }
+  Float: { input: number; output: number; }
   /** The `AuditLogData` scalar type represents the data of the audit log */
-  AuditLogData: GQL_AuditLogData;
+  AuditLogData: { input: GQL_AuditLogData; output: GQL_AuditLogData; }
   /** The `AuthenticatorClaims` scalar type represents a set of claims belonging to an authenticator */
-  AuthenticatorClaims: GQL_AuthenticatorClaims;
+  AuthenticatorClaims: { input: GQL_AuthenticatorClaims; output: GQL_AuthenticatorClaims; }
   /** The `DateTime` scalar type represents a DateTime. The DateTime is serialized as an RFC 3339 quoted string */
-  DateTime: GQL_DateTime;
+  DateTime: { input: GQL_DateTime; output: GQL_DateTime; }
   /** The `IdentityClaims` scalar type represents a set of claims belonging to an identity */
-  IdentityClaims: GQL_IdentityClaims;
+  IdentityClaims: { input: GQL_IdentityClaims; output: GQL_IdentityClaims; }
   /** The `UserCustomAttributes` scalar type represents the custom attributes of the user */
-  UserCustomAttributes: GQL_UserCustomAttributes;
+  UserCustomAttributes: { input: GQL_UserCustomAttributes; output: GQL_UserCustomAttributes; }
   /** The `UserStandardAttributes` scalar type represents the standard attributes of the user */
-  UserStandardAttributes: GQL_UserStandardAttributes;
+  UserStandardAttributes: { input: GQL_UserStandardAttributes; output: GQL_UserStandardAttributes; }
   /** The `Web3Claims` scalar type represents the scalar type of the user */
-  Web3Claims: GQL_Web3Claims;
+  Web3Claims: { input: GQL_Web3Claims; output: GQL_Web3Claims; }
+};
+
+export type AddGroupToRolesInput = {
+  /** The key of the group. */
+  groupKey: Scalars['String']['input'];
+  /** The list of role keys. */
+  roleKeys: Array<Scalars['String']['input']>;
+};
+
+export type AddGroupToRolesPayload = {
+  __typename?: 'AddGroupToRolesPayload';
+  group: Group;
+};
+
+export type AddGroupToUsersInput = {
+  /** The key of the group. */
+  groupKey: Scalars['String']['input'];
+  /** The list of user ids. */
+  userIDs?: InputMaybe<Array<Scalars['ID']['input']>>;
+};
+
+export type AddGroupToUsersPayload = {
+  __typename?: 'AddGroupToUsersPayload';
+  group: Group;
+};
+
+export type AddRoleToGroupsInput = {
+  /** The list of group keys. */
+  groupKeys: Array<Scalars['String']['input']>;
+  /** The key of the role. */
+  roleKey: Scalars['String']['input'];
+};
+
+export type AddRoleToGroupsPayload = {
+  __typename?: 'AddRoleToGroupsPayload';
+  role: Role;
+};
+
+export type AddRoleToUsersInput = {
+  /** The key of the role. */
+  roleKey: Scalars['String']['input'];
+  /** The list of user ids. */
+  userIDs?: InputMaybe<Array<Scalars['ID']['input']>>;
+};
+
+export type AddRoleToUsersPayload = {
+  __typename?: 'AddRoleToUsersPayload';
+  role: Role;
+};
+
+export type AddUserToGroupsInput = {
+  /** The list of group keys. */
+  groupKeys?: InputMaybe<Array<Scalars['String']['input']>>;
+  /** The ID of the user. */
+  userID: Scalars['ID']['input'];
+};
+
+export type AddUserToGroupsPayload = {
+  __typename?: 'AddUserToGroupsPayload';
+  user: User;
+};
+
+export type AddUserToRolesInput = {
+  /** The list of role keys. */
+  roleKeys?: InputMaybe<Array<Scalars['String']['input']>>;
+  /** The id of the user. */
+  userID: Scalars['ID']['input'];
+};
+
+export type AddUserToRolesPayload = {
+  __typename?: 'AddUserToRolesPayload';
+  user: User;
 };
 
 export type AnonymizeUserInput = {
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type AnonymizeUserPayload = {
   __typename?: 'AnonymizeUserPayload';
-  anonymizedUserID: Scalars['ID'];
+  anonymizedUserID: Scalars['ID']['output'];
 };
 
 /** Audit log */
 export type AuditLog = Node & {
   __typename?: 'AuditLog';
   activityType: AuditLogActivityType;
-  clientID?: Maybe<Scalars['String']>;
-  createdAt: Scalars['DateTime'];
-  data?: Maybe<Scalars['AuditLogData']>;
+  clientID?: Maybe<Scalars['String']['output']>;
+  createdAt: Scalars['DateTime']['output'];
+  data?: Maybe<Scalars['AuditLogData']['output']>;
   /** The ID of an object */
-  id: Scalars['ID'];
-  ipAddress?: Maybe<Scalars['String']>;
+  id: Scalars['ID']['output'];
+  ipAddress?: Maybe<Scalars['String']['output']>;
   user?: Maybe<User>;
-  userAgent?: Maybe<Scalars['String']>;
+  userAgent?: Maybe<Scalars['String']['output']>;
 };
 
 export enum AuditLogActivityType {
+  AdminApiMutationAddGroupToRolesExecuted = 'ADMIN_API_MUTATION_ADD_GROUP_TO_ROLES_EXECUTED',
+  AdminApiMutationAddGroupToUsersExecuted = 'ADMIN_API_MUTATION_ADD_GROUP_TO_USERS_EXECUTED',
+  AdminApiMutationAddRoleToGroupsExecuted = 'ADMIN_API_MUTATION_ADD_ROLE_TO_GROUPS_EXECUTED',
+  AdminApiMutationAddRoleToUsersExecuted = 'ADMIN_API_MUTATION_ADD_ROLE_TO_USERS_EXECUTED',
+  AdminApiMutationAddUserToGroupsExecuted = 'ADMIN_API_MUTATION_ADD_USER_TO_GROUPS_EXECUTED',
+  AdminApiMutationAddUserToRolesExecuted = 'ADMIN_API_MUTATION_ADD_USER_TO_ROLES_EXECUTED',
   AdminApiMutationAnonymizeUserExecuted = 'ADMIN_API_MUTATION_ANONYMIZE_USER_EXECUTED',
+  AdminApiMutationCreateAuthenticatorExecuted = 'ADMIN_API_MUTATION_CREATE_AUTHENTICATOR_EXECUTED',
+  AdminApiMutationCreateGroupExecuted = 'ADMIN_API_MUTATION_CREATE_GROUP_EXECUTED',
   AdminApiMutationCreateIdentityExecuted = 'ADMIN_API_MUTATION_CREATE_IDENTITY_EXECUTED',
+  AdminApiMutationCreateRoleExecuted = 'ADMIN_API_MUTATION_CREATE_ROLE_EXECUTED',
   AdminApiMutationCreateSessionExecuted = 'ADMIN_API_MUTATION_CREATE_SESSION_EXECUTED',
   AdminApiMutationCreateUserExecuted = 'ADMIN_API_MUTATION_CREATE_USER_EXECUTED',
   AdminApiMutationDeleteAuthenticatorExecuted = 'ADMIN_API_MUTATION_DELETE_AUTHENTICATOR_EXECUTED',
   AdminApiMutationDeleteAuthorizationExecuted = 'ADMIN_API_MUTATION_DELETE_AUTHORIZATION_EXECUTED',
+  AdminApiMutationDeleteGroupExecuted = 'ADMIN_API_MUTATION_DELETE_GROUP_EXECUTED',
   AdminApiMutationDeleteIdentityExecuted = 'ADMIN_API_MUTATION_DELETE_IDENTITY_EXECUTED',
+  AdminApiMutationDeleteRoleExecuted = 'ADMIN_API_MUTATION_DELETE_ROLE_EXECUTED',
   AdminApiMutationDeleteUserExecuted = 'ADMIN_API_MUTATION_DELETE_USER_EXECUTED',
   AdminApiMutationGenerateOobOtpCodeExecuted = 'ADMIN_API_MUTATION_GENERATE_OOB_OTP_CODE_EXECUTED',
+  AdminApiMutationRemoveGroupFromRolesExecuted = 'ADMIN_API_MUTATION_REMOVE_GROUP_FROM_ROLES_EXECUTED',
+  AdminApiMutationRemoveGroupFromUsersExecuted = 'ADMIN_API_MUTATION_REMOVE_GROUP_FROM_USERS_EXECUTED',
+  AdminApiMutationRemoveRoleFromGroupsExecuted = 'ADMIN_API_MUTATION_REMOVE_ROLE_FROM_GROUPS_EXECUTED',
+  AdminApiMutationRemoveRoleFromUsersExecuted = 'ADMIN_API_MUTATION_REMOVE_ROLE_FROM_USERS_EXECUTED',
+  AdminApiMutationRemoveUserFromGroupsExecuted = 'ADMIN_API_MUTATION_REMOVE_USER_FROM_GROUPS_EXECUTED',
+  AdminApiMutationRemoveUserFromRolesExecuted = 'ADMIN_API_MUTATION_REMOVE_USER_FROM_ROLES_EXECUTED',
   AdminApiMutationResetPasswordExecuted = 'ADMIN_API_MUTATION_RESET_PASSWORD_EXECUTED',
   AdminApiMutationRevokeAllSessionsExecuted = 'ADMIN_API_MUTATION_REVOKE_ALL_SESSIONS_EXECUTED',
   AdminApiMutationRevokeSessionExecuted = 'ADMIN_API_MUTATION_REVOKE_SESSION_EXECUTED',
@@ -67,10 +158,13 @@ export enum AuditLogActivityType {
   AdminApiMutationScheduleAccountDeletionExecuted = 'ADMIN_API_MUTATION_SCHEDULE_ACCOUNT_DELETION_EXECUTED',
   AdminApiMutationSendResetPasswordMessageExecuted = 'ADMIN_API_MUTATION_SEND_RESET_PASSWORD_MESSAGE_EXECUTED',
   AdminApiMutationSetDisabledStatusExecuted = 'ADMIN_API_MUTATION_SET_DISABLED_STATUS_EXECUTED',
+  AdminApiMutationSetPasswordExpiredExecuted = 'ADMIN_API_MUTATION_SET_PASSWORD_EXPIRED_EXECUTED',
   AdminApiMutationSetVerifiedStatusExecuted = 'ADMIN_API_MUTATION_SET_VERIFIED_STATUS_EXECUTED',
   AdminApiMutationUnscheduleAccountAnonymizationExecuted = 'ADMIN_API_MUTATION_UNSCHEDULE_ACCOUNT_ANONYMIZATION_EXECUTED',
   AdminApiMutationUnscheduleAccountDeletionExecuted = 'ADMIN_API_MUTATION_UNSCHEDULE_ACCOUNT_DELETION_EXECUTED',
+  AdminApiMutationUpdateGroupExecuted = 'ADMIN_API_MUTATION_UPDATE_GROUP_EXECUTED',
   AdminApiMutationUpdateIdentityExecuted = 'ADMIN_API_MUTATION_UPDATE_IDENTITY_EXECUTED',
+  AdminApiMutationUpdateRoleExecuted = 'ADMIN_API_MUTATION_UPDATE_ROLE_EXECUTED',
   AdminApiMutationUpdateUserExecuted = 'ADMIN_API_MUTATION_UPDATE_USER_EXECUTED',
   AuthenticationIdentityAnonymousFailed = 'AUTHENTICATION_IDENTITY_ANONYMOUS_FAILED',
   AuthenticationIdentityBiometricFailed = 'AUTHENTICATION_IDENTITY_BIOMETRIC_FAILED',
@@ -83,7 +177,10 @@ export enum AuditLogActivityType {
   AuthenticationSecondaryPasswordFailed = 'AUTHENTICATION_SECONDARY_PASSWORD_FAILED',
   AuthenticationSecondaryRecoveryCodeFailed = 'AUTHENTICATION_SECONDARY_RECOVERY_CODE_FAILED',
   AuthenticationSecondaryTotpFailed = 'AUTHENTICATION_SECONDARY_TOTP_FAILED',
+  BotProtectionVerificationFailed = 'BOT_PROTECTION_VERIFICATION_FAILED',
+  EmailError = 'EMAIL_ERROR',
   EmailSent = 'EMAIL_SENT',
+  EmailSuppressed = 'EMAIL_SUPPRESSED',
   IdentityBiometricDisabled = 'IDENTITY_BIOMETRIC_DISABLED',
   IdentityBiometricEnabled = 'IDENTITY_BIOMETRIC_ENABLED',
   IdentityEmailAdded = 'IDENTITY_EMAIL_ADDED',
@@ -114,7 +211,9 @@ export enum AuditLogActivityType {
   ProjectDomainCreated = 'PROJECT_DOMAIN_CREATED',
   ProjectDomainDeleted = 'PROJECT_DOMAIN_DELETED',
   ProjectDomainVerified = 'PROJECT_DOMAIN_VERIFIED',
+  SmsError = 'SMS_ERROR',
   SmsSent = 'SMS_SENT',
+  SmsSuppressed = 'SMS_SUPPRESSED',
   UserAnonymizationScheduled = 'USER_ANONYMIZATION_SCHEDULED',
   UserAnonymizationUnscheduled = 'USER_ANONYMIZATION_UNSCHEDULED',
   UserAnonymized = 'USER_ANONYMIZED',
@@ -129,8 +228,10 @@ export enum AuditLogActivityType {
   UserReenabled = 'USER_REENABLED',
   UserSessionTerminated = 'USER_SESSION_TERMINATED',
   UserSignedOut = 'USER_SIGNED_OUT',
+  WhatsappError = 'WHATSAPP_ERROR',
   WhatsappOtpVerified = 'WHATSAPP_OTP_VERIFIED',
-  WhatsappSent = 'WHATSAPP_SENT'
+  WhatsappSent = 'WHATSAPP_SENT',
+  WhatsappSuppressed = 'WHATSAPP_SUPPRESSED'
 }
 
 /** A connection to a list of items. */
@@ -141,35 +242,36 @@ export type AuditLogConnection = {
   /** Information to aid in pagination. */
   pageInfo: PageInfo;
   /** Total number of nodes in the connection. */
-  totalCount?: Maybe<Scalars['Int']>;
+  totalCount?: Maybe<Scalars['Int']['output']>;
 };
 
 /** An edge in a connection */
 export type AuditLogEdge = {
   __typename?: 'AuditLogEdge';
   /**  cursor for use in pagination */
-  cursor: Scalars['String'];
+  cursor: Scalars['String']['output'];
   /** The item at the end of the edge */
   node?: Maybe<AuditLog>;
 };
 
 export type Authenticator = Entity & Node & {
   __typename?: 'Authenticator';
-  claims: Scalars['AuthenticatorClaims'];
+  claims: Scalars['AuthenticatorClaims']['output'];
   /** The creation time of entity */
-  createdAt: Scalars['DateTime'];
+  createdAt: Scalars['DateTime']['output'];
+  expireAfter?: Maybe<Scalars['DateTime']['output']>;
   /** The ID of an object */
-  id: Scalars['ID'];
-  isDefault: Scalars['Boolean'];
+  id: Scalars['ID']['output'];
+  isDefault: Scalars['Boolean']['output'];
   kind: AuthenticatorKind;
   type: AuthenticatorType;
   /** The update time of entity */
-  updatedAt: Scalars['DateTime'];
+  updatedAt: Scalars['DateTime']['output'];
 };
 
 
 export type AuthenticatorClaimsArgs = {
-  names?: InputMaybe<Array<Scalars['String']>>;
+  names?: InputMaybe<Array<Scalars['String']['input']>>;
 };
 
 /** A connection to a list of items. */
@@ -180,14 +282,43 @@ export type AuthenticatorConnection = {
   /** Information to aid in pagination. */
   pageInfo: PageInfo;
   /** Total number of nodes in the connection. */
-  totalCount?: Maybe<Scalars['Int']>;
+  totalCount?: Maybe<Scalars['Int']['output']>;
+};
+
+/** Definition of an authenticator. This is a union object, exactly one of the available fields must be present. */
+export type AuthenticatorDefinition = {
+  /** Kind of authenticator. */
+  kind: AuthenticatorKind;
+  /** OOB OTP Email authenticator definition. Must be provided when type is OOB_OTP_EMAIL. */
+  oobOtpEmail?: InputMaybe<AuthenticatorDefinitionOobotpEmail>;
+  /** OOB OTP SMS authenticator definition. Must be provided when type is OOB_OTP_SMS. */
+  oobOtpSMS?: InputMaybe<AuthenticatorDefinitionOobotpsms>;
+  /** Password authenticator definition. Must be provided when type is PASSWORD. */
+  password?: InputMaybe<AuthenticatorDefinitionPassword>;
+  /** Type of authenticator. */
+  type: AuthenticatorType;
+};
+
+export type AuthenticatorDefinitionOobotpEmail = {
+  /** Email of the new oob otp sms authenticator. */
+  email: Scalars['String']['input'];
+};
+
+export type AuthenticatorDefinitionOobotpsms = {
+  /** Phone number of the new oob otp sms authenticator. */
+  phone: Scalars['String']['input'];
+};
+
+export type AuthenticatorDefinitionPassword = {
+  /** Password of the new authenticator. */
+  password: Scalars['String']['input'];
 };
 
 /** An edge in a connection */
 export type AuthenticatorEdge = {
   __typename?: 'AuthenticatorEdge';
   /**  cursor for use in pagination */
-  cursor: Scalars['String'];
+  cursor: Scalars['String']['output'];
   /** The item at the end of the edge */
   node?: Maybe<Authenticator>;
 };
@@ -207,14 +338,14 @@ export enum AuthenticatorType {
 
 export type Authorization = Entity & Node & {
   __typename?: 'Authorization';
-  clientID: Scalars['String'];
+  clientID: Scalars['String']['output'];
   /** The creation time of entity */
-  createdAt: Scalars['DateTime'];
+  createdAt: Scalars['DateTime']['output'];
   /** The ID of an object */
-  id: Scalars['ID'];
-  scopes: Array<Scalars['String']>;
+  id: Scalars['ID']['output'];
+  scopes: Array<Scalars['String']['output']>;
   /** The update time of entity */
-  updatedAt: Scalars['DateTime'];
+  updatedAt: Scalars['DateTime']['output'];
 };
 
 /** A connection to a list of items. */
@@ -225,31 +356,57 @@ export type AuthorizationConnection = {
   /** Information to aid in pagination. */
   pageInfo: PageInfo;
   /** Total number of nodes in the connection. */
-  totalCount?: Maybe<Scalars['Int']>;
+  totalCount?: Maybe<Scalars['Int']['output']>;
 };
 
 /** An edge in a connection */
 export type AuthorizationEdge = {
   __typename?: 'AuthorizationEdge';
   /**  cursor for use in pagination */
-  cursor: Scalars['String'];
+  cursor: Scalars['String']['output'];
   /** The item at the end of the edge */
   node?: Maybe<Authorization>;
 };
 
 export type Claim = {
   __typename?: 'Claim';
-  name: Scalars['String'];
-  value: Scalars['String'];
+  name: Scalars['String']['output'];
+  value: Scalars['String']['output'];
+};
+
+export type CreateAuthenticatorInput = {
+  /** Definition of the new authenticator. */
+  definition: AuthenticatorDefinition;
+  /** Target user ID. */
+  userID: Scalars['ID']['input'];
+};
+
+export type CreateAuthenticatorPayload = {
+  __typename?: 'CreateAuthenticatorPayload';
+  authenticator: Authenticator;
+};
+
+export type CreateGroupInput = {
+  /** The optional description of the group. */
+  description?: InputMaybe<Scalars['String']['input']>;
+  /** The key of the group. */
+  key: Scalars['String']['input'];
+  /** The optional name of the group. */
+  name?: InputMaybe<Scalars['String']['input']>;
+};
+
+export type CreateGroupPayload = {
+  __typename?: 'CreateGroupPayload';
+  group: Group;
 };
 
 export type CreateIdentityInput = {
   /** Definition of the new identity. */
   definition: IdentityDefinition;
   /** Password for the user if required. */
-  password?: InputMaybe<Scalars['String']>;
+  password?: InputMaybe<Scalars['String']['input']>;
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type CreateIdentityPayload = {
@@ -258,24 +415,42 @@ export type CreateIdentityPayload = {
   user: User;
 };
 
+export type CreateRoleInput = {
+  /** The optional description of the role. */
+  description?: InputMaybe<Scalars['String']['input']>;
+  /** The key of the role. */
+  key: Scalars['String']['input'];
+  /** The optional name of the role. */
+  name?: InputMaybe<Scalars['String']['input']>;
+};
+
+export type CreateRolePayload = {
+  __typename?: 'CreateRolePayload';
+  role: Role;
+};
+
 export type CreateSessionInput = {
   /** Target client ID. */
-  clientID: Scalars['String'];
+  clientID: Scalars['String']['input'];
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type CreateSessionPayload = {
   __typename?: 'CreateSessionPayload';
-  accessToken: Scalars['String'];
-  refreshToken: Scalars['String'];
+  accessToken: Scalars['String']['output'];
+  refreshToken: Scalars['String']['output'];
 };
 
 export type CreateUserInput = {
   /** Definition of the identity of new user. */
   definition: IdentityDefinition;
   /** Password for the user if required. */
-  password?: InputMaybe<Scalars['String']>;
+  password?: InputMaybe<Scalars['String']['input']>;
+  /** Indicate whether to send the new password to the user. */
+  sendPassword?: InputMaybe<Scalars['Boolean']['input']>;
+  /** Indicate whether the user is required to change password on next login. */
+  setPasswordExpired?: InputMaybe<Scalars['Boolean']['input']>;
 };
 
 export type CreateUserPayload = {
@@ -285,7 +460,7 @@ export type CreateUserPayload = {
 
 export type DeleteAuthenticatorInput = {
   /** Target authenticator ID. */
-  authenticatorID: Scalars['ID'];
+  authenticatorID: Scalars['ID']['input'];
 };
 
 export type DeleteAuthenticatorPayload = {
@@ -295,7 +470,7 @@ export type DeleteAuthenticatorPayload = {
 
 export type DeleteAuthorizationInput = {
   /** Target authorization ID. */
-  authorizationID: Scalars['ID'];
+  authorizationID: Scalars['ID']['input'];
 };
 
 export type DeleteAuthorizationPayload = {
@@ -303,9 +478,19 @@ export type DeleteAuthorizationPayload = {
   user: User;
 };
 
+export type DeleteGroupInput = {
+  /** The ID of the group. */
+  id: Scalars['ID']['input'];
+};
+
+export type DeleteGroupPayload = {
+  __typename?: 'DeleteGroupPayload';
+  ok?: Maybe<Scalars['Boolean']['output']>;
+};
+
 export type DeleteIdentityInput = {
   /** Target identity ID. */
-  identityID: Scalars['ID'];
+  identityID: Scalars['ID']['input'];
 };
 
 export type DeleteIdentityPayload = {
@@ -313,52 +498,121 @@ export type DeleteIdentityPayload = {
   user: User;
 };
 
+export type DeleteRoleInput = {
+  /** The ID of the role. */
+  id: Scalars['ID']['input'];
+};
+
+export type DeleteRolePayload = {
+  __typename?: 'DeleteRolePayload';
+  ok?: Maybe<Scalars['Boolean']['output']>;
+};
+
 export type DeleteUserInput = {
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type DeleteUserPayload = {
   __typename?: 'DeleteUserPayload';
-  deletedUserID: Scalars['ID'];
+  deletedUserID: Scalars['ID']['output'];
 };
 
 export type Entity = {
   /** The creation time of entity */
-  createdAt: Scalars['DateTime'];
+  createdAt: Scalars['DateTime']['output'];
   /** The ID of entity */
-  id: Scalars['ID'];
+  id: Scalars['ID']['output'];
   /** The update time of entity */
-  updatedAt: Scalars['DateTime'];
+  updatedAt: Scalars['DateTime']['output'];
 };
 
 export type GenerateOobotpCodeInput = {
   /** Purpose of the generated OTP code. */
   purpose?: InputMaybe<OtpPurpose>;
   /** Target user's email or phone number. */
-  target: Scalars['String'];
+  target: Scalars['String']['input'];
 };
 
 export type GenerateOobotpCodePayload = {
   __typename?: 'GenerateOOBOTPCodePayload';
-  code: Scalars['String'];
+  code: Scalars['String']['output'];
+};
+
+/** Authgear group */
+export type Group = Entity & Node & {
+  __typename?: 'Group';
+  /** The creation time of entity */
+  createdAt: Scalars['DateTime']['output'];
+  /** The optional description of the group. */
+  description?: Maybe<Scalars['String']['output']>;
+  /** The ID of an object */
+  id: Scalars['ID']['output'];
+  /** The key of the group. */
+  key: Scalars['String']['output'];
+  /** The optional name of the group. */
+  name?: Maybe<Scalars['String']['output']>;
+  /** The list of roles this group has. */
+  roles?: Maybe<RoleConnection>;
+  /** The update time of entity */
+  updatedAt: Scalars['DateTime']['output'];
+  /** The list of users in the group. */
+  users?: Maybe<UserConnection>;
+};
+
+
+/** Authgear group */
+export type GroupRolesArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+};
+
+
+/** Authgear group */
+export type GroupUsersArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+};
+
+/** A connection to a list of items. */
+export type GroupConnection = {
+  __typename?: 'GroupConnection';
+  /** Information to aid in pagination. */
+  edges?: Maybe<Array<Maybe<GroupEdge>>>;
+  /** Information to aid in pagination. */
+  pageInfo: PageInfo;
+  /** Total number of nodes in the connection. */
+  totalCount?: Maybe<Scalars['Int']['output']>;
+};
+
+/** An edge in a connection */
+export type GroupEdge = {
+  __typename?: 'GroupEdge';
+  /**  cursor for use in pagination */
+  cursor: Scalars['String']['output'];
+  /** The item at the end of the edge */
+  node?: Maybe<Group>;
 };
 
 export type Identity = Entity & Node & {
   __typename?: 'Identity';
-  claims: Scalars['IdentityClaims'];
+  claims: Scalars['IdentityClaims']['output'];
   /** The creation time of entity */
-  createdAt: Scalars['DateTime'];
+  createdAt: Scalars['DateTime']['output'];
   /** The ID of an object */
-  id: Scalars['ID'];
+  id: Scalars['ID']['output'];
   type: IdentityType;
   /** The update time of entity */
-  updatedAt: Scalars['DateTime'];
+  updatedAt: Scalars['DateTime']['output'];
 };
 
 
 export type IdentityClaimsArgs = {
-  names?: InputMaybe<Array<Scalars['String']>>;
+  names?: InputMaybe<Array<Scalars['String']['input']>>;
 };
 
 /** A connection to a list of items. */
@@ -369,7 +623,7 @@ export type IdentityConnection = {
   /** Information to aid in pagination. */
   pageInfo: PageInfo;
   /** Total number of nodes in the connection. */
-  totalCount?: Maybe<Scalars['Int']>;
+  totalCount?: Maybe<Scalars['Int']['output']>;
 };
 
 /** Definition of an identity. This is a union object, exactly one of the available fields must be present. */
@@ -380,16 +634,16 @@ export type IdentityDefinition = {
 
 export type IdentityDefinitionLoginId = {
   /** The login ID key. */
-  key: Scalars['String'];
+  key: Scalars['String']['input'];
   /** The login ID. */
-  value: Scalars['String'];
+  value: Scalars['String']['input'];
 };
 
 /** An edge in a connection */
 export type IdentityEdge = {
   __typename?: 'IdentityEdge';
   /**  cursor for use in pagination */
-  cursor: Scalars['String'];
+  cursor: Scalars['String']['output'];
   /** The item at the end of the edge */
   node?: Maybe<Identity>;
 };
@@ -397,6 +651,7 @@ export type IdentityEdge = {
 export enum IdentityType {
   Anonymous = 'ANONYMOUS',
   Biometric = 'BIOMETRIC',
+  Ldap = 'LDAP',
   LoginId = 'LOGIN_ID',
   Oauth = 'OAUTH',
   Passkey = 'PASSKEY',
@@ -405,10 +660,28 @@ export enum IdentityType {
 
 export type Mutation = {
   __typename?: 'Mutation';
+  /** Add the group to the roles. */
+  addGroupToRoles: AddGroupToRolesPayload;
+  /** Add the group to the users. */
+  addGroupToUsers: AddGroupToUsersPayload;
+  /** Add the role to the groups. */
+  addRoleToGroups: AddRoleToGroupsPayload;
+  /** Add the role to the users. */
+  addRoleToUsers: AddRoleToUsersPayload;
+  /** Add the user to the groups. */
+  addUserToGroups: AddUserToGroupsPayload;
+  /** Add the user to the roles. */
+  addUserToRoles: AddUserToRolesPayload;
   /** Anonymize specified user */
   anonymizeUser: AnonymizeUserPayload;
+  /** Create authenticator of user */
+  createAuthenticator: CreateAuthenticatorPayload;
+  /** Create a new group. */
+  createGroup: CreateGroupPayload;
   /** Create new identity for user */
   createIdentity: CreateIdentityPayload;
+  /** Create a new role. */
+  createRole: CreateRolePayload;
   /** Create a session of a given user */
   createSession: CreateSessionPayload;
   /** Create new user */
@@ -417,12 +690,30 @@ export type Mutation = {
   deleteAuthenticator: DeleteAuthenticatorPayload;
   /** Delete authorization */
   deleteAuthorization: DeleteAuthorizationPayload;
+  /** Delete an existing group. The associations between the group with other roles and other users will also be deleted. */
+  deleteGroup: DeleteGroupPayload;
   /** Delete identity of user */
   deleteIdentity: DeleteIdentityPayload;
+  /** Delete an existing role. The associations between the role with other groups and other users will also be deleted. */
+  deleteRole: DeleteRolePayload;
   /** Delete specified user */
   deleteUser: DeleteUserPayload;
   /** Generate OOB OTP code for user */
   generateOOBOTPCode: GenerateOobotpCodePayload;
+  /** Remove the group from the roles. */
+  removeGroupFromRoles: RemoveGroupFromRolesPayload;
+  /** Remove the group to the users. */
+  removeGroupFromUsers: RemoveGroupToUsersPayload;
+  /** Revoke user grace period for MFA enrollment */
+  removeMFAGracePeriod: RemoveMfaGracePeriodPayload;
+  /** Remove the role from the groups. */
+  removeRoleFromGroups: RemoveRoleFromGroupsPayload;
+  /** Remove the role to the users. */
+  removeRoleFromUsers: RemoveRoleFromUsersPayload;
+  /** Remove the user from the groups. */
+  removeUserFromGroups: RemoveUserFromGroupsPayload;
+  /** Remove the user from the roles. */
+  removeUserFromRoles: RemoveUserFromRolesPayload;
   /** Reset password of user */
   resetPassword: ResetPasswordPayload;
   /** Revoke all sessions of user */
@@ -434,19 +725,57 @@ export type Mutation = {
   /** Schedule account deletion */
   scheduleAccountDeletion: ScheduleAccountDeletionPayload;
   /** Send a reset password message to user */
-  sendResetPasswordMessage?: Maybe<Scalars['Boolean']>;
+  sendResetPasswordMessage?: Maybe<Scalars['Boolean']['output']>;
   /** Set disabled status of user */
   setDisabledStatus: SetDisabledStatusPayload;
+  /** Grant user grace period for MFA enrollment */
+  setMFAGracePeriod: SetMfaGracePeriodPayload;
+  /** Force user to change password on next login */
+  setPasswordExpired: SetPasswordExpiredPayload;
   /** Set verified status of a claim of user */
   setVerifiedStatus: SetVerifiedStatusPayload;
   /** Unschedule account anonymization */
   unscheduleAccountAnonymization: UnscheduleAccountAnonymizationPayload;
   /** Unschedule account deletion */
   unscheduleAccountDeletion: UnscheduleAccountDeletionPayload;
+  /** Update an existing group. */
+  updateGroup: UpdateGroupPayload;
   /** Update an existing identity of user */
   updateIdentity: UpdateIdentityPayload;
+  /** Update an existing role. */
+  updateRole: UpdateRolePayload;
   /** Update user */
   updateUser: UpdateUserPayload;
+};
+
+
+export type MutationAddGroupToRolesArgs = {
+  input: AddGroupToRolesInput;
+};
+
+
+export type MutationAddGroupToUsersArgs = {
+  input: AddGroupToUsersInput;
+};
+
+
+export type MutationAddRoleToGroupsArgs = {
+  input: AddRoleToGroupsInput;
+};
+
+
+export type MutationAddRoleToUsersArgs = {
+  input: AddRoleToUsersInput;
+};
+
+
+export type MutationAddUserToGroupsArgs = {
+  input: AddUserToGroupsInput;
+};
+
+
+export type MutationAddUserToRolesArgs = {
+  input: AddUserToRolesInput;
 };
 
 
@@ -455,8 +784,23 @@ export type MutationAnonymizeUserArgs = {
 };
 
 
+export type MutationCreateAuthenticatorArgs = {
+  input: CreateAuthenticatorInput;
+};
+
+
+export type MutationCreateGroupArgs = {
+  input: CreateGroupInput;
+};
+
+
 export type MutationCreateIdentityArgs = {
   input: CreateIdentityInput;
+};
+
+
+export type MutationCreateRoleArgs = {
+  input: CreateRoleInput;
 };
 
 
@@ -480,8 +824,18 @@ export type MutationDeleteAuthorizationArgs = {
 };
 
 
+export type MutationDeleteGroupArgs = {
+  input: DeleteGroupInput;
+};
+
+
 export type MutationDeleteIdentityArgs = {
   input: DeleteIdentityInput;
+};
+
+
+export type MutationDeleteRoleArgs = {
+  input: DeleteRoleInput;
 };
 
 
@@ -492,6 +846,41 @@ export type MutationDeleteUserArgs = {
 
 export type MutationGenerateOobotpCodeArgs = {
   input: GenerateOobotpCodeInput;
+};
+
+
+export type MutationRemoveGroupFromRolesArgs = {
+  input: RemoveGroupFromRolesInput;
+};
+
+
+export type MutationRemoveGroupFromUsersArgs = {
+  input: RemoveGroupFromUsersInput;
+};
+
+
+export type MutationRemoveMfaGracePeriodArgs = {
+  input: RemoveMfaGracePeriodInput;
+};
+
+
+export type MutationRemoveRoleFromGroupsArgs = {
+  input: RemoveRoleFromGroupsInput;
+};
+
+
+export type MutationRemoveRoleFromUsersArgs = {
+  input: RemoveRoleFromUsersInput;
+};
+
+
+export type MutationRemoveUserFromGroupsArgs = {
+  input: RemoveUserFromGroupsInput;
+};
+
+
+export type MutationRemoveUserFromRolesArgs = {
+  input: RemoveUserFromRolesInput;
 };
 
 
@@ -530,6 +919,16 @@ export type MutationSetDisabledStatusArgs = {
 };
 
 
+export type MutationSetMfaGracePeriodArgs = {
+  input: SetMfaGracePeriodInput;
+};
+
+
+export type MutationSetPasswordExpiredArgs = {
+  input: SetPasswordExpiredInput;
+};
+
+
 export type MutationSetVerifiedStatusArgs = {
   input: SetVerifiedStatusInput;
 };
@@ -545,8 +944,18 @@ export type MutationUnscheduleAccountDeletionArgs = {
 };
 
 
+export type MutationUpdateGroupArgs = {
+  input: UpdateGroupInput;
+};
+
+
 export type MutationUpdateIdentityArgs = {
   input: UpdateIdentityInput;
+};
+
+
+export type MutationUpdateRoleArgs = {
+  input: UpdateRoleInput;
 };
 
 
@@ -557,7 +966,7 @@ export type MutationUpdateUserArgs = {
 /** An object with an ID */
 export type Node = {
   /** The id of the object */
-  id: Scalars['ID'];
+  id: Scalars['ID']['output'];
 };
 
 export enum OtpPurpose {
@@ -569,23 +978,33 @@ export enum OtpPurpose {
 export type PageInfo = {
   __typename?: 'PageInfo';
   /** When paginating forwards, the cursor to continue. */
-  endCursor?: Maybe<Scalars['String']>;
+  endCursor?: Maybe<Scalars['String']['output']>;
   /** When paginating forwards, are there more items? */
-  hasNextPage: Scalars['Boolean'];
+  hasNextPage: Scalars['Boolean']['output'];
   /** When paginating backwards, are there more items? */
-  hasPreviousPage: Scalars['Boolean'];
+  hasPreviousPage: Scalars['Boolean']['output'];
   /** When paginating backwards, the cursor to continue. */
-  startCursor?: Maybe<Scalars['String']>;
+  startCursor?: Maybe<Scalars['String']['output']>;
 };
 
 export type Query = {
   __typename?: 'Query';
   /** Audit logs */
   auditLogs?: Maybe<AuditLogConnection>;
+  /** Get user by Login ID. */
+  getUserByLoginID?: Maybe<User>;
+  /** Get user by OAuth Alias and user ID. */
+  getUserByOAuth?: Maybe<User>;
+  /** Get users by standardAttribute, attributeName must be email, phone_number or preferred_username. */
+  getUsersByStandardAttribute: Array<User>;
+  /** All groups */
+  groups?: Maybe<GroupConnection>;
   /** Fetches an object given its ID */
   node?: Maybe<Node>;
   /** Lookup nodes by a list of IDs. */
   nodes: Array<Maybe<Node>>;
+  /** All roles */
+  roles?: Maybe<RoleConnection>;
   /** All users */
   users?: Maybe<UserConnection>;
 };
@@ -593,42 +1012,160 @@ export type Query = {
 
 export type QueryAuditLogsArgs = {
   activityTypes?: InputMaybe<Array<AuditLogActivityType>>;
-  after?: InputMaybe<Scalars['String']>;
-  before?: InputMaybe<Scalars['String']>;
-  first?: InputMaybe<Scalars['Int']>;
-  last?: InputMaybe<Scalars['Int']>;
-  rangeFrom?: InputMaybe<Scalars['DateTime']>;
-  rangeTo?: InputMaybe<Scalars['DateTime']>;
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  emailAddresses?: InputMaybe<Array<Scalars['String']['input']>>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+  phoneNumbers?: InputMaybe<Array<Scalars['String']['input']>>;
+  rangeFrom?: InputMaybe<Scalars['DateTime']['input']>;
+  rangeTo?: InputMaybe<Scalars['DateTime']['input']>;
   sortDirection?: InputMaybe<SortDirection>;
-  userIDs?: InputMaybe<Array<Scalars['ID']>>;
+  userIDs?: InputMaybe<Array<Scalars['ID']['input']>>;
+};
+
+
+export type QueryGetUserByLoginIdArgs = {
+  loginIDKey: Scalars['String']['input'];
+  loginIDValue: Scalars['String']['input'];
+};
+
+
+export type QueryGetUserByOAuthArgs = {
+  oauthProviderAlias: Scalars['String']['input'];
+  oauthProviderUserID: Scalars['String']['input'];
+};
+
+
+export type QueryGetUsersByStandardAttributeArgs = {
+  attributeName: Scalars['String']['input'];
+  attributeValue: Scalars['String']['input'];
+};
+
+
+export type QueryGroupsArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  excludedIDs?: InputMaybe<Array<Scalars['ID']['input']>>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+  searchKeyword?: InputMaybe<Scalars['String']['input']>;
 };
 
 
 export type QueryNodeArgs = {
-  id: Scalars['ID'];
+  id: Scalars['ID']['input'];
 };
 
 
 export type QueryNodesArgs = {
-  ids: Array<Scalars['ID']>;
+  ids: Array<Scalars['ID']['input']>;
+};
+
+
+export type QueryRolesArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  excludedIDs?: InputMaybe<Array<Scalars['ID']['input']>>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+  searchKeyword?: InputMaybe<Scalars['String']['input']>;
 };
 
 
 export type QueryUsersArgs = {
-  after?: InputMaybe<Scalars['String']>;
-  before?: InputMaybe<Scalars['String']>;
-  first?: InputMaybe<Scalars['Int']>;
-  last?: InputMaybe<Scalars['Int']>;
-  searchKeyword?: InputMaybe<Scalars['String']>;
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  groupKeys?: InputMaybe<Array<Scalars['String']['input']>>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+  roleKeys?: InputMaybe<Array<Scalars['String']['input']>>;
+  searchKeyword?: InputMaybe<Scalars['String']['input']>;
   sortBy?: InputMaybe<UserSortBy>;
   sortDirection?: InputMaybe<SortDirection>;
 };
 
+export type RemoveGroupFromRolesInput = {
+  /** The key of the group. */
+  groupKey: Scalars['String']['input'];
+  /** The list of role keys. */
+  roleKeys: Array<Scalars['String']['input']>;
+};
+
+export type RemoveGroupFromRolesPayload = {
+  __typename?: 'RemoveGroupFromRolesPayload';
+  group: Group;
+};
+
+export type RemoveGroupFromUsersInput = {
+  /** The key of the group. */
+  groupKey: Scalars['String']['input'];
+  /** The list of user ids. */
+  userIDs?: InputMaybe<Array<Scalars['ID']['input']>>;
+};
+
+export type RemoveGroupToUsersPayload = {
+  __typename?: 'RemoveGroupToUsersPayload';
+  group: Group;
+};
+
+export type RemoveRoleFromGroupsInput = {
+  /** The list of group keys. */
+  groupKeys: Array<Scalars['String']['input']>;
+  /** The key of the role. */
+  roleKey: Scalars['String']['input'];
+};
+
+export type RemoveRoleFromGroupsPayload = {
+  __typename?: 'RemoveRoleFromGroupsPayload';
+  role: Role;
+};
+
+export type RemoveRoleFromUsersInput = {
+  /** The key of the role. */
+  roleKey: Scalars['String']['input'];
+  /** The list of user ids. */
+  userIDs?: InputMaybe<Array<Scalars['ID']['input']>>;
+};
+
+export type RemoveRoleFromUsersPayload = {
+  __typename?: 'RemoveRoleFromUsersPayload';
+  role: Role;
+};
+
+export type RemoveUserFromGroupsInput = {
+  /** The list of group keys. */
+  groupKeys?: InputMaybe<Array<Scalars['String']['input']>>;
+  /** The ID of the user. */
+  userID: Scalars['ID']['input'];
+};
+
+export type RemoveUserFromGroupsPayload = {
+  __typename?: 'RemoveUserFromGroupsPayload';
+  user: User;
+};
+
+export type RemoveUserFromRolesInput = {
+  /** The list of role keys. */
+  roleKeys?: InputMaybe<Array<Scalars['String']['input']>>;
+  /** The id of the user. */
+  userID: Scalars['ID']['input'];
+};
+
+export type RemoveUserFromRolesPayload = {
+  __typename?: 'RemoveUserFromRolesPayload';
+  user: User;
+};
+
 export type ResetPasswordInput = {
   /** New password. */
-  password: Scalars['String'];
+  password?: InputMaybe<Scalars['String']['input']>;
+  /** Indicate whether to send the new password to the user. */
+  sendPassword?: InputMaybe<Scalars['Boolean']['input']>;
+  /** Indicate whether the user is required to change password on next login. */
+  setPasswordExpired?: InputMaybe<Scalars['Boolean']['input']>;
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type ResetPasswordPayload = {
@@ -638,7 +1175,7 @@ export type ResetPasswordPayload = {
 
 export type RevokeAllSessionsInput = {
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type RevokeAllSessionsPayload = {
@@ -648,7 +1185,7 @@ export type RevokeAllSessionsPayload = {
 
 export type RevokeSessionInput = {
   /** Target session ID. */
-  sessionID: Scalars['ID'];
+  sessionID: Scalars['ID']['input'];
 };
 
 export type RevokeSessionPayload = {
@@ -656,9 +1193,68 @@ export type RevokeSessionPayload = {
   user: User;
 };
 
+/** Authgear role */
+export type Role = Entity & Node & {
+  __typename?: 'Role';
+  /** The creation time of entity */
+  createdAt: Scalars['DateTime']['output'];
+  /** The optional description of the role. */
+  description?: Maybe<Scalars['String']['output']>;
+  /** The list of groups this role is in. */
+  groups?: Maybe<GroupConnection>;
+  /** The ID of an object */
+  id: Scalars['ID']['output'];
+  /** The key of the role. */
+  key: Scalars['String']['output'];
+  /** The optional name of the role. */
+  name?: Maybe<Scalars['String']['output']>;
+  /** The update time of entity */
+  updatedAt: Scalars['DateTime']['output'];
+  /** The list of users who has this role. */
+  users?: Maybe<UserConnection>;
+};
+
+
+/** Authgear role */
+export type RoleGroupsArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+};
+
+
+/** Authgear role */
+export type RoleUsersArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+};
+
+/** A connection to a list of items. */
+export type RoleConnection = {
+  __typename?: 'RoleConnection';
+  /** Information to aid in pagination. */
+  edges?: Maybe<Array<Maybe<RoleEdge>>>;
+  /** Information to aid in pagination. */
+  pageInfo: PageInfo;
+  /** Total number of nodes in the connection. */
+  totalCount?: Maybe<Scalars['Int']['output']>;
+};
+
+/** An edge in a connection */
+export type RoleEdge = {
+  __typename?: 'RoleEdge';
+  /**  cursor for use in pagination */
+  cursor: Scalars['String']['output'];
+  /** The item at the end of the edge */
+  node?: Maybe<Role>;
+};
+
 export type ScheduleAccountAnonymizationInput = {
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type ScheduleAccountAnonymizationPayload = {
@@ -668,7 +1264,7 @@ export type ScheduleAccountAnonymizationPayload = {
 
 export type ScheduleAccountDeletionInput = {
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type ScheduleAccountDeletionPayload = {
@@ -678,25 +1274,26 @@ export type ScheduleAccountDeletionPayload = {
 
 export type SendResetPasswordMessageInput = {
   /** Target login ID. */
-  loginID: Scalars['ID'];
+  loginID: Scalars['ID']['input'];
 };
 
 export type Session = Entity & Node & {
   __typename?: 'Session';
-  acr: Scalars['String'];
-  amr: Array<Scalars['String']>;
-  clientID?: Maybe<Scalars['String']>;
+  acr: Scalars['String']['output'];
+  amr: Array<Scalars['String']['output']>;
+  clientID?: Maybe<Scalars['String']['output']>;
   /** The creation time of entity */
-  createdAt: Scalars['DateTime'];
-  createdByIP: Scalars['String'];
-  displayName: Scalars['String'];
+  createdAt: Scalars['DateTime']['output'];
+  createdByIP: Scalars['String']['output'];
+  displayName: Scalars['String']['output'];
   /** The ID of an object */
-  id: Scalars['ID'];
-  lastAccessedAt: Scalars['DateTime'];
-  lastAccessedByIP: Scalars['String'];
+  id: Scalars['ID']['output'];
+  lastAccessedAt: Scalars['DateTime']['output'];
+  lastAccessedByIP: Scalars['String']['output'];
   type: SessionType;
   /** The update time of entity */
-  updatedAt: Scalars['DateTime'];
+  updatedAt: Scalars['DateTime']['output'];
+  userAgent?: Maybe<Scalars['String']['output']>;
 };
 
 /** A connection to a list of items. */
@@ -707,14 +1304,14 @@ export type SessionConnection = {
   /** Information to aid in pagination. */
   pageInfo: PageInfo;
   /** Total number of nodes in the connection. */
-  totalCount?: Maybe<Scalars['Int']>;
+  totalCount?: Maybe<Scalars['Int']['output']>;
 };
 
 /** An edge in a connection */
 export type SessionEdge = {
   __typename?: 'SessionEdge';
   /**  cursor for use in pagination */
-  cursor: Scalars['String'];
+  cursor: Scalars['String']['output'];
   /** The item at the end of the edge */
   node?: Maybe<Session>;
 };
@@ -726,11 +1323,11 @@ export enum SessionType {
 
 export type SetDisabledStatusInput = {
   /** Indicate whether the target user is disabled. */
-  isDisabled: Scalars['Boolean'];
+  isDisabled: Scalars['Boolean']['input'];
   /** Indicate the disable reason; If not provided, the user will be disabled with no reason. */
-  reason?: InputMaybe<Scalars['String']>;
+  reason?: InputMaybe<Scalars['String']['input']>;
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type SetDisabledStatusPayload = {
@@ -738,15 +1335,39 @@ export type SetDisabledStatusPayload = {
   user: User;
 };
 
+export type SetMfaGracePeriodInput = {
+  /** Indicate when will user's MFA grace period end */
+  endAt: Scalars['DateTime']['input'];
+  /** Target user ID */
+  userID: Scalars['ID']['input'];
+};
+
+export type SetMfaGracePeriodPayload = {
+  __typename?: 'SetMFAGracePeriodPayload';
+  user: User;
+};
+
+export type SetPasswordExpiredInput = {
+  /** Indicate whether the user's password is expired. */
+  expired: Scalars['Boolean']['input'];
+  /** Target user ID. */
+  userID: Scalars['ID']['input'];
+};
+
+export type SetPasswordExpiredPayload = {
+  __typename?: 'SetPasswordExpiredPayload';
+  user: User;
+};
+
 export type SetVerifiedStatusInput = {
   /** Name of the claim to set verified status. */
-  claimName: Scalars['String'];
+  claimName: Scalars['String']['input'];
   /** Value of the claim. */
-  claimValue: Scalars['String'];
+  claimValue: Scalars['String']['input'];
   /** Indicate whether the target claim is verified. */
-  isVerified: Scalars['Boolean'];
+  isVerified: Scalars['Boolean']['input'];
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type SetVerifiedStatusPayload = {
@@ -761,7 +1382,7 @@ export enum SortDirection {
 
 export type UnscheduleAccountAnonymizationInput = {
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type UnscheduleAccountAnonymizationPayload = {
@@ -771,7 +1392,7 @@ export type UnscheduleAccountAnonymizationPayload = {
 
 export type UnscheduleAccountDeletionInput = {
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type UnscheduleAccountDeletionPayload = {
@@ -779,13 +1400,29 @@ export type UnscheduleAccountDeletionPayload = {
   user: User;
 };
 
+export type UpdateGroupInput = {
+  /** The new description of the group. Pass null if you do not need to update the description. Pass an empty string to remove the description. */
+  description?: InputMaybe<Scalars['String']['input']>;
+  /** The ID of the group. */
+  id: Scalars['ID']['input'];
+  /** The new key of the group. Pass null if you do not need to update the key. */
+  key?: InputMaybe<Scalars['String']['input']>;
+  /** The new name of the group. Pass null if you do not need to update the name. Pass an empty string to remove the name. */
+  name?: InputMaybe<Scalars['String']['input']>;
+};
+
+export type UpdateGroupPayload = {
+  __typename?: 'UpdateGroupPayload';
+  group: Group;
+};
+
 export type UpdateIdentityInput = {
   /** New definition of the identity. */
   definition: IdentityDefinition;
   /** Target identity ID. */
-  identityID: Scalars['ID'];
+  identityID: Scalars['ID']['input'];
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type UpdateIdentityPayload = {
@@ -794,13 +1431,29 @@ export type UpdateIdentityPayload = {
   user: User;
 };
 
+export type UpdateRoleInput = {
+  /** The new description of the role. Pass null if you do not need to update the description. Pass an empty string to remove the description. */
+  description?: InputMaybe<Scalars['String']['input']>;
+  /** The ID of the role. */
+  id: Scalars['ID']['input'];
+  /** The new key of the role. Pass null if you do not need to update the key. */
+  key?: InputMaybe<Scalars['String']['input']>;
+  /** The new name of the role. Pass null if you do not need to update the name. Pass an empty string to remove the name. */
+  name?: InputMaybe<Scalars['String']['input']>;
+};
+
+export type UpdateRolePayload = {
+  __typename?: 'UpdateRolePayload';
+  role: Role;
+};
+
 export type UpdateUserInput = {
   /** Whole custom attributes to be set on the user. */
-  customAttributes?: InputMaybe<Scalars['UserCustomAttributes']>;
+  customAttributes?: InputMaybe<Scalars['UserCustomAttributes']['input']>;
   /** Whole standard attributes to be set on the user. */
-  standardAttributes?: InputMaybe<Scalars['UserStandardAttributes']>;
+  standardAttributes?: InputMaybe<Scalars['UserStandardAttributes']['input']>;
   /** Target user ID. */
-  userID: Scalars['ID'];
+  userID: Scalars['ID']['input'];
 };
 
 export type UpdateUserPayload = {
@@ -812,7 +1465,7 @@ export type UpdateUserPayload = {
 export type User = Entity & Node & {
   __typename?: 'User';
   /** The scheduled anonymization time of the user */
-  anonymizeAt?: Maybe<Scalars['DateTime']>;
+  anonymizeAt?: Maybe<Scalars['DateTime']['output']>;
   /** The list of authenticators */
   authenticators?: Maybe<AuthenticatorConnection>;
   /** The list of third party app authorizations */
@@ -820,33 +1473,39 @@ export type User = Entity & Node & {
   /** The list of biometric registrations */
   biometricRegistrations: Array<Identity>;
   /** The creation time of entity */
-  createdAt: Scalars['DateTime'];
+  createdAt: Scalars['DateTime']['output'];
   /** The user's custom attributes */
-  customAttributes: Scalars['UserCustomAttributes'];
+  customAttributes: Scalars['UserCustomAttributes']['output'];
   /** The scheduled deletion time of the user */
-  deleteAt?: Maybe<Scalars['DateTime']>;
+  deleteAt?: Maybe<Scalars['DateTime']['output']>;
   /** The reason of disabled */
-  disableReason?: Maybe<Scalars['String']>;
+  disableReason?: Maybe<Scalars['String']['output']>;
+  /** The list of computed roles this user has. */
+  effectiveRoles?: Maybe<RoleConnection>;
   /** The end user account id constructed based on user's personal data. (e.g. email, phone...etc) */
-  endUserAccountID?: Maybe<Scalars['String']>;
+  endUserAccountID?: Maybe<Scalars['String']['output']>;
   /** The user's formatted name */
-  formattedName?: Maybe<Scalars['String']>;
+  formattedName?: Maybe<Scalars['String']['output']>;
+  /** The list of groups this user has. */
+  groups?: Maybe<GroupConnection>;
   /** The ID of an object */
-  id: Scalars['ID'];
+  id: Scalars['ID']['output'];
   /** The list of identities */
   identities?: Maybe<IdentityConnection>;
   /** Indicates if the user is anonymized */
-  isAnonymized: Scalars['Boolean'];
+  isAnonymized: Scalars['Boolean']['output'];
   /** Indicates if the user is anonymous */
-  isAnonymous: Scalars['Boolean'];
+  isAnonymous: Scalars['Boolean']['output'];
   /** Indicates if the user is deactivated */
-  isDeactivated: Scalars['Boolean'];
+  isDeactivated: Scalars['Boolean']['output'];
   /** Indicates if the user is disabled */
-  isDisabled: Scalars['Boolean'];
+  isDisabled: Scalars['Boolean']['output'];
   /** The last login time of user */
-  lastLoginAt?: Maybe<Scalars['DateTime']>;
+  lastLoginAt?: Maybe<Scalars['DateTime']['output']>;
   /** The list of login ids */
   loginIDs: Array<Identity>;
+  /** Indicate when will user's MFA grace period will end */
+  mfaGracePeriodEndAt?: Maybe<Scalars['DateTime']['output']>;
   /** The list of oauth connections */
   oauthConnections: Array<Identity>;
   /** The list of passkeys */
@@ -857,6 +1516,8 @@ export type User = Entity & Node & {
   primaryOOBOTPSMSAuthenticator?: Maybe<Authenticator>;
   /** The primary password authenticator */
   primaryPassword?: Maybe<Authenticator>;
+  /** The list of roles this user has. */
+  roles?: Maybe<RoleConnection>;
   /** The list of secondary passwordless via email authenticators */
   secondaryOOBOTPEmailAuthenticators: Array<Authenticator>;
   /** The list of secondary passwordless via phone authenticators */
@@ -868,52 +1529,79 @@ export type User = Entity & Node & {
   /** The list of first party app sessions */
   sessions?: Maybe<SessionConnection>;
   /** The user's standard attributes */
-  standardAttributes: Scalars['UserStandardAttributes'];
+  standardAttributes: Scalars['UserStandardAttributes']['output'];
   /** The update time of entity */
-  updatedAt: Scalars['DateTime'];
+  updatedAt: Scalars['DateTime']['output'];
   /** The list of user's verified claims */
   verifiedClaims: Array<Claim>;
   /** The web3 claims */
-  web3: Scalars['Web3Claims'];
+  web3: Scalars['Web3Claims']['output'];
 };
 
 
 /** Authgear user */
 export type UserAuthenticatorsArgs = {
-  after?: InputMaybe<Scalars['String']>;
+  after?: InputMaybe<Scalars['String']['input']>;
   authenticatorKind?: InputMaybe<AuthenticatorKind>;
   authenticatorType?: InputMaybe<AuthenticatorType>;
-  before?: InputMaybe<Scalars['String']>;
-  first?: InputMaybe<Scalars['Int']>;
-  last?: InputMaybe<Scalars['Int']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
 };
 
 
 /** Authgear user */
 export type UserAuthorizationsArgs = {
-  after?: InputMaybe<Scalars['String']>;
-  before?: InputMaybe<Scalars['String']>;
-  first?: InputMaybe<Scalars['Int']>;
-  last?: InputMaybe<Scalars['Int']>;
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+};
+
+
+/** Authgear user */
+export type UserEffectiveRolesArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+};
+
+
+/** Authgear user */
+export type UserGroupsArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
 };
 
 
 /** Authgear user */
 export type UserIdentitiesArgs = {
-  after?: InputMaybe<Scalars['String']>;
-  before?: InputMaybe<Scalars['String']>;
-  first?: InputMaybe<Scalars['Int']>;
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
   identityType?: InputMaybe<IdentityType>;
-  last?: InputMaybe<Scalars['Int']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
+};
+
+
+/** Authgear user */
+export type UserRolesArgs = {
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
 };
 
 
 /** Authgear user */
 export type UserSessionsArgs = {
-  after?: InputMaybe<Scalars['String']>;
-  before?: InputMaybe<Scalars['String']>;
-  first?: InputMaybe<Scalars['Int']>;
-  last?: InputMaybe<Scalars['Int']>;
+  after?: InputMaybe<Scalars['String']['input']>;
+  before?: InputMaybe<Scalars['String']['input']>;
+  first?: InputMaybe<Scalars['Int']['input']>;
+  last?: InputMaybe<Scalars['Int']['input']>;
 };
 
 /** A connection to a list of items. */
@@ -924,14 +1612,14 @@ export type UserConnection = {
   /** Information to aid in pagination. */
   pageInfo: PageInfo;
   /** Total number of nodes in the connection. */
-  totalCount?: Maybe<Scalars['Int']>;
+  totalCount?: Maybe<Scalars['Int']['output']>;
 };
 
 /** An edge in a connection */
 export type UserEdge = {
   __typename?: 'UserEdge';
   /**  cursor for use in pagination */
-  cursor: Scalars['String'];
+  cursor: Scalars['String']['output'];
   /** The item at the end of the edge */
   node?: Maybe<User>;
 };
@@ -940,3 +1628,13 @@ export enum UserSortBy {
   CreatedAt = 'CREATED_AT',
   LastLoginAt = 'LAST_LOGIN_AT'
 }
+
+export type RemoveMfaGracePeriodInput = {
+  /** Target user ID */
+  userID: Scalars['ID']['input'];
+};
+
+export type RemoveMfaGracePeriodPayload = {
+  __typename?: 'removeMFAGracePeriodPayload';
+  user: User;
+};

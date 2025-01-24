@@ -1,10 +1,11 @@
 package transport
 
 import (
+	"context"
 	"net/http"
 	"net/http/httputil"
 
-	relay "github.com/authgear/graphql-go-relay"
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
 	"github.com/authgear/authgear-server/pkg/portal/service"
@@ -18,11 +19,11 @@ func ConfigureAdminAPIRoute(route httproute.Route) httproute.Route {
 }
 
 type AdminAPIAuthzService interface {
-	ListAuthorizedApps(userID string) ([]string, error)
+	ListAuthorizedApps(ctx context.Context, userID string) ([]string, error)
 }
 
 type AdminAPIService interface {
-	Director(appID string, p string, userID string, usage service.Usage) (func(*http.Request), error)
+	Director(ctx context.Context, appID string, p string, userID string, usage service.Usage) (func(*http.Request), error)
 }
 
 type AdminAPILogger struct{ *log.Logger }
@@ -50,6 +51,22 @@ func (h *AdminAPIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	appID := resolved.ID
 
+	// Since we serve GraphiQL with GET, we do not impose access control checking, when the method is GET.
+	// The access control checking is done when some query is executed with method POST.
+	if r.Method == "GET" {
+		emptyActorUserID := ""
+		director, err := h.AdminAPI.Director(r.Context(), appID, p, emptyActorUserID, service.UsageProxy)
+		if err != nil {
+			h.Logger.WithError(err).Errorf("failed to proxy admin API request")
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		proxy := httputil.ReverseProxy{Director: director}
+		proxy.ServeHTTP(w, r)
+		return
+	}
+
 	sessionInfo := session.GetValidSessionInfo(r.Context())
 	if sessionInfo == nil {
 		h.Logger.Debugf("access to admin API requires authenticated user")
@@ -57,11 +74,7 @@ func (h *AdminAPIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var appIDs []string
-	err := h.Database.ReadOnly(func() (err error) {
-		appIDs, err = h.Authz.ListAuthorizedApps(sessionInfo.UserID)
-		return
-	})
+	appIDs, err := h.Authz.ListAuthorizedApps(r.Context(), sessionInfo.UserID)
 	if err != nil {
 		h.Logger.WithError(err).Errorf("failed to list authorized apps")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -81,7 +94,7 @@ func (h *AdminAPIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	director, err := h.AdminAPI.Director(appID, p, sessionInfo.UserID, service.UsageProxy)
+	director, err := h.AdminAPI.Director(r.Context(), appID, p, sessionInfo.UserID, service.UsageProxy)
 	if err != nil {
 		h.Logger.WithError(err).Errorf("failed to proxy admin API request")
 		http.Error(w, err.Error(), http.StatusInternalServerError)

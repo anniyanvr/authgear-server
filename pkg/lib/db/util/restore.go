@@ -13,8 +13,7 @@ import (
 )
 
 type Restorer struct {
-	Context        context.Context
-	DatabaseURL    string
+	ConnectionInfo db.ConnectionInfo
 	DatabaseSchema string
 	InputDir       string
 	AppIDs         []string
@@ -27,8 +26,7 @@ type Restorer struct {
 }
 
 func NewRestorer(
-	context context.Context,
-	databaseURL string,
+	connectionInfo db.ConnectionInfo,
 	databaseSchema string,
 	inputDir string,
 	appIDs []string,
@@ -40,10 +38,9 @@ func NewRestorer(
 	logger := loggerFactory.New("restorer")
 	pool := db.NewPool()
 	handle := db.NewHookHandle(
-		context,
 		pool,
+		connectionInfo,
 		db.ConnectionOptions{
-			DatabaseURL:           databaseURL,
 			MaxOpenConnection:     1,
 			MaxIdleConnection:     1,
 			MaxConnectionLifetime: 1800 * time.Second,
@@ -51,14 +48,10 @@ func NewRestorer(
 		},
 		loggerFactory,
 	)
-	sqlExecutor := &db.SQLExecutor{
-		Context:  context,
-		Database: handle,
-	}
+	sqlExecutor := &db.SQLExecutor{}
 	sqlBuilder := db.NewSQLBuilder(databaseSchema)
 	return &Restorer{
-		Context:        context,
-		DatabaseURL:    databaseURL,
+		ConnectionInfo: connectionInfo,
 		DatabaseSchema: databaseSchema,
 		InputDir:       inputDir,
 		AppIDs:         appIDs,
@@ -71,14 +64,14 @@ func NewRestorer(
 	}
 }
 
-func (r *Restorer) Restore() error {
+func (r *Restorer) Restore(ctx context.Context) error {
 	inputPathAbs, err := filepath.Abs(r.InputDir)
 	if err != nil {
 		panic(err)
 	}
 	r.logger.Info(fmt.Sprintf("Restoring from %s", inputPathAbs))
 
-	return r.dbHandle.WithTx(func() error {
+	return r.dbHandle.WithTx(ctx, func(ctx context.Context) error {
 		for _, tableName := range r.TableNames {
 			inputFile := filepath.Join(inputPathAbs, fmt.Sprintf("%s.csv", tableName))
 			f, err := os.Open(inputFile)
@@ -104,7 +97,7 @@ func (r *Restorer) Restore() error {
 					Insert(r.sqlBuilder.TableName(tableName)).
 					Columns(columns...).
 					Values(row...)
-				_, err := r.sqlExecutor.ExecWith(q)
+				_, err := r.sqlExecutor.ExecWith(ctx, q)
 				if err != nil {
 					return err
 				}

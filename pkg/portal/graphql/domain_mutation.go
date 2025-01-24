@@ -1,11 +1,13 @@
 package graphql
 
 import (
+	"context"
 	"net/url"
 
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
 	"sigs.k8s.io/yaml"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
@@ -49,10 +51,12 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			ctx := p.Context
+
 			// Access Control: authenticated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can create domain")
+				return nil, Unauthenticated.New("only authenticated users can create domain")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
@@ -65,15 +69,15 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access Control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Get(appID)
+			app, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
@@ -82,12 +86,12 @@ var _ = registerMutationField(
 				return nil, apierrors.NewInvalid("custom domain is not supported")
 			}
 
-			domainModel, err := gqlCtx.DomainService.CreateCustomDomain(appID, domain)
+			domainModel, err := gqlCtx.DomainService.CreateCustomDomain(ctx, appID, domain)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.AuditService.Log(app, &nonblocking.ProjectDomainCreatedEventPayload{
+			err = gqlCtx.AuditService.Log(ctx, app, &nonblocking.ProjectDomainCreatedEventPayload{
 				Domain:   domainModel.Domain,
 				DomainID: domainModel.ID,
 			})
@@ -97,8 +101,8 @@ var _ = registerMutationField(
 
 			gqlCtx.Domains.Prime(domainModel.ID, domainModel)
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"domain": gqlCtx.Domains.Load(domainModel.ID),
-				"app":    gqlCtx.Apps.Load(appID),
+				"domain": gqlCtx.Domains.Load(ctx, domainModel.ID),
+				"app":    gqlCtx.Apps.Load(ctx, appID),
 			}).Value, nil
 		},
 	},
@@ -136,11 +140,12 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			// Access Control: authenticated user.
+			ctx := p.Context
 
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			// Access Control: authenticated user.
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can delete domain")
+				return nil, Unauthenticated.New("only authenticated users can delete domain")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
@@ -153,47 +158,51 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access Control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Get(appID)
+			app, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			domains, err := gqlCtx.DomainService.ListDomains(appID)
+			domains, err := gqlCtx.DomainService.ListDomains(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.DomainService.DeleteDomain(appID, domainID)
-			if err != nil {
-				return nil, err
-			}
-
-			// Update public origin if matches the deleted domain.
 			var deletedDomain string
 			var defaultDomain string
-			for _, d := range domains {
-				if d.ID == domainID {
-					deletedDomain = d.Domain
-				} else if !d.IsCustom {
-					defaultDomain = d.Domain
-				}
-			}
-			if deletedDomain != "" && defaultDomain != "" {
-				err = deleteDomainUpdatePublicOrigin(gqlCtx, app, deletedDomain, defaultDomain)
+			err = gqlCtx.GlobalDatabase.WithTx(ctx, func(ctx context.Context) error {
+				err = gqlCtx.DomainService.DeleteDomain(ctx, appID, domainID)
 				if err != nil {
-					return nil, err
+					return err
 				}
-			}
 
-			err = gqlCtx.AuditService.Log(app, &nonblocking.ProjectDomainDeletedEventPayload{
+				// Update public origin if matches the deleted domain.
+				for _, d := range domains {
+					if d.ID == domainID {
+						deletedDomain = d.Domain
+					} else if !d.IsCustom {
+						defaultDomain = d.Domain
+					}
+				}
+				if deletedDomain != "" && defaultDomain != "" {
+					err = deleteDomainUpdatePublicOrigin(ctx, gqlCtx, app, deletedDomain, defaultDomain)
+					if err != nil {
+						return err
+					}
+				}
+
+				return nil
+			})
+
+			err = gqlCtx.AuditService.Log(ctx, app, &nonblocking.ProjectDomainDeletedEventPayload{
 				Domain:   deletedDomain,
 				DomainID: domainID,
 			})
@@ -202,14 +211,14 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"app": gqlCtx.Apps.Load(appID),
+				"app": gqlCtx.Apps.Load(ctx, appID),
 			}).Value, nil
 		},
 	},
 )
 
-func deleteDomainUpdatePublicOrigin(ctx *Context, app *model.App, deletedDomain string, defaultDomain string) error {
-	rawAppConf, err := ctx.AppService.LoadRawAppConfig(app)
+func deleteDomainUpdatePublicOrigin(ctx context.Context, gqlCtx *Context, app *model.App, deletedDomain string, defaultDomain string) error {
+	rawAppConf, _, err := gqlCtx.AppService.LoadRawAppConfig(app)
 	if err != nil {
 		return err
 	}
@@ -241,7 +250,7 @@ func deleteDomainUpdatePublicOrigin(ctx *Context, app *model.App, deletedDomain 
 		return err
 	}
 
-	err = ctx.AppService.UpdateResources(app, []appresource.Update{{
+	err = gqlCtx.AppService.UpdateResources0(ctx, app, []appresource.Update{{
 		Path: configsource.AuthgearYAML,
 		Data: data,
 	}})
@@ -285,10 +294,12 @@ var _ = registerMutationField(
 			},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			ctx := p.Context
+
 			// Access Control: authenticated user.
-			sessionInfo := session.GetValidSessionInfo(p.Context)
+			sessionInfo := session.GetValidSessionInfo(ctx)
 			if sessionInfo == nil {
-				return nil, AccessDenied.New("only authenticated users can verify domain")
+				return nil, Unauthenticated.New("only authenticated users can verify domain")
 			}
 
 			input := p.Args["input"].(map[string]interface{})
@@ -301,27 +312,27 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			gqlCtx := GQLContext(ctx)
 
 			// Access Control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Get(appID)
+			app, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			domain, err := gqlCtx.DomainService.VerifyDomain(appID, domainID)
+			domain, err := gqlCtx.DomainService.VerifyDomain(ctx, appID, domainID)
 			if err != nil {
 				return nil, err
 			}
 
 			gqlCtx.Domains.Prime(domain.ID, domain)
 
-			err = gqlCtx.AuditService.Log(app, &nonblocking.ProjectDomainVerifiedEventPayload{
+			err = gqlCtx.AuditService.Log(ctx, app, &nonblocking.ProjectDomainVerifiedEventPayload{
 				Domain:   domain.Domain,
 				DomainID: domain.ID,
 			})
@@ -330,8 +341,8 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"domain": gqlCtx.Domains.Load(domain.ID),
-				"app":    gqlCtx.Apps.Load(appID),
+				"domain": gqlCtx.Domains.Load(ctx, domain.ID),
+				"app":    gqlCtx.Apps.Load(ctx, appID),
 			}).Value, nil
 		},
 	},

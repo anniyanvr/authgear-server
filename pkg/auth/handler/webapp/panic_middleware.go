@@ -1,15 +1,20 @@
 package webapp
 
 import (
+	"fmt"
 	"net/http"
+
+	"net/url"
 
 	"github.com/felixge/httpsnoop"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
 	"github.com/authgear/authgear-server/pkg/auth/webapp"
+	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/util/log"
 	"github.com/authgear/authgear-server/pkg/util/panicutil"
+	"github.com/authgear/authgear-server/pkg/util/template"
 )
 
 type PanicMiddlewareLogger struct{ *log.Logger }
@@ -18,11 +23,21 @@ func NewPanicMiddlewareLogger(lf *log.Factory) PanicMiddlewareLogger {
 	return PanicMiddlewareLogger{lf.New("webapp-panic-middleware")}
 }
 
+type PanicMiddlewareEndpointsProvider interface {
+	ErrorEndpointURL() *url.URL
+}
+
+type PanicMiddlewareUIImplementationService interface {
+	GetUIImplementation() config.UIImplementation
+}
+
 type PanicMiddleware struct {
-	ErrorCookie   *webapp.ErrorCookie
-	Logger        PanicMiddlewareLogger
-	BaseViewModel *viewmodels.BaseViewModeler
-	Renderer      Renderer
+	ErrorService            *webapp.ErrorService
+	Logger                  PanicMiddlewareLogger
+	BaseViewModel           *viewmodels.BaseViewModeler
+	Renderer                Renderer
+	Endpoints               PanicMiddlewareEndpointsProvider
+	UIImplementationService PanicMiddlewareUIImplementationService
 }
 
 func (m *PanicMiddleware) Handle(next http.Handler) http.Handler {
@@ -50,24 +65,46 @@ func (m *PanicMiddleware) Handle(next http.Handler) http.Handler {
 				m.Logger.WithError(err).Error("panic occurred")
 
 				apiError := apierrors.AsAPIError(err)
+				cookie, cookieErr := m.ErrorService.SetRecoverableError(r.Context(), r, apiError)
+				if cookieErr != nil {
+					panic(cookieErr)
+				}
+				uiImpl := m.UIImplementationService.GetUIImplementation()
+				r.AddCookie(cookie)
 
 				if !written {
-					// Render the HTML directly and DO NOT redirect.
-					// If we redirect to the original URL, then GET request will result in infinite redirect.
-					// See https://github.com/authgear/authgear-server/issues/3509
+					switch r.Method {
+					case "GET":
+						fallthrough
+					case "HEAD":
+						// Render the HTML directly and DO NOT redirect.
+						// If we redirect to the original URL, then GET request will result in infinite redirect.
+						// See https://github.com/authgear/authgear-server/issues/3509
 
-					cookie, cookieErr := m.ErrorCookie.SetRecoverableError(r, apiError)
-					if cookieErr != nil {
-						panic(cookieErr)
+						data := make(map[string]interface{})
+						baseViewModel := m.BaseViewModel.ViewModel(r, w)
+						viewmodels.Embed(data, baseViewModel)
+						var errorHTML *template.HTML
+						switch uiImpl {
+						case config.UIImplementationAuthflowV2:
+							errorHTML = TemplateV2WebFatalErrorHTML
+						case config.UIImplementationInteraction:
+							errorHTML = TemplateWebFatalErrorHTML
+						default:
+							panic(fmt.Errorf("unexpected ui implementation %s", uiImpl))
+						}
+
+						m.Renderer.RenderHTML(w, r, errorHTML, data)
+					default:
+						r.URL.Path = m.Endpoints.ErrorEndpointURL().Path
+						result := &webapp.Result{
+							// Show the error in the original page.
+							// The panic may come from an I/O error, which could recover by retrying.
+							RedirectURI:      r.URL.String(),
+							NavigationAction: webapp.NavigationActionReplace,
+						}
+						result.WriteResponse(w, r)
 					}
-
-					r.AddCookie(cookie)
-
-					data := make(map[string]interface{})
-					baseViewModel := m.BaseViewModel.ViewModel(r, w)
-					viewmodels.Embed(data, baseViewModel)
-
-					m.Renderer.RenderHTML(w, r, TemplateWebFatalErrorHTML, data)
 				}
 			}
 		}()

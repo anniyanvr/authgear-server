@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -9,16 +10,18 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticationinfo"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/oauth"
 	"github.com/authgear/authgear-server/pkg/lib/session"
 	"github.com/authgear/authgear-server/pkg/util/accesscontrol"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
+	"github.com/authgear/authgear-server/pkg/util/setutil"
 	"github.com/authgear/authgear-server/pkg/util/slice"
 	"github.com/authgear/authgear-server/pkg/util/template"
 )
 
 var TemplateWebSelectAccountHTML = template.RegisterHTML(
 	"web/select_account.html",
-	components...,
+	Components...,
 )
 
 func ConfigureSelectAccountRoute(route httproute.Route) httproute.Route {
@@ -28,15 +31,19 @@ func ConfigureSelectAccountRoute(route httproute.Route) httproute.Route {
 }
 
 type SelectAccountUserService interface {
-	Get(userID string, role accesscontrol.Role) (*model.User, error)
+	Get(ctx context.Context, userID string, role accesscontrol.Role) (*model.User, error)
+}
+
+type SelectAccountUserFacade interface {
+	GetUserIDsByLoginHint(ctx context.Context, hint *oauth.LoginHint) ([]string, error)
 }
 
 type SelectAccountIdentityService interface {
-	ListByUser(userID string) ([]*identity.Info, error)
+	ListByUser(ctx context.Context, userID string) ([]*identity.Info, error)
 }
 
 type SelectAccountAuthenticationInfoService interface {
-	Save(entry *authenticationinfo.Entry) error
+	Save(ctx context.Context, entry *authenticationinfo.Entry) error
 }
 
 type SelectAccountUIInfoResolver interface {
@@ -45,6 +52,7 @@ type SelectAccountUIInfoResolver interface {
 
 type SelectAccountViewModel struct {
 	IdentityDisplayName string
+	UserProfile         UserProfile
 }
 
 type SelectAccountHandler struct {
@@ -54,6 +62,7 @@ type SelectAccountHandler struct {
 	AuthenticationConfig      *config.AuthenticationConfig
 	SignedUpCookie            webapp.SignedUpCookieDef
 	Users                     SelectAccountUserService
+	UserFacade                SelectAccountUserFacade
 	Identities                SelectAccountIdentityService
 	AuthenticationInfoService SelectAccountAuthenticationInfoService
 	UIInfoResolver            SelectAccountUIInfoResolver
@@ -63,27 +72,34 @@ type SelectAccountHandler struct {
 	OAuthClientResolver       WebappOAuthClientResolver
 }
 
-func (h *SelectAccountHandler) GetData(r *http.Request, rw http.ResponseWriter, userID string) (map[string]interface{}, error) {
+func (h *SelectAccountHandler) GetData(ctx context.Context, r *http.Request, rw http.ResponseWriter, userID string) (map[string]interface{}, error) {
 	data := make(map[string]interface{})
 	baseViewModel := h.BaseViewModel.ViewModel(r, rw)
 	viewmodels.Embed(data, baseViewModel)
 
-	identities, err := h.Identities.ListByUser(userID)
+	identities, err := h.Identities.ListByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := h.Users.Get(ctx, userID, accesscontrol.RoleGreatest)
 	if err != nil {
 		return nil, err
 	}
 
 	displayID := IdentitiesDisplayName(identities)
+	userProfile := GetUserProfile(user)
 
 	selectAccountViewModel := SelectAccountViewModel{
 		IdentityDisplayName: displayID,
+		UserProfile:         userProfile,
 	}
 	viewmodels.Embed(data, selectAccountViewModel)
 
 	return data, nil
 }
 
-// nolint: gocyclo
+// nolint: gocognit
 func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctrl, err := h.ControllerFactory.New(r, w)
 	if err != nil {
@@ -91,7 +107,7 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	idpSession := session.GetSession(r.Context())
+	session := session.GetSession(r.Context())
 	webSession := webapp.GetSession(r.Context())
 
 	oauthSessionID := ""
@@ -100,6 +116,7 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	canUseIntentReauthenticate := false
 	suppressIDPSessionCookie := false
 	oauthProviderAlias := ""
+	var loginHint *oauth.LoginHint
 
 	if webSession != nil {
 		oauthSessionID = webSession.OAuthSessionID
@@ -108,20 +125,46 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		canUseIntentReauthenticate = webSession.CanUseIntentReauthenticate
 		suppressIDPSessionCookie = webSession.SuppressIDPSessionCookie
 		oauthProviderAlias = webSession.OAuthProviderAlias
+		if webSession.LoginHint != "" {
+			l, err := oauth.ParseLoginHint(webSession.LoginHint)
+			// Ignore the login_hint if it is not something we understand
+			if err == nil {
+				loginHint = l
+			}
+		}
 	}
 
 	// When x_suppress_idp_session_cookie is true, ignore IDP session cookie.
 	if suppressIDPSessionCookie {
-		idpSession = nil
+		session = nil
 	}
 
-	continueWithCurrentAccount := func() error {
+	// Ignore any session that is not allow to be used here
+	if !oauth.ContainsAllScopes(oauth.SessionScopes(session), []string{oauth.PreAuthenticatedURLScope}) {
+		session = nil
+	}
+	// Ignore any session that does not match login_hint
+	ctrl.BeforeHandle(func(ctx context.Context) error {
+		if loginHint != nil && session != nil {
+			hintUserIDs, err := h.UserFacade.GetUserIDsByLoginHint(ctx, loginHint)
+			if err != nil {
+				return err
+			}
+			hintUserIDsSet := setutil.NewSetFromSlice(hintUserIDs, setutil.Identity[string])
+			if !hintUserIDsSet.Has(session.GetAuthenticationInfo().UserID) {
+				session = nil
+			}
+		}
+		return nil
+	})
+
+	continueWithCurrentAccount := func(ctx context.Context) error {
 		redirectURI := ""
 
 		// Complete the web session and redirect to web session's RedirectURI
 		if webSession != nil {
 			redirectURI = webSession.RedirectURI
-			if err := ctrl.DeleteSession(webSession.ID); err != nil {
+			if err := ctrl.DeleteSession(ctx, webSession.ID); err != nil {
 				return err
 			}
 		}
@@ -131,10 +174,10 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Write authentication info cookie
-		if idpSession != nil {
-			info := idpSession.GetAuthenticationInfo()
-			entry := authenticationinfo.NewEntry(info, oauthSessionID)
-			err := h.AuthenticationInfoService.Save(entry)
+		if session != nil {
+			info := session.CreateNewAuthenticationInfoByThisSession()
+			entry := authenticationinfo.NewEntry(info, oauthSessionID, "")
+			err := h.AuthenticationInfoService.Save(ctx, entry)
 			if err != nil {
 				return err
 			}
@@ -182,15 +225,18 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.continueFlow(w, r, "/reauth")
 	}
 
-	// ctrl.Serve() always write response.
+	// ctrl.ServeWithDBTx() always write response.
 	// So we have to put http.Redirect before it.
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		// When promote anonymous user, the end-user should not see this page.
 		if webSession != nil && webSession.LoginHint != "" {
-			h.continueFlow(w, r, "/flows/promote_user")
-			return nil
+			loginHint, err := oauth.ParseLoginHint(webSession.LoginHint)
+			if err == nil && loginHint.Type == oauth.LoginHintTypeAnonymous {
+				h.continueFlow(w, r, "/flows/promote_user")
+				return nil
+			}
 		}
 
 		// When UserIDHint is present, the end-user should never need to select anything in /select_account,
@@ -198,13 +244,13 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		if userIDHint != "" {
 			if loginPrompt && canUseIntentReauthenticate {
 				gotoReauth()
-			} else if !loginPrompt && idpSession != nil && idpSession.GetAuthenticationInfo().UserID == userIDHint {
+			} else if !loginPrompt && session != nil && session.GetAuthenticationInfo().UserID == userIDHint {
 				// Continue without user interaction
 				// 1. UserIDHint present
 				// 2. IDP session present and the same as UserIDHint
 				// 3. prompt!=login
 
-				err := continueWithCurrentAccount()
+				err := continueWithCurrentAccount(ctx)
 				if err != nil {
 					return err
 				}
@@ -227,12 +273,12 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 
 		fromAuthzEndpoint := oauthSessionID != ""
-		if !fromAuthzEndpoint || idpSession == nil || loginPrompt {
+		if !fromAuthzEndpoint || session == nil || loginPrompt {
 			gotoSignupOrLogin()
 			return nil
 		}
 
-		data, err := h.GetData(r, w, idpSession.GetAuthenticationInfo().UserID)
+		data, err := h.GetData(ctx, r, w, session.GetAuthenticationInfo().UserID)
 		if err != nil {
 			return err
 		}
@@ -241,11 +287,11 @@ func (h *SelectAccountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return nil
 	})
 
-	ctrl.PostAction("continue", func() error {
-		return continueWithCurrentAccount()
+	ctrl.PostAction("continue", func(ctx context.Context) error {
+		return continueWithCurrentAccount(ctx)
 	})
 
-	ctrl.PostAction("login", func() error {
+	ctrl.PostAction("login", func(ctx context.Context) error {
 		gotoSignupOrLogin()
 		return nil
 	})

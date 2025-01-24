@@ -5,6 +5,7 @@
 package handler_test
 
 import (
+	context "context"
 	http "net/http"
 	url "net/url"
 	reflect "reflect"
@@ -42,8 +43,47 @@ func (m *MockUIInfoResolver) EXPECT() *MockUIInfoResolverMockRecorder {
 	return m.recorder
 }
 
+// ResolveForAuthorizationEndpoint mocks base method.
+func (m *MockUIInfoResolver) ResolveForAuthorizationEndpoint(ctx context.Context, client *config.OAuthClientConfig, req protocol.AuthorizationRequest) (*oidc.UIInfo, *oidc.UIInfoByProduct, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveForAuthorizationEndpoint", ctx, client, req)
+	ret0, _ := ret[0].(*oidc.UIInfo)
+	ret1, _ := ret[1].(*oidc.UIInfoByProduct)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ResolveForAuthorizationEndpoint indicates an expected call of ResolveForAuthorizationEndpoint.
+func (mr *MockUIInfoResolverMockRecorder) ResolveForAuthorizationEndpoint(ctx, client, req interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveForAuthorizationEndpoint", reflect.TypeOf((*MockUIInfoResolver)(nil).ResolveForAuthorizationEndpoint), ctx, client, req)
+}
+
+// MockAuthenticationInfoResolver is a mock of AuthenticationInfoResolver interface.
+type MockAuthenticationInfoResolver struct {
+	ctrl     *gomock.Controller
+	recorder *MockAuthenticationInfoResolverMockRecorder
+}
+
+// MockAuthenticationInfoResolverMockRecorder is the mock recorder for MockAuthenticationInfoResolver.
+type MockAuthenticationInfoResolverMockRecorder struct {
+	mock *MockAuthenticationInfoResolver
+}
+
+// NewMockAuthenticationInfoResolver creates a new mock instance.
+func NewMockAuthenticationInfoResolver(ctrl *gomock.Controller) *MockAuthenticationInfoResolver {
+	mock := &MockAuthenticationInfoResolver{ctrl: ctrl}
+	mock.recorder = &MockAuthenticationInfoResolverMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockAuthenticationInfoResolver) EXPECT() *MockAuthenticationInfoResolverMockRecorder {
+	return m.recorder
+}
+
 // GetAuthenticationInfoID mocks base method.
-func (m *MockUIInfoResolver) GetAuthenticationInfoID(req *http.Request) (string, bool) {
+func (m *MockAuthenticationInfoResolver) GetAuthenticationInfoID(req *http.Request) (string, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAuthenticationInfoID", req)
 	ret0, _ := ret[0].(string)
@@ -52,25 +92,9 @@ func (m *MockUIInfoResolver) GetAuthenticationInfoID(req *http.Request) (string,
 }
 
 // GetAuthenticationInfoID indicates an expected call of GetAuthenticationInfoID.
-func (mr *MockUIInfoResolverMockRecorder) GetAuthenticationInfoID(req interface{}) *gomock.Call {
+func (mr *MockAuthenticationInfoResolverMockRecorder) GetAuthenticationInfoID(req interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAuthenticationInfoID", reflect.TypeOf((*MockUIInfoResolver)(nil).GetAuthenticationInfoID), req)
-}
-
-// ResolveForAuthorizationEndpoint mocks base method.
-func (m *MockUIInfoResolver) ResolveForAuthorizationEndpoint(client *config.OAuthClientConfig, req protocol.AuthorizationRequest) (*oidc.UIInfo, *oidc.UIInfoByProduct, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResolveForAuthorizationEndpoint", client, req)
-	ret0, _ := ret[0].(*oidc.UIInfo)
-	ret1, _ := ret[1].(*oidc.UIInfoByProduct)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// ResolveForAuthorizationEndpoint indicates an expected call of ResolveForAuthorizationEndpoint.
-func (mr *MockUIInfoResolverMockRecorder) ResolveForAuthorizationEndpoint(client, req interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveForAuthorizationEndpoint", reflect.TypeOf((*MockUIInfoResolver)(nil).ResolveForAuthorizationEndpoint), client, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAuthenticationInfoID", reflect.TypeOf((*MockAuthenticationInfoResolver)(nil).GetAuthenticationInfoID), req)
 }
 
 // MockUIURLBuilder is a mock of UIURLBuilder interface.
@@ -96,19 +120,34 @@ func (m *MockUIURLBuilder) EXPECT() *MockUIURLBuilderMockRecorder {
 	return m.recorder
 }
 
-// Build mocks base method.
-func (m *MockUIURLBuilder) Build(client *config.OAuthClientConfig, r protocol.AuthorizationRequest, e *oauthsession.Entry) (*url.URL, error) {
+// BuildAuthenticationURL mocks base method.
+func (m *MockUIURLBuilder) BuildAuthenticationURL(client *config.OAuthClientConfig, r protocol.AuthorizationRequest, e *oauthsession.Entry) (*url.URL, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Build", client, r, e)
+	ret := m.ctrl.Call(m, "BuildAuthenticationURL", client, r, e)
 	ret0, _ := ret[0].(*url.URL)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// Build indicates an expected call of Build.
-func (mr *MockUIURLBuilderMockRecorder) Build(client, r, e interface{}) *gomock.Call {
+// BuildAuthenticationURL indicates an expected call of BuildAuthenticationURL.
+func (mr *MockUIURLBuilderMockRecorder) BuildAuthenticationURL(client, r, e interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Build", reflect.TypeOf((*MockUIURLBuilder)(nil).Build), client, r, e)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BuildAuthenticationURL", reflect.TypeOf((*MockUIURLBuilder)(nil).BuildAuthenticationURL), client, r, e)
+}
+
+// BuildSettingsActionURL mocks base method.
+func (m *MockUIURLBuilder) BuildSettingsActionURL(client *config.OAuthClientConfig, r protocol.AuthorizationRequest, e *oauthsession.Entry) (*url.URL, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BuildSettingsActionURL", client, r, e)
+	ret0, _ := ret[0].(*url.URL)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BuildSettingsActionURL indicates an expected call of BuildSettingsActionURL.
+func (mr *MockUIURLBuilderMockRecorder) BuildSettingsActionURL(client, r, e interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BuildSettingsActionURL", reflect.TypeOf((*MockUIURLBuilder)(nil).BuildSettingsActionURL), client, r, e)
 }
 
 // MockAppSessionTokenService is a mock of AppSessionTokenService interface.
@@ -135,18 +174,18 @@ func (m *MockAppSessionTokenService) EXPECT() *MockAppSessionTokenServiceMockRec
 }
 
 // Handle mocks base method.
-func (m *MockAppSessionTokenService) Handle(input oauth.AppSessionTokenInput) (httputil.Result, error) {
+func (m *MockAppSessionTokenService) Handle(ctx context.Context, input oauth.AppSessionTokenInput) (httputil.Result, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Handle", input)
+	ret := m.ctrl.Call(m, "Handle", ctx, input)
 	ret0, _ := ret[0].(httputil.Result)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Handle indicates an expected call of Handle.
-func (mr *MockAppSessionTokenServiceMockRecorder) Handle(input interface{}) *gomock.Call {
+func (mr *MockAppSessionTokenServiceMockRecorder) Handle(ctx, input interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Handle", reflect.TypeOf((*MockAppSessionTokenService)(nil).Handle), input)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Handle", reflect.TypeOf((*MockAppSessionTokenService)(nil).Handle), ctx, input)
 }
 
 // MockAuthenticationInfoService is a mock of AuthenticationInfoService interface.
@@ -173,32 +212,32 @@ func (m *MockAuthenticationInfoService) EXPECT() *MockAuthenticationInfoServiceM
 }
 
 // Delete mocks base method.
-func (m *MockAuthenticationInfoService) Delete(entryID string) error {
+func (m *MockAuthenticationInfoService) Delete(ctx context.Context, entryID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Delete", entryID)
+	ret := m.ctrl.Call(m, "Delete", ctx, entryID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Delete indicates an expected call of Delete.
-func (mr *MockAuthenticationInfoServiceMockRecorder) Delete(entryID interface{}) *gomock.Call {
+func (mr *MockAuthenticationInfoServiceMockRecorder) Delete(ctx, entryID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockAuthenticationInfoService)(nil).Delete), entryID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockAuthenticationInfoService)(nil).Delete), ctx, entryID)
 }
 
 // Get mocks base method.
-func (m *MockAuthenticationInfoService) Get(entryID string) (*authenticationinfo.Entry, error) {
+func (m *MockAuthenticationInfoService) Get(ctx context.Context, entryID string) (*authenticationinfo.Entry, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", entryID)
+	ret := m.ctrl.Call(m, "Get", ctx, entryID)
 	ret0, _ := ret[0].(*authenticationinfo.Entry)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Get indicates an expected call of Get.
-func (mr *MockAuthenticationInfoServiceMockRecorder) Get(entryID interface{}) *gomock.Call {
+func (mr *MockAuthenticationInfoServiceMockRecorder) Get(ctx, entryID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockAuthenticationInfoService)(nil).Get), entryID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockAuthenticationInfoService)(nil).Get), ctx, entryID)
 }
 
 // MockCookieManager is a mock of CookieManager interface.
@@ -291,46 +330,46 @@ func (m *MockOAuthSessionService) EXPECT() *MockOAuthSessionServiceMockRecorder 
 }
 
 // Delete mocks base method.
-func (m *MockOAuthSessionService) Delete(entryID string) error {
+func (m *MockOAuthSessionService) Delete(ctx context.Context, entryID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Delete", entryID)
+	ret := m.ctrl.Call(m, "Delete", ctx, entryID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Delete indicates an expected call of Delete.
-func (mr *MockOAuthSessionServiceMockRecorder) Delete(entryID interface{}) *gomock.Call {
+func (mr *MockOAuthSessionServiceMockRecorder) Delete(ctx, entryID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockOAuthSessionService)(nil).Delete), entryID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockOAuthSessionService)(nil).Delete), ctx, entryID)
 }
 
 // Get mocks base method.
-func (m *MockOAuthSessionService) Get(entryID string) (*oauthsession.Entry, error) {
+func (m *MockOAuthSessionService) Get(ctx context.Context, entryID string) (*oauthsession.Entry, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", entryID)
+	ret := m.ctrl.Call(m, "Get", ctx, entryID)
 	ret0, _ := ret[0].(*oauthsession.Entry)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Get indicates an expected call of Get.
-func (mr *MockOAuthSessionServiceMockRecorder) Get(entryID interface{}) *gomock.Call {
+func (mr *MockOAuthSessionServiceMockRecorder) Get(ctx, entryID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockOAuthSessionService)(nil).Get), entryID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockOAuthSessionService)(nil).Get), ctx, entryID)
 }
 
 // Save mocks base method.
-func (m *MockOAuthSessionService) Save(entry *oauthsession.Entry) error {
+func (m *MockOAuthSessionService) Save(ctx context.Context, entry *oauthsession.Entry) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Save", entry)
+	ret := m.ctrl.Call(m, "Save", ctx, entry)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Save indicates an expected call of Save.
-func (mr *MockOAuthSessionServiceMockRecorder) Save(entry interface{}) *gomock.Call {
+func (mr *MockOAuthSessionServiceMockRecorder) Save(ctx, entry interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Save", reflect.TypeOf((*MockOAuthSessionService)(nil).Save), entry)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Save", reflect.TypeOf((*MockOAuthSessionService)(nil).Save), ctx, entry)
 }
 
 // MockAuthorizationService is a mock of AuthorizationService interface.
@@ -357,46 +396,46 @@ func (m *MockAuthorizationService) EXPECT() *MockAuthorizationServiceMockRecorde
 }
 
 // Check mocks base method.
-func (m *MockAuthorizationService) Check(clientID, userID string, scopes []string) (*oauth.Authorization, error) {
+func (m *MockAuthorizationService) Check(ctx context.Context, clientID, userID string, scopes []string) (*oauth.Authorization, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Check", clientID, userID, scopes)
+	ret := m.ctrl.Call(m, "Check", ctx, clientID, userID, scopes)
 	ret0, _ := ret[0].(*oauth.Authorization)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Check indicates an expected call of Check.
-func (mr *MockAuthorizationServiceMockRecorder) Check(clientID, userID, scopes interface{}) *gomock.Call {
+func (mr *MockAuthorizationServiceMockRecorder) Check(ctx, clientID, userID, scopes interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Check", reflect.TypeOf((*MockAuthorizationService)(nil).Check), clientID, userID, scopes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Check", reflect.TypeOf((*MockAuthorizationService)(nil).Check), ctx, clientID, userID, scopes)
 }
 
 // CheckAndGrant mocks base method.
-func (m *MockAuthorizationService) CheckAndGrant(clientID, userID string, scopes []string) (*oauth.Authorization, error) {
+func (m *MockAuthorizationService) CheckAndGrant(ctx context.Context, clientID, userID string, scopes []string) (*oauth.Authorization, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckAndGrant", clientID, userID, scopes)
+	ret := m.ctrl.Call(m, "CheckAndGrant", ctx, clientID, userID, scopes)
 	ret0, _ := ret[0].(*oauth.Authorization)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CheckAndGrant indicates an expected call of CheckAndGrant.
-func (mr *MockAuthorizationServiceMockRecorder) CheckAndGrant(clientID, userID, scopes interface{}) *gomock.Call {
+func (mr *MockAuthorizationServiceMockRecorder) CheckAndGrant(ctx, clientID, userID, scopes interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckAndGrant", reflect.TypeOf((*MockAuthorizationService)(nil).CheckAndGrant), clientID, userID, scopes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckAndGrant", reflect.TypeOf((*MockAuthorizationService)(nil).CheckAndGrant), ctx, clientID, userID, scopes)
 }
 
 // GetByID mocks base method.
-func (m *MockAuthorizationService) GetByID(id string) (*oauth.Authorization, error) {
+func (m *MockAuthorizationService) GetByID(ctx context.Context, id string) (*oauth.Authorization, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByID", id)
+	ret := m.ctrl.Call(m, "GetByID", ctx, id)
 	ret0, _ := ret[0].(*oauth.Authorization)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetByID indicates an expected call of GetByID.
-func (mr *MockAuthorizationServiceMockRecorder) GetByID(id interface{}) *gomock.Call {
+func (mr *MockAuthorizationServiceMockRecorder) GetByID(ctx, id interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockAuthorizationService)(nil).GetByID), id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockAuthorizationService)(nil).GetByID), ctx, id)
 }

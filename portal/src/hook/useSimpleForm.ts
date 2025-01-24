@@ -67,7 +67,8 @@ export function useSimpleForm<State, Result = unknown>(
     const err = validate?.(currentState);
     if (err) {
       setError(err);
-      return;
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw err;
     }
 
     setIsLoading(true);
@@ -90,12 +91,9 @@ export function useSimpleForm<State, Result = unknown>(
     }
   }, [isLoading, submit, validate, currentState, initialState, stateMode]);
 
-  const setState = useCallback(
-    (fn: (state: State) => State) => {
-      setCurrentState(fn(currentState));
-    },
-    [currentState]
-  );
+  const setState = useCallback((fn: (state: State) => State) => {
+    setCurrentState((s) => fn(s));
+  }, []);
 
   return {
     isUpdating: isLoading,

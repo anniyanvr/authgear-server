@@ -1,13 +1,17 @@
 package nodes
 
 import (
+	"context"
 	"net/url"
+
+	"github.com/authgear/oauthrelyingparty/pkg/api/oauthrelyingparty"
 
 	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
+	"github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/wechat"
+	"github.com/authgear/authgear-server/pkg/lib/webappoauth"
 	"github.com/authgear/authgear-server/pkg/util/crypto"
 )
 
@@ -32,28 +36,28 @@ func (e *EdgeUseIdentityOAuthProvider) GetIdentityCandidates() []identity.Candid
 	candidates := []identity.Candidate{}
 	for _, c := range e.Configs {
 		conf := c
-		if !identity.IsOAuthSSOProviderTypeDisabled(conf.Type, e.FeatureConfig) {
-			candidates = append(candidates, identity.NewOAuthCandidate(&conf))
+		if !identity.IsOAuthSSOProviderTypeDisabled(conf.AsProviderConfig(), e.FeatureConfig) {
+			candidates = append(candidates, identity.NewOAuthCandidate(conf))
 		}
 	}
 	return candidates
 }
 
-func (e *EdgeUseIdentityOAuthProvider) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
+func (e *EdgeUseIdentityOAuthProvider) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
 	var input InputUseIdentityOAuthProvider
 	if !interaction.Input(rawInput, &input) {
 		return nil, interaction.ErrIncompatibleInput
 	}
 
 	alias := input.GetProviderAlias()
-	var oauthConfig *config.OAuthSSOProviderConfig
+	var oauthConfig config.OAuthSSOProviderConfig
 	for _, c := range e.Configs {
-		if identity.IsOAuthSSOProviderTypeDisabled(c.Type, e.FeatureConfig) {
+		if identity.IsOAuthSSOProviderTypeDisabled(c.AsProviderConfig(), e.FeatureConfig) {
 			continue
 		}
-		if c.Alias == alias {
+		if c.Alias() == alias {
 			conf := c
-			oauthConfig = &conf
+			oauthConfig = conf
 			break
 		}
 	}
@@ -64,33 +68,43 @@ func (e *EdgeUseIdentityOAuthProvider) Instantiate(ctx *interaction.Context, gra
 	nonceSource := ctx.Nonces.GenerateAndSet()
 	errorRedirectURI := input.GetErrorRedirectURI()
 
-	oauthProvider := ctx.OAuthProviderFactory.NewOAuthProvider(alias)
-	if oauthProvider == nil {
-		return nil, api.ErrOAuthProviderNotFound
+	providerConfig, err := ctx.OAuthProviderFactory.GetProviderConfig(alias)
+	if err != nil {
+		return nil, err
 	}
 
 	nonce := crypto.SHA256String(nonceSource)
 
 	redirectURIForOAuthProvider := ctx.OAuthRedirectURIBuilder.SSOCallbackURL(alias).String()
 	// Special case: wechat needs to use a special callback endpoint.
-	if oauthProvider.Config().Type == config.OAuthSSOProviderTypeWechat {
+	if providerConfig.Type() == wechat.Type {
 		redirectURIForOAuthProvider = ctx.OAuthRedirectURIBuilder.WeChatCallbackEndpointURL().String()
 	}
 
-	param := sso.GetAuthURLParam{
+	state := &webappoauth.WebappOAuthState{
+		UIImplementation: config.UIImplementationInteraction,
+		WebSessionID:     ctx.WebSessionID,
+	}
+	stateToken, err := ctx.OAuthStateStore.GenerateState(goCtx, state)
+	if err != nil {
+		return nil, err
+	}
+
+	param := oauthrelyingparty.GetAuthorizationURLOptions{
 		RedirectURI: redirectURIForOAuthProvider,
 		// We use response_mode=form_post if it is supported.
-		ResponseMode: sso.ResponseModeFormPost,
+		ResponseMode: oauthrelyingparty.ResponseModeFormPost,
 		Nonce:        nonce,
 		Prompt:       input.GetPrompt(),
+		State:        stateToken,
 	}
-	redirectURI, err := oauthProvider.GetAuthURL(param)
+	redirectURI, err := ctx.OAuthProviderFactory.GetAuthorizationURL(goCtx, alias, param)
 	if err != nil {
 		return nil, err
 	}
 
 	// Special case: wechat needs to redirect a special page.
-	if oauthProvider.Config().Type == config.OAuthSSOProviderTypeWechat {
+	if providerConfig.Type() == wechat.Type {
 		v := url.Values{}
 		v.Add("x_auth_url", redirectURI)
 		redirectURI = ctx.OAuthRedirectURIBuilder.WeChatAuthorizeURL(alias).String() + "?" + v.Encode()
@@ -99,7 +113,7 @@ func (e *EdgeUseIdentityOAuthProvider) Instantiate(ctx *interaction.Context, gra
 	return &NodeUseIdentityOAuthProvider{
 		IsAuthentication: e.IsAuthentication,
 		IsCreating:       e.IsCreating,
-		Config:           *oauthConfig,
+		Config:           oauthConfig,
 		HashedNonce:      nonce,
 		ErrorRedirectURI: errorRedirectURI,
 		RedirectURI:      redirectURI,
@@ -125,15 +139,15 @@ func (n *NodeUseIdentityOAuthProvider) GetErrorRedirectURI() string {
 	return n.ErrorRedirectURI
 }
 
-func (n *NodeUseIdentityOAuthProvider) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeUseIdentityOAuthProvider) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeUseIdentityOAuthProvider) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeUseIdentityOAuthProvider) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return nil, nil
 }
 
-func (n *NodeUseIdentityOAuthProvider) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
+func (n *NodeUseIdentityOAuthProvider) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
 	return []interaction.Edge{
 		&EdgeUseIdentityOAuthUserInfo{
 			IsAuthentication: n.IsAuthentication,

@@ -1,15 +1,17 @@
 package otp
 
 import (
+	"context"
 	"errors"
 	"time"
+
+	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
 	"github.com/authgear/authgear-server/pkg/util/log"
-	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 )
 
 type GenerateOptions struct {
@@ -30,29 +32,29 @@ type VerifyOptions struct {
 }
 
 type CodeStore interface {
-	Create(purpose Purpose, code *Code) error
-	Get(purpose Purpose, target string) (*Code, error)
-	Update(purpose Purpose, code *Code) error
-	Delete(purpose Purpose, target string) error
+	Create(ctx context.Context, purpose Purpose, code *Code) error
+	Get(ctx context.Context, purpose Purpose, target string) (*Code, error)
+	Update(ctx context.Context, purpose Purpose, code *Code) error
+	Delete(ctx context.Context, purpose Purpose, target string) error
 }
 
 type LookupStore interface {
-	Create(purpose Purpose, code string, target string, expireAt time.Time) error
-	Get(purpose Purpose, code string) (string, error)
-	Delete(purpose Purpose, code string) error
+	Create(ctx context.Context, purpose Purpose, code string, target string, expireAt time.Time) error
+	Get(ctx context.Context, purpose Purpose, code string) (string, error)
+	Delete(ctx context.Context, purpose Purpose, code string) error
 }
 
 type AttemptTracker interface {
-	ResetFailedAttempts(purpose Purpose, target string) error
-	GetFailedAttempts(purpose Purpose, target string) (int, error)
-	IncrementFailedAttempts(purpose Purpose, target string) (int, error)
+	ResetFailedAttempts(ctx context.Context, kind Kind, target string) error
+	GetFailedAttempts(ctx context.Context, kind Kind, target string) (int, error)
+	IncrementFailedAttempts(ctx context.Context, kind Kind, target string) (int, error)
 }
 
 type RateLimiter interface {
-	Allow(spec ratelimit.BucketSpec) error
-	Reserve(spec ratelimit.BucketSpec) *ratelimit.Reservation
-	ReserveN(spec ratelimit.BucketSpec, n int) *ratelimit.Reservation
-	Cancel(r *ratelimit.Reservation)
+	GetTimeToAct(ctx context.Context, spec ratelimit.BucketSpec) (*time.Time, error)
+	Allow(ctx context.Context, spec ratelimit.BucketSpec) (*ratelimit.FailedReservation, error)
+	Reserve(ctx context.Context, spec ratelimit.BucketSpec) (*ratelimit.Reservation, *ratelimit.FailedReservation, error)
+	Cancel(ctx context.Context, r *ratelimit.Reservation)
 }
 
 type Logger struct{ *log.Logger }
@@ -73,12 +75,12 @@ type Service struct {
 	RateLimiter           RateLimiter
 }
 
-func (s *Service) getCode(purpose Purpose, target string) (*Code, error) {
-	return s.CodeStore.Get(purpose, target)
+func (s *Service) getCode(ctx context.Context, purpose Purpose, target string) (*Code, error) {
+	return s.CodeStore.Get(ctx, purpose, target)
 }
 
-func (s *Service) deleteCode(kind Kind, target string) error {
-	if err := s.CodeStore.Delete(kind.Purpose(), target); err != nil {
+func (s *Service) deleteCode(ctx context.Context, kind Kind, target string) error {
+	if err := s.CodeStore.Delete(ctx, kind.Purpose(), target); err != nil {
 		return err
 	}
 	// No need delete from lookup store;
@@ -86,9 +88,9 @@ func (s *Service) deleteCode(kind Kind, target string) error {
 	return nil
 }
 
-func (s *Service) consumeCode(purpose Purpose, code *Code) error {
+func (s *Service) consumeCode(ctx context.Context, purpose Purpose, code *Code) error {
 	code.Consumed = true
-	if err := s.CodeStore.Update(purpose, code); err != nil {
+	if err := s.CodeStore.Update(ctx, purpose, code); err != nil {
 		return err
 	}
 	// No need delete from lookup store;
@@ -96,8 +98,8 @@ func (s *Service) consumeCode(purpose Purpose, code *Code) error {
 	return nil
 }
 
-func (s *Service) handleFailedAttemptsRevocation(kind Kind, target string) error {
-	failedAttempts, err := s.AttemptTracker.IncrementFailedAttempts(kind.Purpose(), target)
+func (s *Service) handleFailedAttemptsRevocation(ctx context.Context, kind Kind, target string) error {
+	failedAttempts, err := s.AttemptTracker.IncrementFailedAttempts(ctx, kind, target)
 	if err != nil {
 		return err
 	}
@@ -110,15 +112,15 @@ func (s *Service) handleFailedAttemptsRevocation(kind Kind, target string) error
 	return nil
 }
 
-func (s *Service) checkFailedAttemptsRevocation(kind Kind, target string) error {
-	failedAttempts, err := s.AttemptTracker.GetFailedAttempts(kind.Purpose(), target)
+func (s *Service) checkFailedAttemptsRevocation(ctx context.Context, kind Kind, target string) error {
+	failedAttempts, err := s.AttemptTracker.GetFailedAttempts(ctx, kind, target)
 	if err != nil {
 		return err
 	}
 
 	maxFailedAttempts := kind.RevocationMaxFailedAttempts()
 	if maxFailedAttempts != 0 && failedAttempts >= maxFailedAttempts {
-		err = s.deleteCode(kind, target)
+		err = s.deleteCode(ctx, kind, target)
 		if err != nil {
 			s.Logger.WithError(err).Warn("failed to revoke OTP")
 		}
@@ -128,18 +130,30 @@ func (s *Service) checkFailedAttemptsRevocation(kind Kind, target string) error 
 	return nil
 }
 
-func (s *Service) GenerateOTP(kind Kind, target string, form Form, opts *GenerateOptions) (string, error) {
+func (s *Service) GenerateOTP(ctx context.Context, kind Kind, target string, form Form, opts *GenerateOptions) (string, error) {
 	if !opts.SkipRateLimits {
-		if err := s.RateLimiter.Allow(kind.RateLimitTriggerCooldown(target)); err != nil {
+		failed, err := s.RateLimiter.Allow(ctx, kind.RateLimitTriggerCooldown(target))
+		if err != nil {
+			return "", err
+		}
+		if err := failed.Error(); err != nil {
 			return "", err
 		}
 
-		if err := s.RateLimiter.Allow(kind.RateLimitTriggerPerIP(string(s.RemoteIP))); err != nil {
+		failed, err = s.RateLimiter.Allow(ctx, kind.RateLimitTriggerPerIP(string(s.RemoteIP)))
+		if err != nil {
+			return "", err
+		}
+		if err := failed.Error(); err != nil {
 			return "", err
 		}
 
 		if opts.UserID != "" {
-			if err := s.RateLimiter.Allow(kind.RateLimitTriggerPerUser(opts.UserID)); err != nil {
+			failed, err := s.RateLimiter.Allow(ctx, kind.RateLimitTriggerPerUser(opts.UserID))
+			if err != nil {
+				return "", err
+			}
+			if err := failed.Error(); err != nil {
 				return "", err
 			}
 		}
@@ -161,19 +175,19 @@ func (s *Service) GenerateOTP(kind Kind, target string, form Form, opts *Generat
 		WebSessionID:                           opts.WebSessionID,
 	}
 
-	err := s.CodeStore.Create(kind.Purpose(), code)
+	err := s.CodeStore.Create(ctx, kind.Purpose(), code)
 	if err != nil {
 		return "", err
 	}
 
 	if form.AllowLookupByCode() {
-		err := s.LookupStore.Create(code.Purpose, code.Code, code.Target, code.ExpireAt)
+		err := s.LookupStore.Create(ctx, code.Purpose, code.Code, code.Target, code.ExpireAt)
 		if err != nil {
 			return "", err
 		}
 	}
 
-	if err := s.AttemptTracker.ResetFailedAttempts(kind.Purpose(), target); err != nil {
+	if err := s.AttemptTracker.ResetFailedAttempts(ctx, kind, target); err != nil {
 		// non-critical error; log and continue
 		s.Logger.WithError(err).Warn("failed to reset failed attempts counter")
 	}
@@ -181,8 +195,8 @@ func (s *Service) GenerateOTP(kind Kind, target string, form Form, opts *Generat
 	return code.Code, nil
 }
 
-func (s *Service) VerifyOTP(kind Kind, target string, otp string, opts *VerifyOptions) error {
-	if err := s.checkFailedAttemptsRevocation(kind, target); err != nil {
+func (s *Service) VerifyOTP(ctx context.Context, kind Kind, target string, otp string, opts *VerifyOptions) error {
+	if err := s.checkFailedAttemptsRevocation(ctx, kind, target); err != nil {
 		return err
 	}
 
@@ -192,26 +206,32 @@ func (s *Service) VerifyOTP(kind Kind, target string, otp string, opts *VerifyOp
 	defer func() {
 		if isCodeValid {
 			for _, r := range reservations {
-				s.RateLimiter.Cancel(r)
+				s.RateLimiter.Cancel(ctx, r)
 			}
 		}
 	}()
 
-	r1 := s.RateLimiter.Reserve(kind.RateLimitValidatePerIP(string(s.RemoteIP)))
-	if err := r1.Error(); err != nil {
+	r1, failedR1, err := s.RateLimiter.Reserve(ctx, kind.RateLimitValidatePerIP(string(s.RemoteIP)))
+	if err != nil {
+		return err
+	}
+	if err := failedR1.Error(); err != nil {
 		return err
 	}
 	reservations = append(reservations, r1)
 
 	if opts.UserID != "" {
-		r2 := s.RateLimiter.Reserve(kind.RateLimitValidatePerUserPerIP(opts.UserID, string(s.RemoteIP)))
-		if err := r2.Error(); err != nil {
+		r2, failedR2, err := s.RateLimiter.Reserve(ctx, kind.RateLimitValidatePerUserPerIP(opts.UserID, string(s.RemoteIP)))
+		if err != nil {
+			return err
+		}
+		if err := failedR2.Error(); err != nil {
 			return err
 		}
 		reservations = append(reservations, r2)
 	}
 
-	code, err := s.getCode(kind.Purpose(), target)
+	code, err := s.getCode(ctx, kind.Purpose(), target)
 	if errors.Is(err, ErrCodeNotFound) {
 		return ErrInvalidCode
 	} else if err != nil {
@@ -231,7 +251,7 @@ func (s *Service) VerifyOTP(kind Kind, target string, otp string, opts *VerifyOp
 	}
 
 	if !code.Form.VerifyCode(codeToVerify, code.Code) {
-		ferr := s.handleFailedAttemptsRevocation(kind, target)
+		ferr := s.handleFailedAttemptsRevocation(ctx, kind, target)
 		if errors.Is(ferr, ErrTooManyAttempts) {
 			return ferr
 		} else if ferr != nil {
@@ -245,7 +265,7 @@ func (s *Service) VerifyOTP(kind Kind, target string, otp string, opts *VerifyOp
 	isCodeValid = true
 
 	if !opts.SkipConsume {
-		if err := s.consumeCode(kind.Purpose(), code); err != nil {
+		if err := s.consumeCode(ctx, kind.Purpose(), code); err != nil {
 			return err
 		}
 	}
@@ -253,8 +273,8 @@ func (s *Service) VerifyOTP(kind Kind, target string, otp string, opts *VerifyOp
 	return nil
 }
 
-func (s *Service) ConsumeCode(purpose Purpose, target string) error {
-	code, err := s.getCode(purpose, target)
+func (s *Service) ConsumeCode(ctx context.Context, purpose Purpose, target string) error {
+	code, err := s.getCode(ctx, purpose, target)
 	if errors.Is(err, ErrCodeNotFound) {
 		return nil
 	} else if err != nil {
@@ -268,33 +288,33 @@ func (s *Service) ConsumeCode(purpose Purpose, target string) error {
 		return nil
 	}
 
-	return s.consumeCode(purpose, code)
+	return s.consumeCode(ctx, purpose, code)
 }
 
-func (s *Service) SetSubmittedCode(kind Kind, target string, code string) (*State, error) {
-	codeModel, err := s.getCode(kind.Purpose(), target)
+func (s *Service) SetSubmittedCode(ctx context.Context, kind Kind, target string, code string) (*State, error) {
+	codeModel, err := s.getCode(ctx, kind.Purpose(), target)
 	if err != nil {
 		return nil, err
 	}
 
 	codeModel.UserInputtedCode = code
-	if err := s.CodeStore.Update(kind.Purpose(), codeModel); err != nil {
+	if err := s.CodeStore.Update(ctx, kind.Purpose(), codeModel); err != nil {
 		return nil, err
 	}
 
-	return s.InspectState(kind, target)
+	return s.InspectState(ctx, kind, target)
 }
 
-func (s *Service) LookupCode(purpose Purpose, code string) (target string, err error) {
-	return s.LookupStore.Get(purpose, code)
+func (s *Service) LookupCode(ctx context.Context, purpose Purpose, code string) (target string, err error) {
+	return s.LookupStore.Get(ctx, purpose, code)
 }
 
-func (s *Service) InspectCode(purpose Purpose, target string) (*Code, error) {
-	return s.getCode(purpose, target)
+func (s *Service) InspectCode(ctx context.Context, purpose Purpose, target string) (*Code, error) {
+	return s.getCode(ctx, purpose, target)
 }
 
-func (s *Service) InspectState(kind Kind, target string) (*State, error) {
-	ferr := s.checkFailedAttemptsRevocation(kind, target)
+func (s *Service) InspectState(ctx context.Context, kind Kind, target string) (*State, error) {
+	ferr := s.checkFailedAttemptsRevocation(ctx, kind, target)
 	tooManyAttempts := false
 	if errors.Is(ferr, ErrTooManyAttempts) {
 		tooManyAttempts = true
@@ -302,11 +322,15 @@ func (s *Service) InspectState(kind Kind, target string) (*State, error) {
 		return nil, ferr
 	}
 
-	// Inspect rate limit state by reserving no tokens.
-	reservation := s.RateLimiter.ReserveN(kind.RateLimitTriggerCooldown(target), 0)
+	// This is intentionally zero.
+	var canResendAt time.Time
+	timeToAct, err := s.RateLimiter.GetTimeToAct(ctx, kind.RateLimitTriggerCooldown(target))
+	if err != nil {
+		return nil, err
+	}
+	canResendAt = *timeToAct
+
 	now := s.Clock.NowUTC()
-	canResendAt := reservation.GetTimeToAct()
-	s.RateLimiter.Cancel(reservation)
 
 	state := &State{
 		ExpireAt:        now,
@@ -315,7 +339,7 @@ func (s *Service) InspectState(kind Kind, target string) (*State, error) {
 		TooManyAttempts: tooManyAttempts,
 	}
 
-	code, err := s.getCode(kind.Purpose(), target)
+	code, err := s.getCode(ctx, kind.Purpose(), target)
 	if errors.Is(err, ErrCodeNotFound) {
 		code = nil
 	} else if err != nil {

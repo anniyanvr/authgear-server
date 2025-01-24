@@ -5,6 +5,7 @@ import { DEFAULT_TEMPLATE_LOCALE } from "./resources";
 export interface SystemConfig {
   authgearClientID: string;
   authgearEndpoint: string;
+  authgearWebSDKSessionType: "cookie" | "refresh_token";
   sentryDSN: string;
   appHostSuffix: string;
   availableLanguages: string[];
@@ -12,12 +13,13 @@ export interface SystemConfig {
   themes: SystemConfigThemes;
   translations: SystemConfigTranslations;
   searchEnabled: boolean;
-  web3Enabled: boolean;
   auditLogEnabled: boolean;
   gitCommitHash: string;
   analyticEnabled: boolean;
   analyticEpoch: string;
   gtmContainerID: string;
+  uiImplementation: string;
+  uiSettingsImplemenation: string;
 }
 
 export interface SystemConfigThemes {
@@ -239,13 +241,13 @@ export function mergeSystemConfig(
   };
 }
 
-// eslint-disable-next-line complexity
 export function instantiateSystemConfig(
   config: PartialSystemConfig
 ): SystemConfig {
   return {
     authgearClientID: config.authgearClientID ?? "",
     authgearEndpoint: config.authgearEndpoint ?? "",
+    authgearWebSDKSessionType: config.authgearWebSDKSessionType ?? "cookie",
     sentryDSN: config.sentryDSN ?? "",
     appHostSuffix: config.appHostSuffix ?? "",
     availableLanguages: config.availableLanguages ?? [DEFAULT_TEMPLATE_LOCALE],
@@ -262,11 +264,12 @@ export function instantiateSystemConfig(
       en: config.translations?.en ?? {},
     },
     searchEnabled: config.searchEnabled ?? false,
-    web3Enabled: config.web3Enabled ?? false,
     auditLogEnabled: config.auditLogEnabled ?? false,
     gitCommitHash: config.gitCommitHash ?? "",
     analyticEnabled: config.analyticEnabled ?? false,
     analyticEpoch: config.analyticEpoch ?? "",
     gtmContainerID: config.gtmContainerID ?? "",
+    uiImplementation: config.uiImplementation ?? "authflowv2",
+    uiSettingsImplemenation: config.uiSettingsImplemenation ?? "v2",
   };
 }

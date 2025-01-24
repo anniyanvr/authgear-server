@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	goredis "github.com/go-redis/redis/v8"
 	"github.com/go-redsync/redsync/v4"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/authgear/authgear-server/pkg/util/log"
 )
@@ -25,7 +25,7 @@ func NewHandle(pool *Pool, connectionOptions ConnectionOptions, logger *log.Logg
 	}
 }
 
-func (h *Handle) WithConn(f func(conn *goredis.Conn) error) error {
+func (h *Handle) WithConnContext(ctx context.Context, do func(ctx context.Context, conn Redis_6_0_Cmdable) error) error {
 	h.logger.WithFields(map[string]interface{}{
 		"max_open_connection":             *h.ConnectionOptions.MaxOpenConnection,
 		"max_idle_connection":             *h.ConnectionOptions.MaxIdleConnection,
@@ -33,8 +33,7 @@ func (h *Handle) WithConn(f func(conn *goredis.Conn) error) error {
 		"max_connection_lifetime_seconds": *h.ConnectionOptions.MaxConnectionLifetime,
 	}).Debug("open redis connection")
 
-	ctx := context.Background()
-	conn := h.Client().Conn(ctx)
+	conn := h.Client().Conn()
 	defer func() {
 		err := conn.Close()
 		if err != nil {
@@ -42,7 +41,7 @@ func (h *Handle) WithConn(f func(conn *goredis.Conn) error) error {
 		}
 	}()
 
-	return f(conn)
+	return do(ctx, conn)
 }
 
 func (h *Handle) Client() *goredis.Client {

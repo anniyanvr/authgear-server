@@ -1,0 +1,27 @@
+{{/* Example usage
+  {{ template "authflowv2/__settings_text_input.html"
+      (dict
+        "Label" "Full Name"
+        "Name" "/given_name"
+        "Value" "John"
+        "Disabled" true
+      )
+  }}
+*/}}
+
+{{ define "authflowv2/__settings_text_input.html" }}
+
+<label class="settings-text-input__label">
+  <span class="settings-text-input__label-text">
+    {{ $.Label }}
+  </span>
+  <input
+    class="block input"
+    type="text"
+    {{ if $.InputAttrs }}{{htmlattr $.InputAttrs }}{{end}}
+    name="{{ $.Name }}"
+    value="{{ $.Value }}"
+    {{ if $.Disabled }}disabled{{end}}
+  />
+</label>
+{{ end }}

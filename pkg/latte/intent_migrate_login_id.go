@@ -2,10 +2,8 @@ package latte
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/feature/verification"
@@ -52,22 +50,16 @@ func (i *IntentMigrateLoginID) ReactTo(ctx context.Context, deps *workflow.Depen
 	switch len(workflows.Nearest.Nodes) {
 	case 0:
 		spec := i.MigrateSpec.GetSpec()
-		info, err := deps.Identities.New(i.UserID, spec, identity.NewIdentityOptions{
+		info, err := deps.Identities.New(ctx, i.UserID, spec, identity.NewIdentityOptions{
 			LoginIDEmailByPassBlocklistAllowlist: false,
 		})
 		if err != nil {
 			return nil, err
 		}
 
-		duplicate, err := deps.Identities.CheckDuplicated(info)
-		if err != nil && !errors.Is(err, identity.ErrIdentityAlreadyExists) {
-			return nil, err
-		}
-		// Either err == nil, or err == ErrIdentityAlreadyExists and duplicate is non-nil.
+		_, err = deps.Identities.CheckDuplicated(ctx, info)
 		if err != nil {
-			spec := info.ToSpec()
-			otherSpec := duplicate.ToSpec()
-			return nil, identityFillDetails(api.ErrDuplicatedIdentity, &spec, &otherSpec)
+			return nil, err
 		}
 
 		return workflow.NewNodeSimple(&NodeDoCreateIdentity{
@@ -83,9 +75,9 @@ func (i *IntentMigrateLoginID) ReactTo(ctx context.Context, deps *workflow.Depen
 		var verifiedClaim *verification.Claim
 		switch iden.LoginID.LoginIDType {
 		case model.LoginIDKeyTypeEmail:
-			verifiedClaim = deps.Verification.NewVerifiedClaim(i.UserID, string(model.ClaimEmail), iden.LoginID.LoginID)
+			verifiedClaim = deps.Verification.NewVerifiedClaim(ctx, i.UserID, string(model.ClaimEmail), iden.LoginID.LoginID)
 		case model.LoginIDKeyTypePhone:
-			verifiedClaim = deps.Verification.NewVerifiedClaim(i.UserID, string(model.ClaimPhoneNumber), iden.LoginID.LoginID)
+			verifiedClaim = deps.Verification.NewVerifiedClaim(ctx, i.UserID, string(model.ClaimPhoneNumber), iden.LoginID.LoginID)
 		}
 		return workflow.NewNodeSimple(&NodeVerifiedIdentity{
 			IdentityID:       iden.ID,

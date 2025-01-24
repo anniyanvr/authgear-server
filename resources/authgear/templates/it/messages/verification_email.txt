@@ -1,0 +1,7 @@
+Verifica email
+
+Questa email viene inviata per verificare {{ .Email }} su {{ template "app.name" }}. Usa questo codice nella pagina di verifica.
+
+{{ .Code }}
+
+Non condividerlo con nessuno. Se non hai effettuato l''accesso o la registrazione, ignora questa email.

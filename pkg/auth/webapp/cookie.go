@@ -7,6 +7,8 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/httputil"
 )
 
+//go:generate mockgen -source=cookie.go -destination=cookie_mock_test.go -package webapp
+
 type CookieManager interface {
 	GetCookie(r *http.Request, def *httputil.CookieDef) (*http.Cookie, error)
 	ValueCookie(def *httputil.CookieDef, value string) *http.Cookie
@@ -19,7 +21,9 @@ type SessionCookieDef struct {
 
 func NewSessionCookieDef() SessionCookieDef {
 	def := &httputil.CookieDef{
-		NameSuffix:        "web_session",
+		// NOTE: We plan to add `authgear_` prefix for the cookies we write.
+		// See DEV-2227
+		NameSuffix:        "authgear_web_session",
 		Path:              "/",
 		AllowScriptAccess: false,
 		SameSite:          http.SameSiteNoneMode, // For resumption after redirecting from OAuth providers
@@ -28,19 +32,19 @@ func NewSessionCookieDef() SessionCookieDef {
 	return SessionCookieDef{Def: def}
 }
 
-type ErrorCookieDef struct {
+type ErrorTokenCookieDef struct {
 	Def *httputil.CookieDef
 }
 
-func NewErrorCookieDef() ErrorCookieDef {
+func NewErrorTokenCookieDef() ErrorTokenCookieDef {
 	def := &httputil.CookieDef{
-		NameSuffix:        "web_err",
+		NameSuffix:        "web_error_token",
 		Path:              "/",
 		AllowScriptAccess: false,
 		SameSite:          http.SameSiteLaxMode,
 		MaxAge:            nil, // Use HTTP session cookie; expires when browser closes
 	}
-	return ErrorCookieDef{Def: def}
+	return ErrorTokenCookieDef{Def: def}
 }
 
 type SignedUpCookieDef struct {

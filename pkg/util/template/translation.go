@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"golang.org/x/text/language"
 
+	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
 	"github.com/authgear/authgear-server/pkg/util/intlresource"
 	"github.com/authgear/authgear-server/pkg/util/messageformat"
 	"github.com/authgear/authgear-server/pkg/util/resource"
@@ -78,21 +81,47 @@ func (t *translationJSON) ViewResources(resources []resource.ResourceFile, rawVi
 	}
 }
 
-func (t *translationJSON) UpdateResource(_ context.Context, all []resource.ResourceFile, fileToUpdate *resource.ResourceFile, data []byte) (*resource.ResourceFile, error) {
+func (t *translationJSON) UpdateResource(ctx context.Context, all []resource.ResourceFile, fileToUpdate *resource.ResourceFile, data []byte) (*resource.ResourceFile, error) {
 	path := fileToUpdate.Location.Path
 
-	// Compute requestedLangTag
+	requestedLangTag, err := t.computeRequestedLangTag(path)
+	if err != nil {
+		return nil, err
+	}
+
+	defaultTranslationObj, err := t.getDefaultTranslationObj(all, fileToUpdate, requestedLangTag)
+	if err != nil {
+		return nil, err
+	}
+
+	var appTranslationData []byte
+	if data != nil {
+		appTranslationData, err = t.processAppTranslationData(ctx, data, defaultTranslationObj)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &resource.ResourceFile{
+		Location: fileToUpdate.Location,
+		Data:     appTranslationData,
+	}, nil
+}
+
+func (t *translationJSON) computeRequestedLangTag(path string) (string, error) {
 	matches := templateLanguageTagRegex.FindStringSubmatch(path)
 	if len(matches) < 2 {
-		return nil, resource.ErrResourceNotFound
+		return "", resource.ErrResourceNotFound
 	}
-	requestedLangTag := matches[1]
+	return matches[1], nil
+}
+
+func (t *translationJSON) getDefaultTranslationObj(all []resource.ResourceFile, fileToUpdate *resource.ResourceFile, requestedLangTag string) (map[string]string, error) {
+	defaultTranslationObj := make(map[string]string)
 
 	// View translation.json on all Fss but the app FS.
 	// That is, the default translation.json.
-	defaultTranslationObj := make(map[string]string)
 	for _, r := range all {
-		// Skip the app FS.
 		if r.Location.Fs.GetFsLevel() == fileToUpdate.Location.Fs.GetFsLevel() {
 			continue
 		}
@@ -117,6 +146,16 @@ func (t *translationJSON) UpdateResource(_ context.Context, all []resource.Resou
 			defaultTranslationObj[key] = value
 		}
 	}
+	return defaultTranslationObj, nil
+}
+
+func (t *translationJSON) processAppTranslationData(ctx context.Context, data []byte, defaultTranslationObj map[string]string) ([]byte, error) {
+
+	fc, ok := ctx.Value(configsource.ContextKeyFeatureConfig).(*config.FeatureConfig)
+	if !ok || fc == nil {
+		return nil, ErrMissingFeatureFlagInCtx
+	}
+	isCustomizationDisallowed := *fc.Messaging.TemplateCustomizationDisabled
 
 	appTranslationRaw := make(map[string]interface{})
 	err := json.Unmarshal(data, &appTranslationRaw)
@@ -139,23 +178,25 @@ func (t *translationJSON) UpdateResource(_ context.Context, all []resource.Resou
 			delete(appTranslationObj, key)
 		}
 
+		// If the key is for email template, respect customization feature flag
+		if isCustomizationDisallowed && strings.HasPrefix(key, "email.") && strings.HasSuffix(key, ".subject") {
+			delete(appTranslationObj, key)
+		}
+
 		// Note that we allow the app translation.json to contain unknown keys.
 	}
 
 	// If the translation is empty, delete the file instead.
 	if len(appTranslationObj) <= 0 {
-		data = nil
-	} else {
-		data, err = json.Marshal(appTranslationObj)
-		if err != nil {
-			return nil, err
-		}
+		return nil, nil
 	}
 
-	return &resource.ResourceFile{
-		Location: fileToUpdate.Location,
-		Data:     data,
-	}, nil
+	appTranslationData, err := json.Marshal(appTranslationObj)
+	if err != nil {
+		return nil, err
+	}
+
+	return appTranslationData, nil
 }
 
 func (t *translationJSON) viewValidateResource(resources []resource.ResourceFile, view resource.ValidateResourceView) (interface{}, error) {
@@ -182,16 +223,17 @@ func (t *translationJSON) viewValidateResource(resources []resource.ResourceFile
 	return nil, nil
 }
 
+type languageTag string
+type translationKey string
+type translationValue string
+
 func (t *translationJSON) viewEffectiveResource(resources []resource.ResourceFile, view resource.EffectiveResourceView) (interface{}, error) {
-	type LanguageTag string
-	type TranslationKey string
-	type TranslationValue string
 
 	preferredLanguageTags := view.PreferredLanguageTags()
 	defaultLanguageTag := view.DefaultLanguageTag()
 
-	appSpecificTranslationMap := make(map[TranslationKey]map[resource.FsLevel]map[LanguageTag]TranslationValue)
-	translationMap := make(map[TranslationKey]map[LanguageTag]TranslationValue)
+	appSpecificTranslationMap := make(map[translationKey]map[resource.FsLevel]map[languageTag]translationValue)
+	translationMap := make(map[translationKey]map[languageTag]translationValue)
 
 	add := func(langTag string, resrc resource.ResourceFile) error {
 		var jsonObj map[string]interface{}
@@ -207,26 +249,26 @@ func (t *translationJSON) viewEffectiveResource(resources []resource.ResourceFil
 			}
 			if t.IsAppSpecificKey(key) {
 				// prepare app specific keys tanslation map
-				keyTranslations, ok := appSpecificTranslationMap[TranslationKey(key)]
+				keyTranslations, ok := appSpecificTranslationMap[translationKey(key)]
 				if !ok {
-					keyTranslations = make(map[resource.FsLevel]map[LanguageTag]TranslationValue)
-					appSpecificTranslationMap[TranslationKey(key)] = keyTranslations
+					keyTranslations = make(map[resource.FsLevel]map[languageTag]translationValue)
+					appSpecificTranslationMap[translationKey(key)] = keyTranslations
 				}
 
 				fsTranslations, ok := keyTranslations[fsLevel]
 				if !ok {
-					fsTranslations = make(map[LanguageTag]TranslationValue)
+					fsTranslations = make(map[languageTag]translationValue)
 					keyTranslations[fsLevel] = fsTranslations
 				}
-				fsTranslations[LanguageTag(langTag)] = TranslationValue(value)
+				fsTranslations[languageTag(langTag)] = translationValue(value)
 			} else {
 				// prepare app agnostic keys tanslation map
-				keyTranslations, ok := translationMap[TranslationKey(key)]
+				keyTranslations, ok := translationMap[translationKey(key)]
 				if !ok {
-					keyTranslations = make(map[LanguageTag]TranslationValue)
-					translationMap[TranslationKey(key)] = keyTranslations
+					keyTranslations = make(map[languageTag]translationValue)
+					translationMap[translationKey(key)] = keyTranslations
 				}
-				keyTranslations[LanguageTag(langTag)] = TranslationValue(value)
+				keyTranslations[languageTag(langTag)] = translationValue(value)
 			}
 		}
 		return nil
@@ -241,7 +283,39 @@ func (t *translationJSON) viewEffectiveResource(resources []resource.ResourceFil
 		return nil, err
 	}
 
-	translationData := make(map[string]Translation)
+	var translationData map[string]Translation
+
+	translationData, err = t.viewEffectiveResourceMakeAppAgnosticData(
+		translationMap,
+		preferredLanguageTags,
+		defaultLanguageTag,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	appSpecificTranslationData, err := t.viewEffectiveResourceMakeAppSpecificData(
+		appSpecificTranslationMap,
+		preferredLanguageTags,
+		defaultLanguageTag,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range appSpecificTranslationData {
+		translationData[k] = v
+	}
+
+	// translationData
+	return translationData, nil
+}
+
+func (t *translationJSON) viewEffectiveResourceMakeAppAgnosticData(
+	translationMap map[translationKey]map[languageTag]translationValue,
+	preferredLanguageTags []string,
+	defaultLanguageTag string,
+) (translationData map[string]Translation, err error) {
+	translationData = make(map[string]Translation)
 	// Prepare app agnostic data
 	// We will first group all translations by the languages based on the fs level hierarchy
 	// Higher fs level translations overwrite the lower one
@@ -258,20 +332,27 @@ func (t *translationJSON) viewEffectiveResource(resources []resource.ResourceFil
 		var matched intlresource.LanguageItem
 		matched, err := intlresource.Match(preferredLanguageTags, defaultLanguageTag, items)
 		if errors.Is(err, intlresource.ErrNoLanguageMatch) {
-			if len(items) > 0 {
-				// Use first item in case of no match, to ensure resolution always succeed
-				matched = items[0]
-			} else {
+			if len(items) == 0 {
 				// Ignore keys without translation
 				continue
 			}
+			// Use first item in case of no match, to ensure resolution always succeed
+			matched = items[0]
 		} else if err != nil {
 			return nil, err
 		}
 
 		translationData[string(key)] = matched.(Translation)
 	}
+	return
+}
 
+func (t *translationJSON) viewEffectiveResourceMakeAppSpecificData(
+	appSpecificTranslationMap map[translationKey]map[resource.FsLevel]map[languageTag]translationValue,
+	preferredLanguageTags []string,
+	defaultLanguageTag string,
+) (translationData map[string]Translation, err error) {
+	translationData = make(map[string]Translation)
 	// Preparing app specific data
 	// If translations are provided in the higher fs level,
 	// the translations will be resolved at that fs level.
@@ -282,37 +363,34 @@ func (t *translationJSON) viewEffectiveResource(resources []resource.ResourceFil
 	for key, translationsInFs := range appSpecificTranslationMap {
 		for _, level := range fsLevelsOrderedInAscendingPriority {
 			var items []intlresource.LanguageItem
-			for translationFsLevel, translations := range translationsInFs {
-				if level != translationFsLevel {
-					continue
-				}
-				for languageTag, value := range translations {
-					items = append(items, Translation{
-						LanguageTag: string(languageTag),
-						Value:       string(value),
-					})
-				}
+			translations, ok := translationsInFs[level]
+			if !ok {
+				continue
+			}
+
+			for languageTag, value := range translations {
+				items = append(items, Translation{
+					LanguageTag: string(languageTag),
+					Value:       string(value),
+				})
 			}
 
 			var matched intlresource.LanguageItem
 			matched, err := intlresource.Match(preferredLanguageTags, defaultLanguageTag, items)
 			if errors.Is(err, intlresource.ErrNoLanguageMatch) {
-				if len(items) > 0 {
-					// Use first item in case of no match, to ensure resolution always succeed in the fs level
-					matched = items[0]
-				} else {
+				if len(items) == 0 {
 					// Ignore keys when no tranlations are provided in this fs level
 					continue
 				}
+				// Use first item in case of no match, to ensure resolution always succeed in the fs level
+				matched = items[0]
 			} else if err != nil {
 				return nil, err
 			}
 			translationData[string(key)] = matched.(Translation)
 		}
 	}
-
-	// translationData
-	return translationData, nil
+	return
 }
 
 func (t *translationJSON) viewAppFile(resources []resource.ResourceFile, view resource.AppFileView) (interface{}, error) {

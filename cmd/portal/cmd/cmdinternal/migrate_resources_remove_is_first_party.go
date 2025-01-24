@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"log"
 
-	portalcmd "github.com/authgear/authgear-server/cmd/portal/cmd"
-	"github.com/authgear/authgear-server/cmd/portal/internal"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
+
+	portalcmd "github.com/authgear/authgear-server/cmd/portal/cmd"
+	"github.com/authgear/authgear-server/cmd/portal/internal"
 )
 
 var cmdInternalMigrateRemoveIsFirstParty = &cobra.Command{
@@ -27,7 +28,7 @@ var cmdInternalMigrateRemoveIsFirstParty = &cobra.Command{
 			return err
 		}
 
-		internal.MigrateResources(&internal.MigrateResourcesOptions{
+		internal.MigrateResources(cmd.Context(), &internal.MigrateResourcesOptions{
 			DatabaseURL:            dbURL,
 			DatabaseSchema:         dbSchema,
 			UpdateConfigSourceFunc: migrateRemoveIsFirstParty,

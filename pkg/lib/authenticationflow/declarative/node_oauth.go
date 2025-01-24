@@ -7,7 +7,6 @@ import (
 
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
 )
 
 func init() {
@@ -15,11 +14,11 @@ func init() {
 }
 
 type NodeOAuth struct {
-	JSONPointer  jsonpointer.T    `json:"json_pointer,omitempty"`
-	NewUserID    string           `json:"new_user_id,omitempty"`
-	Alias        string           `json:"alias,omitempty"`
-	RedirectURI  string           `json:"redirect_uri,omitempty"`
-	ResponseMode sso.ResponseMode `json:"response_mode,omitempty"`
+	JSONPointer  jsonpointer.T `json:"json_pointer,omitempty"`
+	NewUserID    string        `json:"new_user_id,omitempty"`
+	Alias        string        `json:"alias,omitempty"`
+	RedirectURI  string        `json:"redirect_uri,omitempty"`
+	ResponseMode string        `json:"response_mode,omitempty"`
 }
 
 var _ authflow.NodeSimple = &NodeOAuth{}
@@ -31,8 +30,13 @@ func (*NodeOAuth) Kind() string {
 }
 
 func (n *NodeOAuth) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
+	flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
 	return &InputSchemaTakeOAuthAuthorizationResponse{
-		JSONPointer: n.JSONPointer,
+		FlowRootObject: flowRootObject,
+		JSONPointer:    n.JSONPointer,
 	}, nil
 }
 
@@ -49,7 +53,7 @@ func (n *NodeOAuth) ReactTo(ctx context.Context, deps *authflow.Dependencies, fl
 		spec := syntheticInputOAuth.GetIdentitySpec()
 		return n.reactTo(ctx, deps, flows, spec)
 	case authflow.AsInput(input, &inputOAuth):
-		spec, err := handleOAuthAuthorizationResponse(deps, HandleOAuthAuthorizationResponseOptions{
+		spec, err := handleOAuthAuthorizationResponse(ctx, deps, HandleOAuthAuthorizationResponseOptions{
 			Alias:       n.Alias,
 			RedirectURI: n.RedirectURI,
 		}, inputOAuth)
@@ -79,25 +83,20 @@ func (n *NodeOAuth) OutputData(ctx context.Context, deps *authflow.Dependencies,
 func (n *NodeOAuth) reactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, spec *identity.Spec) (*authflow.Node, error) {
 	// signup
 	if n.NewUserID != "" {
-		info, err := newIdentityInfo(deps, n.NewUserID, spec)
-		if err != nil {
-			return nil, err
-		}
-
-		return authflow.NewNodeSimple(&NodeDoCreateIdentity{
-			Identity: info,
+		return authflow.NewSubFlow(&IntentCheckConflictAndCreateIdenity{
+			JSONPointer: n.JSONPointer,
+			UserID:      n.NewUserID,
+			Request:     NewCreateOAuthIdentityRequest(n.Alias, spec),
 		}), nil
 	}
 	// Else login
 
-	exactMatch, err := findExactOneIdentityInfo(deps, spec)
+	exactMatch, err := findExactOneIdentityInfo(ctx, deps, spec)
 	if err != nil {
 		return nil, err
 	}
 
-	newNode, err := NewNodeDoUseIdentity(ctx, flows, &NodeDoUseIdentity{
-		Identity: exactMatch,
-	})
+	newNode, err := NewNodeDoUseIdentityWithUpdate(ctx, deps, flows, exactMatch, spec)
 	if err != nil {
 		return nil, err
 	}

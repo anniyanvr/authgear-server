@@ -4,6 +4,8 @@ import (
 	"github.com/google/wire"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/util/clock"
+	utilrand "github.com/authgear/authgear-server/pkg/util/rand"
 )
 
 func ProvideChecker(
@@ -35,6 +37,21 @@ func ProvideChecker(
 	return checker
 }
 
+func ProvideExpiry(
+	cfg *config.AuthenticatorPasswordConfig,
+	c clock.Clock,
+) *Expiry {
+	return &Expiry{
+		ForceChangeEnabled:         cfg.Expiry.ForceChange.IsEnabled(),
+		ForceChangeSinceLastUpdate: cfg.Expiry.ForceChange.DurationSinceLastUpdate,
+		Clock:                      c,
+	}
+}
+
+func NewRandSource() Rand {
+	return RandRand{utilrand.SecureRand}
+}
+
 var DependencySet = wire.NewSet(
 	NewLogger,
 	wire.Struct(new(Provider), "*"),
@@ -44,4 +61,8 @@ var DependencySet = wire.NewSet(
 	ProvideChecker,
 	wire.Struct(new(HistoryStore), "*"),
 	wire.Bind(new(CheckerHistoryStore), new(*HistoryStore)),
+	ProvideExpiry,
+	NewRandSource,
+	wire.Value(DefaultMaxTrials),
+	wire.Struct(new(Generator), "*"),
 )

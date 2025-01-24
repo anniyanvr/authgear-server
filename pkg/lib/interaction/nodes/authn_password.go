@@ -1,6 +1,8 @@
 package nodes
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
@@ -30,7 +32,7 @@ func (e *EdgeAuthenticationPassword) IsDefaultAuthenticator() bool {
 	return len(filtered) > 0
 }
 
-func (e *EdgeAuthenticationPassword) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
+func (e *EdgeAuthenticationPassword) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
 	// We first check the stage so that if password + additional password is used,
 	// we do not advance too far.
 	// That is, we do not check the given primary password against secondary password and report error.
@@ -55,7 +57,7 @@ func (e *EdgeAuthenticationPassword) Instantiate(ctx *interaction.Context, graph
 		},
 	}
 
-	info, requireUpdate, err := ctx.Authenticators.VerifyOneWithSpec(
+	info, verifyResult, err := ctx.Authenticators.VerifyOneWithSpec(goCtx,
 		graph.MustGetUserID(),
 		model.AuthenticatorTypePassword,
 		e.Authenticators,
@@ -72,24 +74,32 @@ func (e *EdgeAuthenticationPassword) Instantiate(ctx *interaction.Context, graph
 		return nil, err
 	}
 
-	return &NodeAuthenticationPassword{Stage: e.Stage, Authenticator: info, RequireUpdate: requireUpdate}, nil
+	var reason interaction.AuthenticatorUpdateReason
+	if verifyResult.Password.ExpiryForceChange {
+		reason = interaction.AuthenticatorUpdateReasonExpiry
+	} else {
+		reason = interaction.AuthenticatorUpdateReasonPolicy
+	}
+
+	return &NodeAuthenticationPassword{Stage: e.Stage, Authenticator: info, RequireUpdate: verifyResult.Password.RequireUpdate(), RequireUpdateReason: &reason}, nil
 }
 
 type NodeAuthenticationPassword struct {
-	Stage         authn.AuthenticationStage `json:"stage"`
-	Authenticator *authenticator.Info       `json:"authenticator"`
-	RequireUpdate bool                      `json:"require_update"`
+	Stage               authn.AuthenticationStage              `json:"stage"`
+	Authenticator       *authenticator.Info                    `json:"authenticator"`
+	RequireUpdate       bool                                   `json:"require_update"`
+	RequireUpdateReason *interaction.AuthenticatorUpdateReason `json:"require_update_reason,omitempty"`
 }
 
-func (n *NodeAuthenticationPassword) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeAuthenticationPassword) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeAuthenticationPassword) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeAuthenticationPassword) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return nil, nil
 }
 
-func (n *NodeAuthenticationPassword) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
+func (n *NodeAuthenticationPassword) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
 	return []interaction.Edge{
 		&EdgeAuthenticationEnd{
 			Stage:                 n.Stage,
@@ -99,9 +109,9 @@ func (n *NodeAuthenticationPassword) DeriveEdges(graph *interaction.Graph) ([]in
 	}, nil
 }
 
-func (n *NodeAuthenticationPassword) GetRequireUpdateAuthenticator(stage authn.AuthenticationStage) (info *authenticator.Info, ok bool) {
+func (n *NodeAuthenticationPassword) GetRequireUpdateAuthenticator(stage authn.AuthenticationStage) (info *authenticator.Info, reason *interaction.AuthenticatorUpdateReason, ok bool) {
 	if n.RequireUpdate && n.Stage == stage {
-		return n.Authenticator, true
+		return n.Authenticator, n.RequireUpdateReason, true
 	}
-	return nil, false
+	return nil, nil, false
 }

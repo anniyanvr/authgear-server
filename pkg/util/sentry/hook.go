@@ -30,6 +30,14 @@ func NewLogHookFromContext(ctx context.Context) *LogHook {
 	return &LogHook{hub: sentry.GetHubFromContext(ctx)}
 }
 
+func NewLogHookFromContextOrFallback(ctx context.Context, fallbackHub *sentry.Hub) *LogHook {
+	hubFromContext := sentry.GetHubFromContext(ctx)
+	if hubFromContext != nil {
+		return &LogHook{hub: hubFromContext}
+	}
+	return &LogHook{hub: fallbackHub}
+}
+
 func (h *LogHook) Levels() []logrus.Level { return LogHookLevels }
 
 func (h *LogHook) Fire(entry *logrus.Entry) error {
@@ -37,7 +45,7 @@ func (h *LogHook) Fire(entry *logrus.Entry) error {
 		return nil
 	}
 
-	if log.IgnoreEntry(entry) {
+	if log.IsLoggingSkipped(entry) {
 		return nil
 	}
 

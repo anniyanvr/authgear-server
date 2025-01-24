@@ -24,7 +24,7 @@ func GenerateSignupFlowConfig(cfg *config.AppConfig) *config.AuthenticationFlowS
 
 func generateSignupFlowStepIdentify(cfg *config.AppConfig) *config.AuthenticationFlowSignupFlowStep {
 	step := &config.AuthenticationFlowSignupFlowStep{
-		Name: nameStepIdentify,
+		Name: nameStepIdentify(config.AuthenticationFlowTypeSignup),
 		Type: config.AuthenticationFlowSignupFlowStepTypeIdentify,
 	}
 
@@ -39,6 +39,9 @@ func generateSignupFlowStepIdentify(cfg *config.AppConfig) *config.Authenticatio
 		case model.IdentityTypePasskey:
 			// Cannot create paskey in this step.
 			break
+		case model.IdentityTypeLDAP:
+			oneOf := generateSignupFlowStepIdentifyLDAP(cfg)
+			step.OneOf = append(step.OneOf, oneOf...)
 		}
 	}
 
@@ -55,79 +58,110 @@ func generateSignupFlowStepIdentifyLoginID(cfg *config.AppConfig, stepName strin
 		switch {
 		case keyConfig.Type == model.LoginIDKeyTypeEmail && !email:
 			email = true
-			oneOf := &config.AuthenticationFlowSignupFlowOneOf{
-				Identification: config.AuthenticationFlowIdentificationEmail,
-			}
+			oneOf := generateSignupFlowStepIdentifyLoginIDIdentificationEmail(cfg, stepName)
 			output = append(output, oneOf)
-
-			// Add verify step if necessary
-			if *cfg.Verification.Claims.Email.Enabled && *cfg.Verification.Claims.Email.Required {
-				oneOf.Steps = append(oneOf.Steps, &config.AuthenticationFlowSignupFlowStep{
-
-					Type:       config.AuthenticationFlowSignupFlowStepTypeVerify,
-					TargetStep: stepName,
-				})
-			}
-
-			// Add authenticate step primary if necessary
-			if stepAuthenticatePrimary, ok := generateSignupFlowStepCreateAuthenticatorPrimary(cfg, oneOf.Identification); ok {
-				oneOf.Steps = append(oneOf.Steps, stepAuthenticatePrimary)
-			}
-
-			// Add authenticate step secondary if necessary
-			if stepAuthenticateSecondary, ok := generateSignupFlowStepCreateAuthenticatorSecondary(cfg, oneOf.Identification); ok {
-				oneOf.Steps = append(oneOf.Steps, stepAuthenticateSecondary)
-			}
 
 		case keyConfig.Type == model.LoginIDKeyTypePhone && !phone:
 			phone = true
-
-			oneOf := &config.AuthenticationFlowSignupFlowOneOf{
-				Identification: config.AuthenticationFlowIdentificationPhone,
-			}
+			oneOf := generateSignupFlowStepIdentifyLoginIDIdentificationPhone(cfg, stepName)
 			output = append(output, oneOf)
-
-			// Add verify step if necessary
-			if *cfg.Verification.Claims.PhoneNumber.Enabled && *cfg.Verification.Claims.PhoneNumber.Required {
-				oneOf.Steps = append(oneOf.Steps, &config.AuthenticationFlowSignupFlowStep{
-					Type:       config.AuthenticationFlowSignupFlowStepTypeVerify,
-					TargetStep: stepName,
-				})
-			}
-
-			// Add authenticate step primary if necessary
-			if stepAuthenticatePrimary, ok := generateSignupFlowStepCreateAuthenticatorPrimary(cfg, oneOf.Identification); ok {
-				oneOf.Steps = append(oneOf.Steps, stepAuthenticatePrimary)
-			}
-
-			// Add authenticate step secondary if necessary
-			if stepAuthenticateSecondary, ok := generateSignupFlowStepCreateAuthenticatorSecondary(cfg, oneOf.Identification); ok {
-				oneOf.Steps = append(oneOf.Steps, stepAuthenticateSecondary)
-			}
-
 		case keyConfig.Type == model.LoginIDKeyTypeUsername && !username:
 			username = true
-
-			oneOf := &config.AuthenticationFlowSignupFlowOneOf{
-				Identification: config.AuthenticationFlowIdentificationUsername,
-			}
-
+			oneOf := generateSignupFlowStepIdentifyLoginIDIdentificationUsername(cfg, stepName)
 			output = append(output, oneOf)
-			// Username cannot be verified.
-
-			// Add authenticate step primary if necessary
-			if stepAuthenticatePrimary, ok := generateSignupFlowStepCreateAuthenticatorPrimary(cfg, oneOf.Identification); ok {
-				oneOf.Steps = append(oneOf.Steps, stepAuthenticatePrimary)
-			}
-
-			// Add authenticate step secondary if necessary
-			if stepAuthenticateSecondary, ok := generateSignupFlowStepCreateAuthenticatorSecondary(cfg, oneOf.Identification); ok {
-				oneOf.Steps = append(oneOf.Steps, stepAuthenticateSecondary)
+		}
+	}
+	if bp, ok := getBotProtectionRequirementsSignupOrLogin(cfg); ok {
+		for _, oneOf := range output {
+			if oneOf.BotProtection == nil {
+				oneOf.BotProtection = bp
+			} else {
+				oneOf.BotProtection = config.GetStrictestAuthFlowBotProtection(bp, oneOf.BotProtection)
 			}
 		}
 	}
 
 	return output
+}
+
+func generateSignupFlowStepIdentifyLoginIDIdentificationEmail(cfg *config.AppConfig, stepName string) *config.AuthenticationFlowSignupFlowOneOf {
+	oneOf := &config.AuthenticationFlowSignupFlowOneOf{
+		Identification: config.AuthenticationFlowIdentificationEmail,
+	}
+
+	// Add verify step if necessary
+	if *cfg.Verification.Claims.Email.Enabled && *cfg.Verification.Claims.Email.Required {
+		oneOf.Steps = append(oneOf.Steps, &config.AuthenticationFlowSignupFlowStep{
+			Type:       config.AuthenticationFlowSignupFlowStepTypeVerify,
+			TargetStep: stepName,
+		})
+		// Add bot protection to identify step if
+		//   1. verification is required
+		//   2. bot protection is required
+		if bp, ok := getBotProtectionRequirementsOOBOTPEmail(cfg); ok {
+			oneOf.BotProtection = bp
+		}
+	}
+
+	// Add authenticate step primary if necessary
+	if stepAuthenticatePrimary, ok := generateSignupFlowStepCreateAuthenticatorPrimary(cfg, oneOf.Identification); ok {
+		oneOf.Steps = append(oneOf.Steps, stepAuthenticatePrimary)
+	}
+
+	// Add authenticate step secondary if necessary
+	if stepAuthenticateSecondary, ok := generateSignupFlowStepCreateAuthenticatorSecondary(cfg, oneOf.Identification); ok {
+		oneOf.Steps = append(oneOf.Steps, stepAuthenticateSecondary)
+	}
+	return oneOf
+}
+
+func generateSignupFlowStepIdentifyLoginIDIdentificationPhone(cfg *config.AppConfig, stepName string) *config.AuthenticationFlowSignupFlowOneOf {
+	oneOf := &config.AuthenticationFlowSignupFlowOneOf{
+		Identification: config.AuthenticationFlowIdentificationPhone,
+	}
+
+	// Add verify step if necessary
+	if *cfg.Verification.Claims.PhoneNumber.Enabled && *cfg.Verification.Claims.PhoneNumber.Required {
+		oneOf.Steps = append(oneOf.Steps, &config.AuthenticationFlowSignupFlowStep{
+			Type:       config.AuthenticationFlowSignupFlowStepTypeVerify,
+			TargetStep: stepName,
+		})
+		// Add bot protection to identify step if
+		//   1. verification is required
+		//   2. bot protection is required
+		if bp, ok := getBotProtectionRequirementsOOBOTPSMS(cfg); ok {
+			oneOf.BotProtection = bp
+		}
+	}
+
+	// Add authenticate step primary if necessary
+	if stepAuthenticatePrimary, ok := generateSignupFlowStepCreateAuthenticatorPrimary(cfg, oneOf.Identification); ok {
+		oneOf.Steps = append(oneOf.Steps, stepAuthenticatePrimary)
+	}
+
+	// Add authenticate step secondary if necessary
+	if stepAuthenticateSecondary, ok := generateSignupFlowStepCreateAuthenticatorSecondary(cfg, oneOf.Identification); ok {
+		oneOf.Steps = append(oneOf.Steps, stepAuthenticateSecondary)
+	}
+	return oneOf
+}
+
+func generateSignupFlowStepIdentifyLoginIDIdentificationUsername(cfg *config.AppConfig, stepName string) *config.AuthenticationFlowSignupFlowOneOf {
+	oneOf := &config.AuthenticationFlowSignupFlowOneOf{
+		Identification: config.AuthenticationFlowIdentificationUsername,
+	}
+	// Username cannot be verified.
+
+	// Add authenticate step primary if necessary
+	if stepAuthenticatePrimary, ok := generateSignupFlowStepCreateAuthenticatorPrimary(cfg, oneOf.Identification); ok {
+		oneOf.Steps = append(oneOf.Steps, stepAuthenticatePrimary)
+	}
+
+	// Add authenticate step secondary if necessary
+	if stepAuthenticateSecondary, ok := generateSignupFlowStepCreateAuthenticatorSecondary(cfg, oneOf.Identification); ok {
+		oneOf.Steps = append(oneOf.Steps, stepAuthenticateSecondary)
+	}
+	return oneOf
 }
 
 func generateSignupFlowStepIdentifyOAuth(cfg *config.AppConfig) []*config.AuthenticationFlowSignupFlowOneOf {
@@ -139,6 +173,25 @@ func generateSignupFlowStepIdentifyOAuth(cfg *config.AppConfig) []*config.Authen
 		{
 			Identification: config.AuthenticationFlowIdentificationOAuth,
 		},
+	}
+}
+
+func generateSignupFlowStepIdentifyLDAP(cfg *config.AppConfig) []*config.AuthenticationFlowSignupFlowOneOf {
+	if len(cfg.Identity.LDAP.Servers) == 0 {
+		return nil
+	}
+
+	oneOf := &config.AuthenticationFlowSignupFlowOneOf{
+		Identification: config.AuthenticationFlowIdentificationLDAP,
+	}
+
+	// Add authenticate step secondary if necessary
+	if stepAuthenticateSecondary, ok := generateSignupFlowStepCreateAuthenticatorSecondary(cfg, oneOf.Identification); ok {
+		oneOf.Steps = append(oneOf.Steps, stepAuthenticateSecondary)
+	}
+
+	return []*config.AuthenticationFlowSignupFlowOneOf{
+		oneOf,
 	}
 }
 
@@ -176,7 +229,10 @@ func generateSignupFlowStepCreateAuthenticatorPrimary(cfg *config.AppConfig, ide
 			if _, ok := allowedMap[am]; ok {
 				oneOf := &config.AuthenticationFlowSignupFlowOneOf{
 					Authentication: am,
-					TargetStep:     nameStepIdentify,
+					TargetStep:     nameStepIdentify(config.AuthenticationFlowTypeSignup),
+				}
+				if bp, ok := getBotProtectionRequirementsOOBOTPEmail(cfg); ok {
+					oneOf.BotProtection = bp
 				}
 				step.OneOf = append(step.OneOf, oneOf)
 			}
@@ -186,7 +242,10 @@ func generateSignupFlowStepCreateAuthenticatorPrimary(cfg *config.AppConfig, ide
 			if _, ok := allowedMap[am]; ok {
 				oneOf := &config.AuthenticationFlowSignupFlowOneOf{
 					Authentication: am,
-					TargetStep:     nameStepIdentify,
+					TargetStep:     nameStepIdentify(config.AuthenticationFlowTypeSignup),
+				}
+				if bp, ok := getBotProtectionRequirementsOOBOTPSMS(cfg); ok {
+					oneOf.BotProtection = bp
 				}
 				step.OneOf = append(step.OneOf, oneOf)
 			}
@@ -226,11 +285,18 @@ func generateSignupFlowStepCreateAuthenticatorSecondary(cfg *config.AppConfig, i
 		Type: config.AuthenticationFlowSignupFlowStepTypeCreateAuthenticator,
 	}
 
-	addOneOf := func(am config.AuthenticationFlowAuthentication) {
+	addOneOf := func(am config.AuthenticationFlowAuthentication, bpGetter func(*config.AppConfig) (*config.AuthenticationFlowBotProtection, bool)) {
 		if _, ok := allowedMap[am]; ok {
 			oneOf := &config.AuthenticationFlowSignupFlowOneOf{
 				Authentication: am,
 			}
+
+			if bpGetter != nil {
+				if bp, ok := bpGetter(cfg); ok {
+					oneOf.BotProtection = bp
+				}
+			}
+
 			if recoveryCodeStep != nil {
 				oneOf.Steps = append(oneOf.Steps, recoveryCodeStep)
 			}
@@ -242,13 +308,13 @@ func generateSignupFlowStepCreateAuthenticatorSecondary(cfg *config.AppConfig, i
 	for _, authenticatorType := range *cfg.Authentication.SecondaryAuthenticators {
 		switch authenticatorType {
 		case model.AuthenticatorTypePassword:
-			addOneOf(config.AuthenticationFlowAuthenticationSecondaryPassword)
+			addOneOf(config.AuthenticationFlowAuthenticationSecondaryPassword, nil)
 		case model.AuthenticatorTypeOOBEmail:
-			addOneOf(config.AuthenticationFlowAuthenticationSecondaryOOBOTPEmail)
+			addOneOf(config.AuthenticationFlowAuthenticationSecondaryOOBOTPEmail, getBotProtectionRequirementsOOBOTPEmail)
 		case model.AuthenticatorTypeOOBSMS:
-			addOneOf(config.AuthenticationFlowAuthenticationSecondaryOOBOTPSMS)
+			addOneOf(config.AuthenticationFlowAuthenticationSecondaryOOBOTPSMS, getBotProtectionRequirementsOOBOTPSMS)
 		case model.AuthenticatorTypeTOTP:
-			addOneOf(config.AuthenticationFlowAuthenticationSecondaryTOTP)
+			addOneOf(config.AuthenticationFlowAuthenticationSecondaryTOTP, nil)
 		}
 	}
 

@@ -1,0 +1,354 @@
+{{ template "authflowv2/__page_frame.html" . }}
+{{ define "page-content" }}
+
+  {{ $display_input_error := false }}
+  {{ if and .Error (not .OAuthError) }}
+    {{ $display_input_error = true }}
+  {{ end }}
+
+  {{ $oauth_error_message := "" }}
+  {{ if .OAuthError }}
+    {{ $oauth_error_message = (include "authflowv2/__error.html" .) }}
+  {{ end }}
+
+  {{ $has_login_id := false }}
+  {{ $has_alternatives := false }}
+  {{ $show_captcha_phone := false }}
+  {{ $show_captcha_text := false }} {{/* both email & username */}}
+
+  {{ $login_id_type := "" }}
+              
+  {{ range $.IdentityCandidates }}
+    {{ if eq .type "oauth" }}
+      {{ $has_alternatives = true }}
+    {{ end }}
+    {{ if eq .type "login_id" }}
+      {{ $has_login_id = true }}
+      {{ if not (eq .login_id_key $.LoginIDKey) }}
+        {{ $has_alternatives = true }}
+      {{ end }}
+      {{ if eq .login_id_key $.LoginIDKey }}
+        {{if eq .login_id_type "phone" }}
+          {{ $login_id_type = "phone" }}
+          {{ if $.PhoneLoginIDBotProtectionRequired }}
+            {{ $show_captcha_phone = true  }}    
+          {{ end }}
+        {{ end }}
+        {{if eq .login_id_type "username" }}
+          {{ $login_id_type = "username" }}
+          {{ if $.UsernameLoginIDBotProtectionRequired }}
+            {{ $show_captcha_text = true  }}
+          {{ end }}
+        {{ end }}
+        {{if eq .login_id_type "email" }}
+          {{ $login_id_type = "email" }}
+          {{ if $.EmailLoginIDBotProtectionRequired }}
+            {{ $show_captcha_text = true  }}
+          {{ end }}
+        {{ end }}
+      {{ end }}
+    {{ end }}
+  {{ end }}
+  {{ $appName := (translate "app.name" nil) }}
+  {{ $clientName := or $.ClientName "null" }}
+  {{ $isContinue := $.HasXStep }}
+  <div class="flex-1-0-auto">
+    <div class="screen-logo-layout">
+      {{/* Hide logo if not first screen */}}
+      {{ if not $isContinue }}
+        {{ template "authflowv2/__header.html" . }}
+      {{ end }}
+      <div class="screen-title-description">
+        <h1 class="screen-title">
+          {{ if eq $.UIVariant "signup_login" }}
+            {{ if $isContinue }}
+              {{ include "v2.page.signup-login.continue.title" (dict
+                "AppName" $appName
+                "ClientName" $clientName)
+              }}
+            {{ else }}
+              {{ include "v2.page.signup-login.default.title" (dict
+                "AppName" $appName
+                "ClientName" $clientName)
+              }}
+            {{ end }}
+          {{ else }}
+            {{ if $isContinue }}
+              {{ include "v2.page.signup.continue.title" (dict
+                "AppName" $appName
+                "ClientName" $clientName)
+              }}
+            {{ else }}
+              {{ include "v2.page.signup.default.title" (dict
+                "AppName" $appName
+                "ClientName" $clientName)
+              }}
+            {{ end }}
+            
+          {{ end }}
+        </h1>
+        <h2 class="screen-description">
+          {{ if eq $.UIVariant "signup_login" }}
+            {{ if and $isContinue $has_login_id }}
+              {{ include (printf "v2.page.signup-login.continue.subtitle-%v" $login_id_type) nil }}
+            {{ else }}
+              {{ include "v2.page.signup-login.default.subtitle" (dict
+                "AppName" $appName
+                "ClientName" $clientName)
+              }}
+            {{ end }}
+          {{ else }}
+            {{ if and $isContinue $has_login_id }}
+              {{ include (printf "v2.page.signup.continue.subtitle-%v" $login_id_type) nil }}
+            {{ else }}
+              {{ include "v2.page.signup.default.subtitle" (dict
+                "AppName" $appName
+                "ClientName" $clientName)
+              }}
+            {{ end }}
+          {{ end }}
+        </h2>
+        {{ template "authflowv2/__alert_message.html"
+          (dict
+            "Type" "error"
+            "Classname" "mt-4"
+            "Message" $oauth_error_message
+          )
+        }}
+      </div>
+    </div>
+
+  <!-- We don't need to retore the auth form in inline preview mode -->
+  <!-- retain-form-form will try to access session store, which is not allowed -->
+  <!-- or necessary if we preview page in iframe  -->
+  <!-- Disabling it makes us don't need to do extra work when implementing -->
+  <!-- page preview via iframe -->
+  {{ $formController := "retain-form-form" }}
+  {{ if $.InlinePreview }}
+    {{ $formController = "" }}
+  {{ end }}
+  <form
+    class="block mt-8"
+    method="post"
+    novalidate
+    data-controller="{{ $formController }}"
+    data-retain-form-form-id-value="auth-form"
+    data-controller="turbo-form"
+    data-action="{{ if (or $show_captcha_phone $show_captcha_text) }}submit->bot-protection#verifyFormSubmit {{ end }}submit->turbo-form#submitForm"
+  >
+    {{ $.CSRFField }}
+    <input type="hidden" name="q_login_id_key" value="{{ $.LoginIDKey }}">
+    {{ range $.IdentityCandidates }}
+    {{ if eq .type "login_id" }}{{ if eq .login_id_key $.LoginIDKey }}
+      <input type="hidden" name="q_login_id_type" value="{{ .login_id_type }}">
+      <div data-controller="text-field" class="flex flex-col gap-2">
+        {{ if eq .login_id_type "phone" }}
+          {{ template "authflowv2/__phone_input.html"
+            (dict
+              "Placeholder" (include "v2.component.input.default.placeholder-phone" nil)
+              "PlaceholderWithExample" (include "v2.component.input.default.placeholder-phone-with-example" nil)
+              "IsError" $display_input_error
+              "AutoFocus" $.ShouldFocusInput
+              "PhoneInputAttrs" `
+                data-text-field-target="input"
+              `
+              "InputName" "q_login_id"
+              "InputAttrs" `
+                data-controller="retain-form-input"
+                data-retain-form-form-target="input"
+                data-retain-form-form-name-param="phone"
+                data-action="input->retain-form-input#input retain-form-input:input->retain-form-form#input"
+              `
+              "Value" $.LoginIDDefaultValue
+              "ReadOnly" $.LoginIDInputReadOnly
+            )
+          }}
+          {{ if $show_captcha_phone }}
+            {{ template "web/authflowv2/__bot_protection_form_input.html" $ }}
+          {{ end }}
+        {{ else }}
+          <input
+            data-text-field-target="input"
+            {{ if $.ShouldFocusInput }}autofocus{{ end }}
+            {{ if $.LoginIDInputReadOnly }}readonly{{ end }}
+            class="block input w-full {{ if $display_input_error }}input--error{{end}}"
+            type="{{ $.NonPhoneLoginIDInputType }}"
+            name="q_login_id"
+            autocomplete="username"
+            autocapitalize="none"
+            placeholder="{{ include "v2.component.input.default.placeholder-login-id" (dict "variant" $.LoginIDKey) }}"
+            data-controller="retain-form-input"
+            data-action="input->retain-form-input#input retain-form-input:input->retain-form-form#input"
+            data-retain-form-form-target="input"
+            data-retain-form-form-name-param="text"
+            value="{{ $.LoginIDDefaultValue }}"
+          >
+          {{ if $show_captcha_text }}
+            {{ template "web/authflowv2/__bot_protection_form_input.html" $ }}
+          {{ end }}
+        {{ end }}
+        {{ if $display_input_error }}
+          <p class="input__error-message" data-text-field-target="errorMessage">
+            {{ template "authflowv2/__error.html" $ }}
+          </p>
+        {{ end }}
+
+        <!-- This field is for Chrome and Safari to consider the above field as username for autocomplete -->
+        <!-- both `class="hidden"` and `display:none` do not work for iOS autofill -->
+        <!-- The hash of the style attribute is sha256-fOghyYcDMsLl/lf7piKeVgEljdV7IgqwGymlDo5oDhU= -->
+        <input style="position:absolute;width:0;height:0;" aria-hidden="true" type="password" autocomplete="current-password" name="">
+      </div>
+    {{ end }}{{ end }}
+    {{ end }}
+
+    {{ if $has_login_id }}
+      <button
+        class="primary-btn w-full mt-4"
+        type="submit"
+        name="x_action"
+        value="login_id"
+        data-authgear-event="authgear.button.sign_up"
+      >{{ include "v2.component.button.default.label-continue" nil }}</button>
+    {{ end }}
+  </form>
+
+  {{ if and $.CanSwitchToLogin (not $isContinue) }}
+    <p class="body-text--md mt-4">
+      {{ $loginHref := call $.MakeURL "/login" "q_login_id_input_type" $.LoginIDInputType "x_step" "" }}
+      {{ include "v2.page.signup.default.switch-to-login" (dict "href" $loginHref )}}
+    </p>
+  {{ end }}
+
+  {{ if and $has_alternatives (not $.AlternativesDisabled) }}
+    {{ template "authflowv2/__divider.html" (dict "Classname" "my-8")  }}
+    <section class="flex flex-col gap-4">
+      {{ range .IdentityCandidates }}
+        {{ if eq .type "login_id" }}{{ if not (eq .login_id_key $.LoginIDKey) }}
+          {{ if eq .login_id_key "email" }}
+            <a class="secondary-btn" data-turbo-action="replace"
+              href="{{ call $.MakeURL "" "q_login_id_key" .login_id_key "q_login_id_input_type" .login_id_input_type }}">
+              <div class="flex gap-2">
+                <i class="alternative-icon material-icons">mail</i>
+                {{ include "v2.page.signup.default.signup-with-email" nil }}
+              </div>
+            </a>
+          {{ end }}
+          {{ if eq .login_id_key "username" }}
+            <a class="secondary-btn" data-turbo-action="replace"
+              href="{{ call $.MakeURL "" "q_login_id_key" .login_id_key "q_login_id_input_type" .login_id_input_type }}">
+              <div class="flex gap-2">
+                <i class="alternative-icon material-icons">person</i>
+                {{ include "v2.page.signup.default.signup-with-username" nil }}
+              </div>
+            </a>
+          {{ end }}
+          {{ if eq .login_id_key "phone" }}
+            <a class="secondary-btn" data-turbo-action="replace"
+              href="{{ call $.MakeURL "" "q_login_id_key" .login_id_key "q_login_id_input_type" .login_id_input_type }}">
+              <div class="flex gap-2">
+                <i class="alternative-icon material-icons">smartphone</i>
+                {{ include "v2.page.signup.default.signup-with-photo" nil }}
+              </div>
+            </a>
+          {{ end }}
+        {{ end }}{{ end }}
+        {{ if eq .type "oauth" }}
+          {{ $skip := false }}
+          {{- if (and (eq .provider_type "wechat") (eq .provider_app_type "mobile") (not $.IsNativePlatform)) -}}
+            {{ $skip = true }}
+          {{ end }}
+          {{- if (and (eq .provider_type "wechat") (eq .provider_app_type "web") ($.IsNativePlatform)) -}}
+            {{ $skip = true }}
+          {{ end }}
+
+          {{- if not $skip -}}
+            {{/* Form with disabled turbo drive */}}
+            <form class="block" method="post" data-turbo="false" novalidate>
+              {{ $.CSRFField }}
+              <input type="hidden" name="x_provider_alias" value="{{ .provider_alias }}">
+              <button
+                class="secondary-btn w-full"
+                type="submit"
+                name="x_action"
+                value="oauth"
+                data-authgear-event="authgear.button.oauth"
+              >
+                {{- $icon_class := printf "%s-icon" .provider_type -}}
+                <div class="flex gap-2">
+                  <i class="sso-icon {{ $icon_class }}"></i>
+                  <span>
+                    {{ include (printf "v2.component.oauth-branding.%s.label" .provider_type) nil }}
+                  </span>
+                </div>
+              </button>
+            </form>
+          {{ end }}
+        {{ end }}
+        {{ if eq .type "ldap" }}
+          <form class="block" method="post" data-turbo="false" novalidate>
+            {{ $.CSRFField }}
+            <input type="hidden" name="x_server_name" value="{{ .server_name }}">
+            <button
+              class="secondary-btn w-full"
+              type="submit"
+              name="x_action"
+              value="ldap"
+              data-authgear-event="authgear.button.ldap"
+            >
+              <div class="flex gap-2">
+              <i class="alternative-icon material-icons">person</i>
+                <span>
+                  {{ if ($.Translations.HasKey (printf "v2.component.ldap-branding.default.label-%s" .server_name)) }}
+                    {{ include (printf "v2.component.ldap-branding.default.label-%s" .server_name) nil }}
+                  {{ else }}
+                    {{ include "v2.component.ldap-branding.default.label" nil }}
+                  {{ end }}
+                </span>
+              </div>
+            </button>
+          </form>
+        {{ end }}
+      {{ end }}
+
+      <!-- For signup login flow -->
+      {{ if $.PasskeyEnabled }}
+        <div class="block w-full"
+          data-controller="authflow-passkey-request"
+          data-authflow-passkey-request-options-value="{{ $.PasskeyRequestOptionsJSON }}"
+          data-authflow-passkey-request-auto-value="false">
+          <button class="secondary-btn w-full"
+            type="button"
+            data-action="click->authflow-passkey-request#use"
+            data-authgear-event="authgear.button.use_passkey"
+            data-authflow-passkey-request-target="button"
+            disabled>
+            <div class="flex gap-2">
+              <i class="alternative-icon material-icons">
+                passkey
+              </i>
+              <span>
+                {{ include "v2.component.button.default.label-continue-with-passkey" nil }}
+              </span>
+            </div>
+            </span>
+          </button>
+          <form
+            class="hidden"
+            method="post"
+            novalidate
+            data-controller="turbo-form"
+            data-action="submit->turbo-form#submitForm"
+          >
+            {{ $.CSRFField }}
+            <input type="hidden" name="x_assertion_response" data-authflow-passkey-request-target="input">
+            <button type="submit" class="hidden" name="x_action" value="passkey" data-authflow-passkey-request-target="submit"></button>
+          </form>
+        </div>
+      {{ end }}
+    </section>
+  {{ end }}
+
+  {{ template "authflowv2/__toc_pp_footer.html" . }}
+  </div>
+
+{{ end }}

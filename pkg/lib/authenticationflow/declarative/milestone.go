@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 
+	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
+
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
@@ -111,9 +113,19 @@ type MilestoneIdentificationMethod interface {
 	MilestoneIdentificationMethod() config.AuthenticationFlowIdentification
 }
 
-type MilestoneAuthenticationMethod interface {
+type MilestoneFlowSelectAuthenticationMethod interface {
 	authflow.Milestone
-	MilestoneAuthenticationMethod() config.AuthenticationFlowAuthentication
+	MilestoneFlowSelectAuthenticationMethod(flows authflow.Flows) (selected MilestoneDidSelectAuthenticationMethod, newFlows authflow.Flows, ok bool)
+}
+
+type MilestoneDidSelectAuthenticationMethod interface {
+	authflow.Milestone
+	MilestoneDidSelectAuthenticationMethod() config.AuthenticationFlowAuthentication
+}
+
+type MilestoneFlowAuthenticate interface {
+	authflow.Milestone
+	MilestoneFlowAuthenticate(flows authflow.Flows) (MilestoneDidAuthenticate, authflow.Flows, bool)
 }
 
 type MilestoneDidAuthenticate interface {
@@ -128,22 +140,53 @@ type MilestoneDoCreateSession interface {
 
 type MilestoneDoCreateUser interface {
 	authflow.Milestone
-	MilestoneDoCreateUser() string
+	MilestoneDoCreateUser() (userID string, createUser bool)
+	MilestoneDoCreateUserUseExisting(userID string)
+}
+
+type MilestoneFlowCreateIdentity interface {
+	authflow.Milestone
+	MilestoneFlowCreateIdentity(flows authflow.Flows) (created MilestoneDoCreateIdentity, newFlows authflow.Flows, ok bool)
+}
+
+type MilestoneFlowAccountLinking interface {
+	authflow.Milestone
+	MilestoneFlowCreateIdentity
+	MilestoneFlowAccountLinking()
 }
 
 type MilestoneDoCreateIdentity interface {
 	authflow.Milestone
 	MilestoneDoCreateIdentity() *identity.Info
+	MilestoneDoCreateIdentitySkipCreate()
+	MilestoneDoCreateIdentityUpdate(newInfo *identity.Info)
+}
+
+type MilestoneFlowCreateAuthenticator interface {
+	authflow.Milestone
+	MilestoneFlowCreateAuthenticator(flows authflow.Flows) (created MilestoneDoCreateAuthenticator, newFlow authflow.Flows, ok bool)
 }
 
 type MilestoneDoCreateAuthenticator interface {
 	authflow.Milestone
 	MilestoneDoCreateAuthenticator() *authenticator.Info
+	MilestoneDoCreateAuthenticatorSkipCreate()
+	MilestoneDoCreateAuthenticatorUpdate(newInfo *authenticator.Info)
+}
+
+type MilestoneDoCreatePasskey interface {
+	authflow.Milestone
+	MilestoneDoCreatePasskeyUpdateUserID(userID string)
 }
 
 type MilestoneDoUseUser interface {
 	authflow.Milestone
 	MilestoneDoUseUser() string
+}
+
+type MilestoneFlowUseIdentity interface {
+	authflow.Milestone
+	MilestoneFlowUseIdentity(flows authflow.Flows) (MilestoneDoUseIdentity, authflow.Flows, bool)
 }
 
 type MilestoneDoUseIdentity interface {
@@ -179,16 +222,25 @@ type MilestoneDidSelectAuthenticator interface {
 type MilestoneDoUseAuthenticatorPassword interface {
 	authflow.Milestone
 	MilestoneDoUseAuthenticatorPassword() *NodeDoUseAuthenticatorPassword
+	GetJSONPointer() jsonpointer.T
 }
 
 type MilestoneDoPopulateStandardAttributes interface {
 	authflow.Milestone
 	MilestoneDoPopulateStandardAttributes()
+	MilestoneDoPopulateStandardAttributesSkip()
+}
+
+type MilestoneVerifyClaim interface {
+	authflow.Milestone
+	MilestoneVerifyClaim()
+	MilestoneVerifyClaimUpdateUserID(deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error
 }
 
 type MilestoneDoMarkClaimVerified interface {
 	authflow.Milestone
 	MilestoneDoMarkClaimVerified()
+	MilestoneDoMarkClaimVerifiedUpdateUserID(newUserID string)
 }
 
 type MilestoneDeviceTokenInspected interface {
@@ -214,4 +266,37 @@ type MilestoneDoUseAnonymousUser interface {
 type MilestoneDidReauthenticate interface {
 	authflow.Milestone
 	MilestoneDidReauthenticate()
+}
+
+type MilestoneSwitchToExistingUser interface {
+	authflow.Milestone
+	MilestoneSwitchToExistingUser(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error
+}
+
+type MilestoneDoReplaceRecoveryCode interface {
+	authflow.Milestone
+	MilestoneDoReplaceRecoveryCodeUpdateUserID(newUserID string)
+}
+
+type MilestoneDoUpdateUserProfile interface {
+	authflow.Milestone
+	MilestoneDoUpdateUserProfileSkip()
+}
+
+type MilestoneUseAccountLinkingIdentification interface {
+	authflow.Milestone
+	MilestoneUseAccountLinkingIdentification() *AccountLinkingConflict
+	MilestoneUseAccountLinkingIdentificationSelectedOption() AccountLinkingIdentificationOption
+	MilestoneUseAccountLinkingIdentificationRedirectURI() string
+	MilestoneUseAccountLinkingIdentificationResponseMode() string
+}
+
+type MilestonePromptCreatePasskey interface {
+	authflow.Milestone
+	MilestonePromptCreatePasskey()
+}
+
+type MilestoneCheckLoginHint interface {
+	authflow.Milestone
+	MilestoneCheckLoginHint()
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useMemo } from "react";
-import produce from "immer";
+import { produce } from "immer";
 import { Label, Text, useTheme } from "@fluentui/react";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 
@@ -73,7 +73,6 @@ export function updateClientConfig<K extends keyof OAuthClientConfig>(
 const parentJSONPointer = /\/oauth\/clients\/\d+/;
 
 const EditOAuthClientForm: React.VFC<EditOAuthClientFormProps> =
-  // eslint-disable-next-line complexity
   function EditOAuthClientForm(props: EditOAuthClientFormProps) {
     const {
       className,
@@ -288,7 +287,8 @@ const EditOAuthClientForm: React.VFC<EditOAuthClientFormProps> =
       () =>
         !clientConfig.x_application_type ||
         clientConfig.x_application_type === "spa" ||
-        clientConfig.x_application_type === "traditional_webapp",
+        clientConfig.x_application_type === "traditional_webapp" ||
+        clientConfig.x_application_type === "confidential",
       [clientConfig.x_application_type]
     );
 
@@ -396,6 +396,10 @@ const EditOAuthClientForm: React.VFC<EditOAuthClientFormProps> =
             {
               labelMessageID: "EditOAuthClientForm.userinfo-endpoint.label",
               endpoint: `${publicOrigin}/oauth2/userinfo`,
+            },
+            {
+              labelMessageID: "EditOAuthClientForm.end-session-endpoint.label",
+              endpoint: `${publicOrigin}/oauth2/end_session`,
             },
             {
               labelMessageID: "EditOAuthClientForm.jwks-uri.label",

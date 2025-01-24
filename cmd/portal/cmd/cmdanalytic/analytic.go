@@ -8,7 +8,7 @@ import (
 
 var cmdAnalytic = &cobra.Command{
 	Use:   "analytic",
-	Short: "Analytic report",
+	Short: "Various commands facilitating product analytics",
 }
 
 func init() {
@@ -40,6 +40,27 @@ func init() {
 	cmdAnalytic.AddCommand(cmdAnalyticSetupGoogleSheetsToken)
 	binder.BindString(cmdAnalyticSetupGoogleSheetsToken.Flags(), portalcmd.ArgAnalyticGoogleOAuthClientCredentialsJSONFilePath)
 	binder.BindString(cmdAnalyticSetupGoogleSheetsToken.Flags(), portalcmd.ArgAnalyticGoogleOAuthTokenFilePath)
+
+	cmdAnalytic.AddCommand(cmdAnalyticPosthog)
+
+	cmdAnalyticPosthog.AddCommand(cmdAnalyticPosthogGroup)
+	binder.BindString(cmdAnalyticPosthogGroup.Flags(), portalcmd.ArgDatabaseURL)
+	binder.BindString(cmdAnalyticPosthogGroup.Flags(), portalcmd.ArgDatabaseSchema)
+	binder.BindString(cmdAnalyticPosthogGroup.Flags(), portalcmd.ArgAuditDatabaseURL)
+	binder.BindString(cmdAnalyticPosthogGroup.Flags(), portalcmd.ArgAuditDatabaseSchema)
+	binder.BindString(cmdAnalyticPosthogGroup.Flags(), portalcmd.ArgAnalyticRedisURL)
+	binder.BindString(cmdAnalyticPosthogGroup.Flags(), portalcmd.ArgPosthogEndpoint)
+	binder.BindString(cmdAnalyticPosthogGroup.Flags(), portalcmd.ArgPosthogAPIKey)
+
+	cmdAnalyticPosthog.AddCommand(cmdAnalyticPosthogUser)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgDatabaseURL)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgDatabaseSchema)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgAuditDatabaseURL)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgAuditDatabaseSchema)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgAnalyticRedisURL)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgPosthogEndpoint)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgPosthogAPIKey)
+	binder.BindString(cmdAnalyticPosthogUser.Flags(), portalcmd.ArgAnalyticPortalAppID)
 
 	portalcmd.Root.AddCommand(cmdAnalytic)
 }

@@ -1,12 +1,14 @@
 package nodes
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
+	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator/service"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 )
 
@@ -20,7 +22,7 @@ type EdgeChangePasswordBegin struct {
 	Stage authn.AuthenticationStage
 }
 
-func (e *EdgeChangePasswordBegin) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
+func (e *EdgeChangePasswordBegin) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (interaction.Node, error) {
 	return &NodeChangePasswordBegin{
 		Force: e.Force,
 		Stage: e.Stage,
@@ -28,21 +30,27 @@ func (e *EdgeChangePasswordBegin) Instantiate(ctx *interaction.Context, graph *i
 }
 
 type NodeChangePasswordBegin struct {
-	Force bool                      `json:"force"`
-	Stage authn.AuthenticationStage `json:"stage"`
+	Force  bool                                   `json:"force"`
+	Reason *interaction.AuthenticatorUpdateReason `json:"reason,omitempty"`
+	Stage  authn.AuthenticationStage              `json:"stage"`
 }
 
-func (n *NodeChangePasswordBegin) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeChangePasswordBegin) GetChangeReason() *interaction.AuthenticatorUpdateReason {
+	return n.Reason
+}
+
+func (n *NodeChangePasswordBegin) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeChangePasswordBegin) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeChangePasswordBegin) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return nil, nil
 }
 
-func (n *NodeChangePasswordBegin) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
+func (n *NodeChangePasswordBegin) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
 	return []interaction.Edge{&EdgeChangePassword{
-		Stage: n.Stage,
+		Stage:  n.Stage,
+		Reason: n.Reason,
 	}}, nil
 }
 
@@ -57,10 +65,11 @@ type InputChangePassword interface {
 }
 
 type EdgeChangePassword struct {
-	Stage authn.AuthenticationStage
+	Stage  authn.AuthenticationStage
+	Reason *interaction.AuthenticatorUpdateReason
 }
 
-func (e *EdgeChangePassword) Instantiate(ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (node interaction.Node, err error) {
+func (e *EdgeChangePassword) Instantiate(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph, rawInput interface{}) (node interaction.Node, err error) {
 	var input InputChangePassword
 	if !interaction.Input(rawInput, &input) {
 		return nil, interaction.ErrIncompatibleInput
@@ -80,7 +89,7 @@ func (e *EdgeChangePassword) Instantiate(ctx *interaction.Context, graph *intera
 	newPassword := input.GetNewPassword()
 
 	userID := graph.MustGetUserID()
-	ais, err := ctx.Authenticators.List(
+	ais, err := ctx.Authenticators.List(goCtx,
 		userID,
 		authenticator.KeepType(model.AuthenticatorTypePassword),
 		authenticator.KeepKind(stageToAuthenticatorKind(e.Stage)),
@@ -104,7 +113,7 @@ func (e *EdgeChangePassword) Instantiate(ctx *interaction.Context, graph *intera
 		// The password authenticator we are changing has been verified in this interaction.
 		// We avoid asking the user to provide the password again.
 	} else {
-		_, err = ctx.Authenticators.VerifyWithSpec(oldInfo, &authenticator.Spec{
+		_, err = ctx.Authenticators.VerifyWithSpec(goCtx, oldInfo, &authenticator.Spec{
 			Password: &authenticator.PasswordSpec{
 				PlainPassword: oldPassword,
 			},
@@ -115,12 +124,18 @@ func (e *EdgeChangePassword) Instantiate(ctx *interaction.Context, graph *intera
 		}
 	}
 
-	changed, newInfo, err := ctx.Authenticators.WithSpec(oldInfo, &authenticator.Spec{
-		Password: &authenticator.PasswordSpec{
-			PlainPassword: newPassword,
-		},
+	changed, newInfo, err := ctx.Authenticators.UpdatePassword(goCtx, oldInfo, &service.UpdatePasswordOptions{
+		SetPassword:    true,
+		PlainPassword:  newPassword,
+		SetExpireAfter: true,
 	})
 	if err != nil {
+		return
+	}
+
+	if !changed && e.Reason != nil && *e.Reason == interaction.AuthenticatorUpdateReasonExpiry {
+		// Password is expired, but the user did not change the password.
+		err = api.ErrPasswordReused
 		return
 	}
 
@@ -142,15 +157,15 @@ type NodeChangePasswordEnd struct {
 	NewAuthenticator *authenticator.Info       `json:"new_authenticator,omitempty"`
 }
 
-func (n *NodeChangePasswordEnd) Prepare(ctx *interaction.Context, graph *interaction.Graph) error {
+func (n *NodeChangePasswordEnd) Prepare(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) error {
 	return nil
 }
 
-func (n *NodeChangePasswordEnd) GetEffects() ([]interaction.Effect, error) {
+func (n *NodeChangePasswordEnd) GetEffects(goCtx context.Context) ([]interaction.Effect, error) {
 	return nil, nil
 }
 
-func (n *NodeChangePasswordEnd) DeriveEdges(graph *interaction.Graph) ([]interaction.Edge, error) {
+func (n *NodeChangePasswordEnd) DeriveEdges(goCtx context.Context, graph *interaction.Graph) ([]interaction.Edge, error) {
 	if n.NewAuthenticator != nil {
 		return []interaction.Edge{
 			&EdgeDoUpdateAuthenticator{
@@ -161,5 +176,5 @@ func (n *NodeChangePasswordEnd) DeriveEdges(graph *interaction.Graph) ([]interac
 		}, nil
 	}
 
-	return graph.Intent.DeriveEdgesForNode(graph, n)
+	return graph.Intent.DeriveEdgesForNode(goCtx, graph, n)
 }

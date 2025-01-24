@@ -4,10 +4,12 @@ import (
 	"errors"
 	"time"
 
+	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
+
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/util/graphqlutil"
-	relay "github.com/authgear/graphql-go-relay"
-	"github.com/graphql-go/graphql"
 )
 
 var periodicalEnum = graphql.NewEnum(graphql.EnumConfig{

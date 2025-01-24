@@ -7,7 +7,7 @@ import React, {
   useState,
 } from "react";
 import cn from "classnames";
-import produce from "immer";
+import { produce } from "immer";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 import {
@@ -52,25 +52,14 @@ import {
 } from "../../hook/useAppConfigForm";
 import { useAppFeatureConfigQuery } from "./query/appFeatureConfigQuery";
 import ScreenContent from "../../ScreenContent";
-import Widget from "../../Widget";
 import ErrorRenderer from "../../ErrorRenderer";
 import ScreenLayoutScrollView from "../../ScreenLayoutScrollView";
 import TextField from "../../TextField";
 import FeatureDisabledMessageBar from "./FeatureDisabledMessageBar";
-
-function getOriginFromDomain(domain: string): string {
-  // assume domain has no scheme
-  // use https scheme
-  return `https://${domain}`;
-}
-
-function getHostFromOrigin(urlOrigin: string): string {
-  try {
-    return new URL(urlOrigin).host;
-  } catch (_: unknown) {
-    return "";
-  }
-}
+import { FormContainerBase } from "../../FormContainerBase";
+import { nullishCoalesce, or_ } from "../../util/operators";
+import { getHostFromOrigin, getOriginFromDomain } from "../../util/domain";
+import { FormErrorMessageBar } from "../../FormErrorMessageBar";
 
 interface DomainListItem {
   id?: string;
@@ -227,7 +216,6 @@ interface DomainListActionButtonsProps {
 }
 
 const DomainListActionButtons: React.VFC<DomainListActionButtonsProps> =
-  // eslint-disable-next-line complexity
   function DomainListActionButtons(props) {
     const {
       domainID,
@@ -497,6 +485,8 @@ const CustomDomainListContent: React.VFC<CustomDomainListContentProps> =
 
     const { renderToString } = useContext(Context);
 
+    const { appID } = useParams() as { appID: string };
+
     const navBreadcrumbItems: BreadcrumbItem[] = useMemo(() => {
       return [
         {
@@ -665,12 +655,15 @@ const CustomDomainListContent: React.VFC<CustomDomainListContentProps> =
       <ScreenLayoutScrollView>
         <ScreenContent>
           <NavBreadcrumb className={styles.widget} items={navBreadcrumbItems} />
-          <Widget className={cn(styles.widget, styles.controlGroup)}>
+          <div className={cn(styles.widget)}>
             <Text block={true}>
               <FormattedMessage id="CustomDomainListScreen.desc" />
             </Text>
             {customDomainDisabled ? (
-              <FeatureDisabledMessageBar messageID="FeatureConfig.custom-domain.disabled" />
+              <FeatureDisabledMessageBar
+                className="mt-4"
+                messageID="FeatureConfig.custom-domain.disabled"
+              />
             ) : null}
             <DetailsList
               columns={domainListColumns}
@@ -679,8 +672,18 @@ const CustomDomainListContent: React.VFC<CustomDomainListContentProps> =
               onRenderItemColumn={renderDomainListColumn}
               onRenderDetailsHeader={renderDomainListHeader}
             />
-          </Widget>
-
+          </div>
+          <MessageBar
+            className={cn(styles.widget)}
+            styles={{ root: { marginTop: 12 } }}
+          >
+            <FormattedMessage
+              id="CustomDomainListScreen.rediect-endpoint-direct-access.message"
+              values={{
+                href: `/project/${appID}/advanced/endpoint-direct-access`,
+              }}
+            />
+          </MessageBar>
           <DeleteDomainDialog
             domain={deleteDomainDialogData.domain}
             domainID={deleteDomainDialogData.domainID}
@@ -726,44 +729,46 @@ const CustomDomainListScreen: React.VFC = function CustomDomainListScreen() {
     navigate(".", { replace: true });
   }, [navigate]);
 
-  if (fetchingDomains || form.isLoading || featureConfig.loading) {
+  const isloading = or_(fetchingDomains, form.isLoading, featureConfig.loading);
+
+  const error = nullishCoalesce(
+    fetchDomainsError,
+    featureConfig.error,
+    form.loadError
+  );
+
+  const retry = useCallback(() => {
+    refetchDomains().catch((e) => console.error(e));
+    featureConfig.refetch().catch((e) => console.error(e));
+    form.reload();
+  }, [featureConfig, refetchDomains, form]);
+
+  if (isloading) {
     return <ShowLoading />;
   }
 
-  if (fetchDomainsError) {
-    return <ShowError error={fetchDomainsError} onRetry={refetchDomains} />;
-  }
-
-  if (form.loadError) {
-    return <ShowError error={form.loadError} onRetry={form.reload} />;
-  }
-
-  if (featureConfig.error) {
-    return (
-      <ShowError
-        error={featureConfig.error}
-        onRetry={() => {
-          featureConfig.refetch().finally(() => {});
-        }}
-      />
-    );
+  if (error) {
+    return <ShowError error={error} onRetry={retry} />;
   }
 
   return (
     <>
-      {isVerifySuccessMessageVisible ? (
-        <MessageBar
-          messageBarType={MessageBarType.success}
-          onDismiss={dismissVerifySuccessMessageBar}
-        >
-          <FormattedMessage id="CustomDomainListScreen.verify-success-message" />
-        </MessageBar>
-      ) : null}
-      <CustomDomainListContent
-        domains={domains ?? []}
-        appConfigForm={form}
-        featureConfig={featureConfig.effectiveFeatureConfig?.custom_domain}
-      />
+      <FormContainerBase form={form}>
+        {isVerifySuccessMessageVisible ? (
+          <MessageBar
+            messageBarType={MessageBarType.success}
+            onDismiss={dismissVerifySuccessMessageBar}
+          >
+            <FormattedMessage id="CustomDomainListScreen.verify-success-message" />
+          </MessageBar>
+        ) : null}
+        <FormErrorMessageBar></FormErrorMessageBar>
+        <CustomDomainListContent
+          domains={domains ?? []}
+          appConfigForm={form}
+          featureConfig={featureConfig.effectiveFeatureConfig?.custom_domain}
+        />
+      </FormContainerBase>
     </>
   );
 };

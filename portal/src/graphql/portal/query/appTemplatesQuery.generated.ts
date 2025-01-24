@@ -4,12 +4,12 @@ import { gql } from '@apollo/client';
 import * as Apollo from '@apollo/client';
 const defaultOptions = {} as const;
 export type AppTemplatesQueryQueryVariables = Types.Exact<{
-  id: Types.Scalars['ID'];
-  paths: Array<Types.Scalars['String']> | Types.Scalars['String'];
+  id: Types.Scalars['ID']['input'];
+  paths: Array<Types.Scalars['String']['input']> | Types.Scalars['String']['input'];
 }>;
 
 
-export type AppTemplatesQueryQuery = { __typename?: 'Query', node?: { __typename: 'App', id: string, resources: Array<{ __typename?: 'AppResource', path: string, languageTag?: string | null, data?: string | null, effectiveData?: string | null }> } | { __typename: 'User' } | { __typename: 'Viewer' } | null };
+export type AppTemplatesQueryQuery = { __typename?: 'Query', node?: { __typename: 'App', id: string, resources: Array<{ __typename?: 'AppResource', path: string, languageTag?: string | null, data?: string | null, effectiveData?: string | null, checksum?: string | null }> } | { __typename: 'User' } | { __typename: 'Viewer' } | null };
 
 
 export const AppTemplatesQueryDocument = gql`
@@ -23,6 +23,7 @@ export const AppTemplatesQueryDocument = gql`
         languageTag
         data
         effectiveData
+        checksum
       }
     }
   }
@@ -54,6 +55,11 @@ export function useAppTemplatesQueryLazyQuery(baseOptions?: Apollo.LazyQueryHook
           const options = {...defaultOptions, ...baseOptions}
           return Apollo.useLazyQuery<AppTemplatesQueryQuery, AppTemplatesQueryQueryVariables>(AppTemplatesQueryDocument, options);
         }
+export function useAppTemplatesQuerySuspenseQuery(baseOptions?: Apollo.SuspenseQueryHookOptions<AppTemplatesQueryQuery, AppTemplatesQueryQueryVariables>) {
+          const options = {...defaultOptions, ...baseOptions}
+          return Apollo.useSuspenseQuery<AppTemplatesQueryQuery, AppTemplatesQueryQueryVariables>(AppTemplatesQueryDocument, options);
+        }
 export type AppTemplatesQueryQueryHookResult = ReturnType<typeof useAppTemplatesQueryQuery>;
 export type AppTemplatesQueryLazyQueryHookResult = ReturnType<typeof useAppTemplatesQueryLazyQuery>;
+export type AppTemplatesQuerySuspenseQueryHookResult = ReturnType<typeof useAppTemplatesQuerySuspenseQuery>;
 export type AppTemplatesQueryQueryResult = Apollo.QueryResult<AppTemplatesQueryQuery, AppTemplatesQueryQueryVariables>;

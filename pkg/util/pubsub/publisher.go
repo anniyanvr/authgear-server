@@ -3,7 +3,7 @@ package pubsub
 import (
 	"context"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type RedisPool interface {
@@ -14,8 +14,7 @@ type Publisher struct {
 	RedisPool RedisPool
 }
 
-func (p *Publisher) Publish(channelName string, data []byte) error {
-	ctx := context.Background()
+func (p *Publisher) Publish(ctx context.Context, channelName string, data []byte) error {
 	redisClient := p.RedisPool.Get()
 	cmd := redisClient.Publish(ctx, channelName, string(data))
 	return cmd.Err()

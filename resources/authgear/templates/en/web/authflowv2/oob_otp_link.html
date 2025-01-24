@@ -1,0 +1,106 @@
+{{ template "authflowv2/__page_frame.html" . }}
+{{ define "page-content" }}
+{{- if eq $.StateQuery "matched" }}
+  <form
+    id="next-form"
+    class="screen-icon-layout flex-1-0-auto"
+    method="post"
+    novalidate
+    data-controller="turbo-form"
+    data-action="submit->turbo-form#submitForm"
+  >
+    <i class="screen-icon material-icons">check_circle</i>
+    <header class="screen-title-description">
+      <h1 class="screen-title">
+        {{ include "v2.page.oob-otp-link.approved.title" nil }}
+      </h1>
+
+      <p class="screen-description">
+        {{ include "v2.page.oob-otp-link.approved.description" nil }}
+      </p>
+      {{ template "authflowv2/__alert_message.html"
+        (dict
+          "Type" "error"
+          "Classname" "mt-4"
+          "Message" (include "authflowv2/__error.html" .)
+        )
+      }}
+    </header>
+    <div></div>
+
+    {{ $.CSRFField }}
+    <footer class="flex flex-col gap-y-4">
+      {{- if $.DeviceTokenEnabled }}
+        {{ template "authflowv2/__device_token_checkbox.html" }}
+      {{- end }}
+      <button
+        class="primary-btn w-full"
+        type="submit"
+        name="x_action"
+        value="check"
+        data-authgear-event="authgear.button.redirect_login_link_result"
+      >
+        {{ include "v2.component.button.default.label-continue" nil }}
+      </button>
+    </footer>
+  </form>
+{{- end }}
+
+{{- if not (eq $.StateQuery "matched") }}
+<div class="screen-icon-layout screen-icon-layout--compact flex-1-0-auto">
+
+<i class="screen-icon material-icons">forward_to_inbox</i>
+<header class="screen-title-description">
+  <h1 class="screen-title">
+    {{ include "v2.page.oob-otp-link.default.title" nil }}
+  </h1>
+
+  <p class="screen-description">
+    {{- if eq $.FlowType "reauth" }}
+      {{ include "v2.page.oob-otp-link.initial-reauth.description" (dict "target" $.MaskedClaimValue) }}
+    {{- else }}
+      {{ include "v2.page.oob-otp-link.initial.description" (dict "target" $.MaskedClaimValue) }}
+    {{- end }}
+  </p>
+
+  {{ template "authflowv2/__alert_message.html"
+    (dict
+      "Type" "error"
+      "Classname" "mt-4"
+      "Message" (include "authflowv2/__error.html" .)
+    )
+  }}
+</header>
+
+<footer class="flex flex-col gap-y-8">
+  {{- if $.WebsocketURL }}
+  <div class="hidden" data-controller="authflow-websocket authflow-polling" data-authflow-websocket-url-value="{{ $.WebsocketURL }}" data-authflow-polling-statetoken-value="{{ $.StateToken }}"></div>
+  {{- end }}
+  <form
+    method="post"
+    novalidate
+    data-controller="turbo-form"
+    data-action="submit->turbo-form#submitForm"
+  >
+    {{ $.CSRFField }}
+    <button
+      class="primary-btn w-full"
+      type="submit"
+      name="x_action"
+      value="resend"
+      data-controller="countdown"
+      data-countdown-target="button"
+      data-countdown-cooldown-value="{{ $.ResendCooldown }}"
+      data-countdown-label-value='{{ include "v2.page.oob-otp-link.default.resend-button-label" nil }}'
+      data-countdown-label-unit-value='{{ include "v2.page.oob-otp-link.default.resend-countdown-label-unit" nil }}'
+      data-authgear-event="authgear.button.resend_login_link_otp"
+    >
+      {{ include "v2.page.oob-otp-link.default.resend-button-label" nil }}
+    </button>
+  </form>
+  {{ template "authflowv2/__authflow_branch.html" . }}
+</footer>
+</div>
+{{- end }}
+
+{{ end }}

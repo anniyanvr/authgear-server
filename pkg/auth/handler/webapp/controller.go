@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
@@ -12,23 +13,26 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/lib/session"
 	"github.com/authgear/authgear-server/pkg/lib/tester"
+	"github.com/authgear/authgear-server/pkg/lib/webappoauth"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/log"
 )
 
 type PageService interface {
-	UpdateSession(session *webapp.Session) error
-	DeleteSession(id string) error
-	PeekUncommittedChanges(session *webapp.Session, fn func(graph *interaction.Graph) error) error
-	Get(session *webapp.Session) (*interaction.Graph, error)
-	GetSession(id string) (*webapp.Session, error)
-	GetWithIntent(session *webapp.Session, intent interaction.Intent) (*interaction.Graph, error)
+	UpdateSession(ctx context.Context, session *webapp.Session) error
+	DeleteSession(ctx context.Context, id string) error
+	PeekUncommittedChanges(ctx context.Context, session *webapp.Session, fn func(graph *interaction.Graph) error) error
+	Get(ctx context.Context, session *webapp.Session) (*interaction.Graph, error)
+	GetSession(ctx context.Context, id string) (*webapp.Session, error)
+	GetWithIntent(ctx context.Context, session *webapp.Session, intent interaction.Intent) (*interaction.Graph, error)
 	PostWithIntent(
+		ctx context.Context,
 		session *webapp.Session,
 		intent interaction.Intent,
 		inputFn func() (interface{}, error),
 	) (result *webapp.Result, err error)
 	PostWithInput(
+		ctx context.Context,
 		session *webapp.Session,
 		inputFn func() (interface{}, error),
 	) (result *webapp.Result, err error)
@@ -43,9 +47,8 @@ type ControllerDeps struct {
 	Renderer                Renderer
 	Publisher               *Publisher
 	Clock                   clock.Clock
-	UIConfig                *config.UIConfig
-	ErrorCookie             *webapp.ErrorCookie
 	TesterEndpointsProvider tester.EndpointsProvider
+	ErrorRenderer           *ErrorRenderer
 
 	TrustProxy config.TrustProxy
 }
@@ -64,7 +67,7 @@ func (f *ControllerFactory) New(r *http.Request, rw http.ResponseWriter) (*Contr
 		path:         path,
 		request:      r,
 		response:     rw,
-		postHandlers: make(map[string]func() error),
+		postHandlers: make(map[string]func(ctx context.Context) error),
 	}
 
 	if err := r.ParseForm(); err != nil {
@@ -83,14 +86,16 @@ type Controller struct {
 	request  *http.Request
 	response http.ResponseWriter
 
-	getHandler   func() error
-	postHandlers map[string]func() error
+	// preHandler will be executed before any handler executed
+	preHandler   func(ctx context.Context) error
+	getHandler   func(ctx context.Context) error
+	postHandlers map[string]func(ctx context.Context) error
 
 	skipRewind bool
 }
 
-func (c *Controller) RequireUserID() string {
-	userID := session.GetUserID(c.request.Context())
+func (c *Controller) RequireUserID(ctx context.Context) string {
+	userID := session.GetUserID(ctx)
 	if userID == nil {
 		// This should not happen; should have a middleware to redirect user to
 		// login page if unauthenticated.
@@ -109,22 +114,26 @@ func (c *Controller) RedirectURI() string {
 	return ruri
 }
 
-func (c *Controller) Get(fn func() error) {
+func (c *Controller) Get(fn func(ctx context.Context) error) {
 	c.getHandler = fn
 }
 
-func (c *Controller) PostAction(action string, fn func() error) {
+func (c *Controller) BeforeHandle(fn func(ctx context.Context) error) {
+	c.preHandler = fn
+}
+
+func (c *Controller) PostAction(action string, fn func(ctx context.Context) error) {
 	c.postHandlers[action] = fn
 }
 
-func (c *Controller) GetSession(id string) (*webapp.Session, error) {
-	return c.Page.GetSession(id)
+func (c *Controller) GetSession(ctx context.Context, id string) (*webapp.Session, error) {
+	return c.Page.GetSession(ctx, id)
 }
 
-func (c *Controller) UpdateSession(s *webapp.Session) error {
+func (c *Controller) UpdateSession(ctx context.Context, s *webapp.Session) error {
 	now := c.Clock.NowUTC()
 	s.UpdatedAt = now
-	err := c.Page.UpdateSession(s)
+	err := c.Page.UpdateSession(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -133,7 +142,7 @@ func (c *Controller) UpdateSession(s *webapp.Session) error {
 		Kind: WebsocketMessageKindRefresh,
 	}
 
-	err = c.Publisher.Publish(s, msg)
+	err = c.Publisher.Publish(ctx, s, msg)
 	if err != nil {
 		return err
 	}
@@ -141,15 +150,39 @@ func (c *Controller) UpdateSession(s *webapp.Session) error {
 	return nil
 }
 
-func (c *Controller) DeleteSession(id string) error {
-	return c.Page.DeleteSession(id)
+func (c *Controller) DeleteSession(ctx context.Context, id string) error {
+	return c.Page.DeleteSession(ctx, id)
 }
 
-func (c *Controller) Serve() {
+func (c *Controller) ServeWithoutDBTx(ctx context.Context) {
+	c.serve(ctx, serveOption{
+		withDBTx: false,
+	})
+}
+
+func (c *Controller) ServeWithDBTx(ctx context.Context) {
+	c.serve(ctx, serveOption{
+		withDBTx: true,
+	})
+}
+
+type serveOption struct {
+	withDBTx bool
+}
+
+func (c *Controller) serve(ctx context.Context, option serveOption) {
 	var err error
+	fns := [](func(ctx context.Context) error){
+		func(ctx context.Context) error {
+			if c.preHandler != nil {
+				return c.preHandler(ctx)
+			}
+			return nil
+		},
+	}
 	switch c.request.Method {
 	case http.MethodGet:
-		err = c.Database.WithTx(c.getHandler)
+		fns = append(fns, c.getHandler)
 	case http.MethodPost:
 		handler, ok := c.postHandlers[c.request.Form.Get("x_action")]
 		if !ok {
@@ -157,46 +190,42 @@ func (c *Controller) Serve() {
 			break
 		}
 
-		err = c.Database.WithTx(handler)
+		fns = append(fns, handler)
 	default:
 		http.Error(c.response, "Invalid request method", http.StatusMethodNotAllowed)
 	}
 
-	if apierrors.IsAPIError(err) {
-		c.renderError(err)
+	handleFunc := func(ctx context.Context) error {
+		for _, fn := range fns {
+			err := fn(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if option.withDBTx {
+		err = c.Database.WithTx(ctx, handleFunc)
 	} else {
-		panic(err)
-	}
-}
-
-func (c *Controller) renderError(err error) {
-	apierror := apierrors.AsAPIError(err)
-
-	// Show WebUIInvalidSession error in different page.
-	u := *c.request.URL
-	// If the request method is Get, avoid redirect back to the same path
-	// which causes infinite redirect loop
-	if c.request.Method == http.MethodGet {
-		u.Path = "/errors/error"
-	}
-	if apierror.Reason == webapp.WebUIInvalidSession.Reason {
-		u.Path = "/errors/error"
+		err = handleFunc(ctx)
 	}
 
-	cookie, err := c.ErrorCookie.SetRecoverableError(c.request, apierror)
 	if err != nil {
-		panic(err)
+		if apierrors.IsAPIError(err) {
+			c.renderError(ctx, err)
+		} else {
+			panic(err)
+		}
 	}
-	result := webapp.Result{
-		RedirectURI:      u.String(),
-		NavigationAction: "replace",
-		Cookies:          []*http.Cookie{cookie},
-	}
-	result.WriteResponse(c.response, c.request)
 }
 
-func (c *Controller) EntryPointSession(opts webapp.SessionOptions) *webapp.Session {
-	s := webapp.GetSession(c.request.Context())
+func (c *Controller) renderError(ctx context.Context, err error) {
+	c.ErrorRenderer.RenderError(ctx, c.response, c.request, err)
+}
+
+func (c *Controller) EntryPointSession(ctx context.Context, opts webapp.SessionOptions) *webapp.Session {
+	s := webapp.GetSession(ctx)
 	now := c.Clock.NowUTC()
 	o := opts
 	if s != nil {
@@ -212,18 +241,20 @@ func (c *Controller) EntryPointSession(opts webapp.SessionOptions) *webapp.Sessi
 }
 
 func (c *Controller) EntryPointGet(
+	ctx context.Context,
 	opts webapp.SessionOptions,
 	intent interaction.Intent,
 ) (*interaction.Graph, error) {
-	return c.Page.GetWithIntent(c.EntryPointSession(opts), intent)
+	return c.Page.GetWithIntent(ctx, c.EntryPointSession(ctx, opts), intent)
 }
 
 func (c *Controller) EntryPointPost(
+	ctx context.Context,
 	opts webapp.SessionOptions,
 	intent interaction.Intent,
 	inputFn func() (interface{}, error),
 ) (*webapp.Result, error) {
-	return c.Page.PostWithIntent(c.EntryPointSession(opts), intent, inputFn)
+	return c.Page.PostWithIntent(ctx, c.EntryPointSession(ctx, opts), intent, inputFn)
 }
 
 func (c *Controller) rewindSessionHistory(session *webapp.Session) error {
@@ -254,16 +285,16 @@ func (c *Controller) rewindSessionHistory(session *webapp.Session) error {
 	return nil
 }
 
-func (c *Controller) InteractionSession() (*webapp.Session, error) {
-	s := webapp.GetSession(c.request.Context())
+func (c *Controller) InteractionSession(ctx context.Context) (*webapp.Session, error) {
+	s := webapp.GetSession(ctx)
 	if s == nil {
 		return nil, webapp.ErrSessionNotFound
 	}
 	return s, nil
 }
 
-func (c *Controller) InteractionGet() (*interaction.Graph, error) {
-	s, err := c.InteractionSession()
+func (c *Controller) InteractionGet(ctx context.Context) (*interaction.Graph, error) {
+	s, err := c.InteractionSession(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -272,19 +303,19 @@ func (c *Controller) InteractionGet() (*interaction.Graph, error) {
 		return nil, err
 	}
 
-	return c.Page.Get(s)
+	return c.Page.Get(ctx, s)
 }
 
-func (c *Controller) InteractionGetWithSession(s *webapp.Session) (*interaction.Graph, error) {
+func (c *Controller) InteractionGetWithSession(ctx context.Context, s *webapp.Session) (*interaction.Graph, error) {
 	if err := c.rewindSessionHistory(s); err != nil {
 		return nil, err
 	}
 
-	return c.Page.Get(s)
+	return c.Page.Get(ctx, s)
 }
 
-func (c *Controller) InteractionPost(inputFn func() (interface{}, error)) (*webapp.Result, error) {
-	s, err := c.InteractionSession()
+func (c *Controller) InteractionPost(ctx context.Context, inputFn func() (interface{}, error)) (*webapp.Result, error) {
+	s, err := c.InteractionSession(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -293,5 +324,25 @@ func (c *Controller) InteractionPost(inputFn func() (interface{}, error)) (*weba
 		return nil, err
 	}
 
-	return c.Page.PostWithInput(s, inputFn)
+	return c.Page.PostWithInput(ctx, s, inputFn)
+}
+
+func (c *Controller) InteractionOAuthCallback(ctx context.Context, oauthInput InputOAuthCallback, oauthState *webappoauth.WebappOAuthState) (*webapp.Result, error) {
+	inputFn := func() (input interface{}, err error) {
+		input = &oauthInput
+		return
+	}
+	// OAuth callback could be triggered by form post from another site (e.g. google)
+	// Therefore cookies might not be sent in this case
+	// Use the state as web session id
+	s, err := c.Page.GetSession(ctx, oauthState.WebSessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.rewindSessionHistory(s); err != nil {
+		return nil, err
+	}
+
+	return c.Page.PostWithInput(ctx, s, inputFn)
 }

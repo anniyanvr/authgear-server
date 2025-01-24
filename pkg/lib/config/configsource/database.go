@@ -11,8 +11,12 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
+	// We need "sigs.k8s.io/yaml" package instead of other yaml serializer,
+	// because "gopkg.in/yaml.v3" add `null`s for null pointers which break some validations.
+	"sigs.k8s.io/yaml"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/config/plan"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/globaldb"
 	"github.com/authgear/authgear-server/pkg/util/clock"
@@ -26,6 +30,7 @@ import (
 
 const PGChannelConfigSourceChange = "config_source_change"
 const PGChannelDomainChange = "domain_change"
+const PGChannelPlanChange = "plan_change"
 
 type DatabaseSource struct {
 	ID        string
@@ -58,10 +63,10 @@ const (
 )
 
 type DatabaseHandleFactory func() *globaldb.Handle
-type StoreFactory func(handle *globaldb.Handle) *Store
+type ConfigSourceStoreFactory func(handle *globaldb.Handle) *Store
+type PlanStoreFactory plan.StoreFactory
 
 func NewDatabaseHandleFactory(
-	ctx context.Context,
 	pool *db.Pool,
 	credentials *config.GlobalDatabaseCredentialsEnvironmentConfig,
 	cfg *config.DatabaseEnvironmentConfig,
@@ -69,7 +74,6 @@ func NewDatabaseHandleFactory(
 ) DatabaseHandleFactory {
 	factory := func() *globaldb.Handle {
 		return globaldb.NewHandle(
-			ctx,
 			pool,
 			credentials,
 			cfg,
@@ -79,12 +83,11 @@ func NewDatabaseHandleFactory(
 	return factory
 }
 
-func NewStoreFactory(
-	ctx context.Context,
+func NewConfigSourceStoreStoreFactory(
 	sqlbuilder *globaldb.SQLBuilder,
-) StoreFactory {
+) ConfigSourceStoreFactory {
 	factory := func(handle *globaldb.Handle) *Store {
-		sqlExecutor := globaldb.NewSQLExecutor(ctx, handle)
+		sqlExecutor := globaldb.NewSQLExecutor(handle)
 		return &Store{
 			SQLBuilder:  sqlbuilder,
 			SQLExecutor: sqlExecutor,
@@ -93,16 +96,24 @@ func NewStoreFactory(
 	return factory
 }
 
+func NewPlanStoreStoreFactory(
+	sqlbuilder *globaldb.SQLBuilder,
+) PlanStoreFactory {
+	factory := PlanStoreFactory(plan.NewStoreFactory(sqlbuilder))
+	return factory
+}
+
 type Database struct {
-	Logger                DatabaseLogger
-	BaseResources         *resource.Manager
-	TrustProxy            config.TrustProxy
-	Config                *Config
-	Clock                 clock.Clock
-	StoreFactory          StoreFactory
-	DatabaseHandleFactory DatabaseHandleFactory
-	DatabaseCredentials   *config.GlobalDatabaseCredentialsEnvironmentConfig
-	DatabaseConfig        *config.DatabaseEnvironmentConfig
+	Logger                   DatabaseLogger
+	BaseResources            *resource.Manager
+	TrustProxy               config.TrustProxy
+	Config                   *Config
+	Clock                    clock.Clock
+	ConfigSourceStoreFactory ConfigSourceStoreFactory
+	PlanStoreFactory         PlanStoreFactory
+	DatabaseHandleFactory    DatabaseHandleFactory
+	DatabaseCredentials      *config.GlobalDatabaseCredentialsEnvironmentConfig
+	DatabaseConfig           *config.DatabaseEnvironmentConfig
 
 	ResolveAppIDType ResolveAppIDType
 
@@ -113,7 +124,7 @@ type Database struct {
 	appMap  *sync.Map `wire:"-"`
 }
 
-func (d *Database) Open() error {
+func (d *Database) Open(ctx context.Context) error {
 	d.hostMap = &sync.Map{}
 	d.appMap = &sync.Map{}
 
@@ -126,13 +137,16 @@ func (d *Database) Open() error {
 	go d.listener.Listen([]string{
 		PGChannelConfigSourceChange,
 		PGChannelDomainChange,
+		PGChannelPlanChange,
 	}, done, func(channel string, extra string) {
 		switch channel {
 		case PGChannelConfigSourceChange:
 			d.invalidateApp(extra)
 		case PGChannelDomainChange:
 			d.invalidateHost(extra)
-			d.invalidateAppByDomain(extra)
+			d.invalidateAppByDomain(ctx, extra)
+		case PGChannelPlanChange:
+			d.invalidateAllApp()
 		default:
 			// unknown notification channel, just skip it
 			d.Logger.WithField("channel", channel).Info("unknown notification channel")
@@ -150,25 +164,25 @@ func (d *Database) Close() error {
 	return nil
 }
 
-func (d *Database) ResolveAppID(r *http.Request) (string, error) {
+func (d *Database) ResolveAppID(ctx context.Context, r *http.Request) (string, error) {
 	switch d.ResolveAppIDType {
 	case ResolveAppIDTypeDomain:
-		return d.resolveAppIDByDomain(r)
+		return d.resolveAppIDByDomain(ctx, r)
 	case ResolveAppIDTypePath:
-		return d.resolveAppIDByPath(r)
+		return d.resolveAppIDByPath(ctx, r)
 	default:
 		panic("invalid resolve app id type")
 	}
 }
 
-func (d *Database) resolveAppIDByPath(r *http.Request) (string, error) {
+func (d *Database) resolveAppIDByPath(ctx context.Context, r *http.Request) (string, error) {
 	appid := httproute.GetParam(r, "appid")
 	if appid == "" {
 		return "", ErrAppNotFound
 	}
 
 	// Try to resolve app to ensure the app exist
-	_, err := d.ResolveContext(appid)
+	_, err := d.ResolveContext(ctx, appid)
 	if err != nil {
 		return "", err
 	}
@@ -176,7 +190,7 @@ func (d *Database) resolveAppIDByPath(r *http.Request) (string, error) {
 	return appid, nil
 }
 
-func (d *Database) resolveAppIDByDomain(r *http.Request) (string, error) {
+func (d *Database) resolveAppIDByDomain(ctx context.Context, r *http.Request) (string, error) {
 	host := httputil.GetHost(r, bool(d.TrustProxy))
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -189,10 +203,10 @@ func (d *Database) resolveAppIDByDomain(r *http.Request) (string, error) {
 
 	var appID string
 	dbHandle := d.DatabaseHandleFactory()
-	store := d.StoreFactory(dbHandle)
-	err := dbHandle.WithTx(func() error {
+	store := d.ConfigSourceStoreFactory(dbHandle)
+	err := dbHandle.WithTx(ctx, func(ctx context.Context) error {
 		d.Logger.WithField("host", host).Debug("resolve appid from db")
-		aid, err := store.GetAppIDByDomain(host)
+		aid, err := store.GetAppIDByDomain(ctx, host)
 		if err != nil {
 			return err
 		}
@@ -207,24 +221,24 @@ func (d *Database) resolveAppIDByDomain(r *http.Request) (string, error) {
 	return appID, nil
 }
 
-func (d *Database) ResolveContext(appID string) (*config.AppContext, error) {
+func (d *Database) ResolveContext(ctx context.Context, appID string) (*config.AppContext, error) {
 	value, _ := d.appMap.LoadOrStore(appID, &dbApp{
 		appID: appID,
 		load:  &sync.Once{},
 	})
 	app := value.(*dbApp)
-	return app.Load(d)
+	return app.Load(ctx, d)
 }
 
 func (d *Database) ReloadApp(appID string) {
 	d.invalidateApp(appID)
 }
 
-func (d *Database) CreateDatabaseSource(appID string, resources map[string][]byte, planName string) error {
+func (d *Database) CreateDatabaseSource(ctx context.Context, appID string, resources map[string][]byte, planName string) error {
 	dbHandle := d.DatabaseHandleFactory()
-	store := d.StoreFactory(dbHandle)
-	return dbHandle.WithTx(func() error {
-		_, err := store.GetDatabaseSourceByAppID(appID)
+	store := d.ConfigSourceStoreFactory(dbHandle)
+	return dbHandle.WithTx(ctx, func(ctx context.Context) error {
+		_, err := store.GetDatabaseSourceByAppID(ctx, appID)
 		if err != nil && !errors.Is(err, ErrAppNotFound) {
 			return err
 		} else if err == nil {
@@ -244,15 +258,15 @@ func (d *Database) CreateDatabaseSource(appID string, resources map[string][]byt
 			CreatedAt: d.Clock.NowUTC(),
 			UpdatedAt: d.Clock.NowUTC(),
 		}
-		return store.CreateDatabaseSource(dbSource)
+		return store.CreateDatabaseSource(ctx, dbSource)
 	})
 }
 
-func (d *Database) UpdateDatabaseSource(appID string, updates []*resource.ResourceFile) error {
+func (d *Database) UpdateDatabaseSource(ctx context.Context, appID string, updates []*resource.ResourceFile) error {
 	dbHandle := d.DatabaseHandleFactory()
-	store := d.StoreFactory(dbHandle)
-	return dbHandle.WithTx(func() error {
-		dbs, err := store.GetDatabaseSourceByAppID(appID)
+	store := d.ConfigSourceStoreFactory(dbHandle)
+	return dbHandle.WithTx(ctx, func(ctx context.Context) error {
+		dbs, err := store.GetDatabaseSourceByAppID(ctx, appID)
 		if err != nil {
 			return err
 		}
@@ -275,7 +289,7 @@ func (d *Database) UpdateDatabaseSource(appID string, updates []*resource.Resour
 
 		if updated {
 			dbs.UpdatedAt = d.Clock.NowUTC()
-			err = store.UpdateDatabaseSource(dbs)
+			err = store.UpdateDatabaseSource(ctx, dbs)
 			if err != nil {
 				return err
 			}
@@ -295,11 +309,19 @@ func (d *Database) invalidateApp(appID string) {
 	d.Logger.WithField("app_id", appID).Info("invalidated cached config")
 }
 
-func (d *Database) invalidateAppByDomain(domain string) {
+func (d *Database) invalidateAllApp() {
+	d.appMap.Range(func(key, value any) bool {
+		d.appMap.Delete(key)
+		return true
+	})
+	d.Logger.Info("invalidated all cached config")
+}
+
+func (d *Database) invalidateAppByDomain(ctx context.Context, domain string) {
 	dbHandle := d.DatabaseHandleFactory()
-	store := d.StoreFactory(dbHandle)
-	err := dbHandle.WithTx(func() error {
-		aid, err := store.GetAppIDByDomain(domain)
+	store := d.ConfigSourceStoreFactory(dbHandle)
+	err := dbHandle.WithTx(ctx, func(ctx context.Context) error {
+		aid, err := store.GetAppIDByDomain(ctx, domain)
 		if err != nil {
 			return err
 		}
@@ -337,10 +359,14 @@ func (d *Database) cleanupCache(done <-chan struct{}) {
 	}
 }
 
-func MakeAppFSFromDatabaseSource(s *DatabaseSource) (resource.Fs, error) {
+func newMemMapFs() afero.Fs {
 	// Construct a FS that treats `a` and `/a` the same.
 	// The template is loaded by a file URI which is always an absoluted path.
-	appFs := afero.NewBasePathFs(afero.NewMemMapFs(), "/")
+	return afero.NewBasePathFs(afero.NewMemMapFs(), "/")
+}
+
+func MakeAppFSFromDatabaseSource(s *DatabaseSource) (resource.Fs, error) {
+	appFs := newMemMapFs()
 	create := func(name string, data []byte) {
 		file, _ := appFs.Create(name)
 		_, _ = file.Write(data)
@@ -360,6 +386,22 @@ func MakeAppFSFromDatabaseSource(s *DatabaseSource) (resource.Fs, error) {
 	}, nil
 }
 
+func MakePlanFSFromPlan(p *plan.Plan) (resource.Fs, error) {
+	planFs := newMemMapFs()
+	if p != nil {
+		file, _ := planFs.Create(AuthgearFeatureYAML)
+		data, err := yaml.Marshal(p.RawFeatureConfig)
+		if err != nil {
+			return nil, err
+		}
+		_, _ = file.Write(data)
+	}
+	return &resource.LeveledAferoFs{
+		Fs:      planFs,
+		FsLevel: resource.FsLevelPlan,
+	}, nil
+}
+
 type dbApp struct {
 	appID      string
 	appCtx     *config.AppContext
@@ -369,23 +411,34 @@ type dbApp struct {
 	Loaded     bool
 }
 
-func (a *dbApp) Load(d *Database) (*config.AppContext, error) {
+func (a *dbApp) Load(ctx context.Context, d *Database) (*config.AppContext, error) {
 	if a.load != nil {
 		a.load.Do(func() {
-			a.appCtx, a.err = a.doLoad(d)
+			a.appCtx, a.err = a.doLoad(ctx, d)
 		})
 	}
 	atomic.StoreInt64(&a.lastUsedAt, d.Clock.NowMonotonic().Unix())
 	return a.appCtx, a.err
 }
 
-func (a *dbApp) doLoad(d *Database) (*config.AppContext, error) {
+func (a *dbApp) doLoad(ctx context.Context, d *Database) (*config.AppContext, error) {
 	var appCtx *config.AppContext
 	dbHandle := d.DatabaseHandleFactory()
-	store := d.StoreFactory(dbHandle)
-	err := dbHandle.WithTx(func() error {
+	store := d.ConfigSourceStoreFactory(dbHandle)
+	planStore := d.PlanStoreFactory(dbHandle)
+	err := dbHandle.WithTx(ctx, func(ctx context.Context) error {
 		d.Logger.WithField("app_id", a.appID).Info("load app config from db")
-		data, err := store.GetDatabaseSourceByAppID(a.appID)
+		data, err := store.GetDatabaseSourceByAppID(ctx, a.appID)
+		if err != nil {
+			return err
+		}
+
+		p, err := planStore.GetPlan(ctx, data.PlanName)
+		if err != nil && !errors.Is(err, plan.ErrPlanNotFound) {
+			return err
+		}
+
+		planFs, err := MakePlanFSFromPlan(p)
 		if err != nil {
 			return err
 		}
@@ -394,14 +447,15 @@ func (a *dbApp) doLoad(d *Database) (*config.AppContext, error) {
 		if err != nil {
 			return err
 		}
-		resources := d.BaseResources.Overlay(appFs)
+		resources := d.BaseResources.Overlay(planFs)
+		resources = resources.Overlay(appFs)
 
 		appConfig, err := LoadConfig(resources)
 		if err != nil {
 			return err
 		}
 
-		domains, err := store.GetDomainsByAppID(a.appID)
+		domains, err := store.GetDomainsByAppID(ctx, a.appID)
 		if err != nil {
 			return err
 		}

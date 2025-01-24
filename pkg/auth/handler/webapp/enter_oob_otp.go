@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -21,7 +22,7 @@ import (
 
 var TemplateWebEnterOOBOTPHTML = template.RegisterHTML(
 	"web/enter_oob_otp.html",
-	components...,
+	Components...,
 )
 
 var EnterOOBOTPSchema = validation.NewSimpleSchema(`
@@ -69,7 +70,7 @@ type EnterOOBOTPNode interface {
 	GetOOBOTPOOBType() interaction.OOBType
 }
 
-func (h *EnterOOBOTPHandler) GetData(r *http.Request, rw http.ResponseWriter, session *webapp.Session, graph *interaction.Graph) (map[string]interface{}, error) {
+func (h *EnterOOBOTPHandler) GetData(ctx context.Context, r *http.Request, rw http.ResponseWriter, session *webapp.Session, graph *interaction.Graph) (map[string]interface{}, error) {
 	data := map[string]interface{}{}
 
 	baseViewModel := h.BaseViewModel.ViewModel(r, rw)
@@ -87,7 +88,7 @@ func (h *EnterOOBOTPHandler) GetData(r *http.Request, rw http.ResponseWriter, se
 			viewModel.OOBOTPTarget = phone.Mask(target)
 		}
 
-		state, err := h.OTPCodeService.InspectState(otp.KindOOBOTP(h.Config, channel), target)
+		state, err := h.OTPCodeService.InspectState(ctx, otp.KindOOBOTPCode(h.Config, channel), target)
 		if err != nil {
 			return nil, err
 		}
@@ -157,20 +158,20 @@ func (h *EnterOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
 
-		data, err := h.GetData(r, w, session, graph)
+		data, err := h.GetData(ctx, r, w, session, graph)
 		if err != nil {
 			return err
 		}
@@ -179,8 +180,8 @@ func (h *EnterOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("resend", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("resend", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			input = &InputResendCode{}
 			return
 		})
@@ -195,8 +196,8 @@ func (h *EnterOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	ctrl.PostAction("submit", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("submit", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			err = EnterOOBOTPSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

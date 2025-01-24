@@ -137,52 +137,141 @@ func (c *SecretConfig) LookupDataWithIndex(key SecretKey) (int, SecretItemData, 
 	return -1, nil, false
 }
 
-func (c *SecretConfig) Validate(appConfig *AppConfig) error {
-	ctx := &validation.Context{}
-	require := func(key SecretKey, item string) {
-		if _, _, ok := c.Lookup(key); !ok {
-			ctx.EmitErrorMessage(fmt.Sprintf("%s (secret '%s') is required", item, key))
-		}
+func (c *SecretConfig) validateRequire(ctx *validation.Context, key SecretKey, item string) {
+	if _, _, ok := c.Lookup(key); !ok {
+		ctx.EmitErrorMessage(fmt.Sprintf("%s (secret '%s') is required", item, key))
 	}
+}
 
-	require(DatabaseCredentialsKey, "database credentials")
-	// AuditDatabaseCredentialsKey is not required
-	// ElasticsearchCredentialsKey is not required
-	require(RedisCredentialsKey, "redis credentials")
-	require(AdminAPIAuthKeyKey, "admin API auth key materials")
-
-	if len(appConfig.Identity.OAuth.Providers) > 0 {
-		require(OAuthSSOProviderCredentialsKey, "OAuth SSO provider client credentials")
-		secretIndex, data, _ := c.LookupDataWithIndex(OAuthSSOProviderCredentialsKey)
-		oauth, ok := data.(*OAuthSSOProviderCredentials)
-		if ok {
-			for _, p := range appConfig.Identity.OAuth.Providers {
-				var matchedItem *OAuthSSOProviderCredentialsItem = nil
-				var matchedItemIndex int = -1
-				for index := range oauth.Items {
-					item := oauth.Items[index]
-					if p.Alias == item.Alias {
-						matchedItem = &item
-						matchedItemIndex = index
-						break
-					}
+func (c *SecretConfig) validateOAuthProviders(ctx *validation.Context, appConfig *AppConfig) {
+	c.validateRequire(ctx, OAuthSSOProviderCredentialsKey, "OAuth SSO provider client credentials")
+	secretIndex, data, _ := c.LookupDataWithIndex(OAuthSSOProviderCredentialsKey)
+	oauth, ok := data.(*OAuthSSOProviderCredentials)
+	if ok {
+		for _, p := range appConfig.Identity.OAuth.Providers {
+			providerAlias := p.Alias()
+			var matchedItem *OAuthSSOProviderCredentialsItem = nil
+			var matchedItemIndex int = -1
+			for index := range oauth.Items {
+				item := oauth.Items[index]
+				if providerAlias == item.Alias {
+					matchedItem = &item
+					matchedItemIndex = index
+					break
 				}
-				if matchedItem == nil {
-					ctx.EmitErrorMessage(fmt.Sprintf("OAuth SSO provider client credentials for '%s' is required", p.Alias))
-				} else {
-					if matchedItem.ClientSecret == "" {
-						ctx.Child("secrets", fmt.Sprintf("%d", secretIndex), "data", "items", fmt.Sprintf("%d", matchedItemIndex)).EmitError(
-							"required",
-							map[string]interface{}{
-								"expected": []string{"alias", "client_secret"},
-								"actual":   []string{"alias"},
-								"missing":  []string{"client_secret"},
-							},
-						)
-					}
+			}
+			if matchedItem == nil {
+				ctx.EmitErrorMessage(fmt.Sprintf("OAuth SSO provider client credentials for '%s' is required", providerAlias))
+			} else {
+				if matchedItem.ClientSecret == "" {
+					ctx.Child("secrets", fmt.Sprintf("%d", secretIndex), "data", "items", fmt.Sprintf("%d", matchedItemIndex)).EmitError(
+						"required",
+						map[string]interface{}{
+							"expected": []string{"alias", "client_secret"},
+							"actual":   []string{"alias"},
+							"missing":  []string{"client_secret"},
+						},
+					)
 				}
 			}
 		}
+	}
+}
+
+func (c *SecretConfig) validateConfidentialClients(ctx *validation.Context, confidentialClients []OAuthClientConfig) {
+	c.validateRequire(ctx, OAuthClientCredentialsKey, "OAuth client credentials")
+	_, data, _ := c.LookupDataWithIndex(OAuthClientCredentialsKey)
+	oauth, ok := data.(*OAuthClientCredentials)
+	if ok {
+		for _, c := range confidentialClients {
+			matched := false
+			for index := range oauth.Items {
+				item := oauth.Items[index]
+				if c.ClientID == item.ClientID {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				ctx.EmitErrorMessage(fmt.Sprintf("OAuth client credentials for '%s' is required", c.ClientID))
+			} else {
+				// keys are validated by the jsonschema
+			}
+		}
+	}
+}
+
+func (c *SecretConfig) validateBotProtectionSecrets(ctx *validation.Context, botProtectionProvider *BotProtectionProvider) {
+	c.validateRequire(ctx, BotProtectionProviderCredentialsKey, "bot protection provider credentials")
+	_, data, _ := c.LookupDataWithIndex(BotProtectionProviderCredentialsKey)
+	botProtectionSecret, ok := data.(*BotProtectionProviderCredentials)
+	if ok {
+		matched := botProtectionSecret.Type == botProtectionProvider.Type
+		if !matched {
+			ctx.EmitErrorMessage(fmt.Sprintf("bot protection provider credentials for '%s' is required", botProtectionProvider.Type))
+		} else {
+			// keys are validated by the jsonschema
+		}
+	}
+}
+
+func (c *SecretConfig) validateLDAPServerUserSecrets(ctx *validation.Context, ldapServerConfig []*LDAPServerConfig) {
+	c.validateRequire(ctx, LDAPServerUserCredentialsKey, "LDAP server user credentials")
+	_, data, _ := c.LookupDataWithIndex(LDAPServerUserCredentialsKey)
+	ldapServerUserCredentials, ok := data.(*LDAPServerUserCredentials)
+	if ok {
+		for _, server := range ldapServerConfig {
+			matched := false
+			for _, item := range ldapServerUserCredentials.Items {
+				if server.Name == item.Name {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				ctx.EmitErrorMessage(fmt.Sprintf("LDAP server user credentials for '%s' is required", server.Name))
+			} else {
+				// keys are validated by the jsonschema
+			}
+		}
+	}
+}
+
+func (c *SecretConfig) validateSAMLSigningKey(ctx *validation.Context, keyID string) {
+	c.validateRequire(ctx, SAMLIdpSigningMaterialsKey, "saml idp signing key materials")
+	_, data, ok := c.LookupDataWithIndex(SAMLIdpSigningMaterialsKey)
+	if ok {
+		signingMaterials, _ := data.(*SAMLIdpSigningMaterials)
+
+		for _, m := range signingMaterials.Certificates {
+			if m.Key.Key.KeyID() == keyID {
+				return
+			}
+		}
+	}
+	ctx.EmitErrorMessage(fmt.Sprintf("saml idp signing key '%s' does not exist", keyID))
+}
+
+func (c *SecretConfig) validateSAMLServiceProviderCerts(ctx *validation.Context, sp *SAMLServiceProviderConfig) {
+	_, data, _ := c.LookupDataWithIndex(SAMLSpSigningMaterialsKey)
+	signingMaterials, _ := data.(*SAMLSpSigningMaterials)
+	certs, _, ok := signingMaterials.Resolve(sp.GetID())
+	if !ok || len(certs.Certificates) < 1 {
+		ctx.EmitErrorMessage(fmt.Sprintf("certificates of saml sp '%s' is not configured", sp.GetID()))
+	}
+}
+
+func (c *SecretConfig) Validate(appConfig *AppConfig) error {
+	ctx := &validation.Context{}
+
+	c.validateRequire(ctx, DatabaseCredentialsKey, "database credentials")
+	// AuditDatabaseCredentialsKey is not required
+	// ElasticsearchCredentialsKey is not required
+	c.validateRequire(ctx, RedisCredentialsKey, "redis credentials")
+	c.validateRequire(ctx, AdminAPIAuthKeyKey, "admin API auth key materials")
+
+	if len(appConfig.Identity.OAuth.Providers) > 0 {
+		c.validateOAuthProviders(ctx, appConfig)
 	}
 
 	confidentialClients := []OAuthClientConfig{}
@@ -193,32 +282,33 @@ func (c *SecretConfig) Validate(appConfig *AppConfig) error {
 	}
 
 	if len(confidentialClients) > 0 {
-		require(OAuthClientCredentialsKey, "OAuth client credentials")
-		_, data, _ := c.LookupDataWithIndex(OAuthClientCredentialsKey)
-		oauth, ok := data.(*OAuthClientCredentials)
-		if ok {
-			for _, c := range confidentialClients {
-				matched := false
-				for index := range oauth.Items {
-					item := oauth.Items[index]
-					if c.ClientID == item.ClientID {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					ctx.EmitErrorMessage(fmt.Sprintf("OAuth client credentials for '%s' is required", c.ClientID))
-				} else {
-					// keys are validated by the jsonschema
-				}
+		c.validateConfidentialClients(ctx, confidentialClients)
+	}
+
+	c.validateRequire(ctx, OAuthKeyMaterialsKey, "OAuth key materials")
+	c.validateRequire(ctx, CSRFKeyMaterialsKey, "CSRF key materials")
+	if len(appConfig.Hook.BlockingHandlers) > 0 || len(appConfig.Hook.NonBlockingHandlers) > 0 {
+		c.validateRequire(ctx, WebhookKeyMaterialsKey, "web-hook signing key materials")
+	}
+	if appConfig.BotProtection != nil && appConfig.BotProtection.Enabled && appConfig.BotProtection.Provider != nil {
+		c.validateRequire(ctx, BotProtectionProviderCredentialsKey, "bot protection key materials")
+		c.validateBotProtectionSecrets(ctx, appConfig.BotProtection.Provider)
+	}
+	if appConfig.Identity.LDAP != nil && len(appConfig.Identity.LDAP.Servers) > 0 {
+		c.validateRequire(ctx, LDAPServerUserCredentialsKey, "LDAP server user credentials")
+		c.validateLDAPServerUserSecrets(ctx, appConfig.Identity.LDAP.Servers)
+	}
+
+	if len(appConfig.SAML.ServiceProviders) > 0 {
+		c.validateRequire(ctx, SAMLIdpSigningMaterialsKey, "saml idp signing key materials")
+		for _, sp := range appConfig.SAML.ServiceProviders {
+			if sp.SignatureVerificationEnabled {
+				c.validateSAMLServiceProviderCerts(ctx, sp)
 			}
 		}
 	}
-
-	require(OAuthKeyMaterialsKey, "OAuth key materials")
-	require(CSRFKeyMaterialsKey, "CSRF key materials")
-	if len(appConfig.Hook.BlockingHandlers) > 0 || len(appConfig.Hook.NonBlockingHandlers) > 0 {
-		require(WebhookKeyMaterialsKey, "web-hook signing key materials")
+	if appConfig.SAML.Signing.KeyID != "" {
+		c.validateSAMLSigningKey(ctx, appConfig.SAML.Signing.KeyID)
 	}
 
 	return ctx.Error("invalid secrets")
@@ -232,10 +322,11 @@ func (c *SecretConfig) GetCustomSMSProviderConfig() *CustomSMSProviderConfig {
 type SecretKey string
 
 const (
-	DatabaseCredentialsKey      SecretKey = "db"
-	AuditDatabaseCredentialsKey SecretKey = "audit.db"
-	ElasticsearchCredentialsKey SecretKey = "elasticsearch"
-	RedisCredentialsKey         SecretKey = "redis"
+	DatabaseCredentialsKey       SecretKey = "db"
+	AuditDatabaseCredentialsKey  SecretKey = "audit.db"
+	ElasticsearchCredentialsKey  SecretKey = "elasticsearch"
+	SearchDatabaseCredentialsKey SecretKey = "search.db"
+	RedisCredentialsKey          SecretKey = "redis"
 	// nolint: gosec
 	AnalyticRedisCredentialsKey SecretKey = "analytic.redis"
 	AdminAPIAuthKeyKey          SecretKey = "admin-api.auth"
@@ -255,8 +346,13 @@ const (
 	// nolint: gosec
 	OAuthClientCredentialsKey SecretKey = "oauth.client_secrets"
 	// nolint: gosec
-	CaptchaCloudflareCredentialsKey  SecretKey = "captcha.cloudflare"
-	WhatsappOnPremisesCredentialsKey SecretKey = "whatsapp.on-premises"
+	Deprecated_CaptchaCloudflareCredentialsKey SecretKey = "captcha.cloudflare"
+	BotProtectionProviderCredentialsKey        SecretKey = "bot_protection.provider"
+	WhatsappOnPremisesCredentialsKey           SecretKey = "whatsapp.on-premises"
+	LDAPServerUserCredentialsKey               SecretKey = "ldap"
+
+	SAMLIdpSigningMaterialsKey SecretKey = "saml.idp.signing"
+	SAMLSpSigningMaterialsKey  SecretKey = "saml.service_providers.signing"
 )
 
 func (key SecretKey) IsUpdatable() bool {
@@ -279,25 +375,30 @@ type secretKeyDef struct {
 }
 
 var secretItemKeys = map[SecretKey]secretKeyDef{
-	DatabaseCredentialsKey:           {"DatabaseCredentials", func() SecretItemData { return &DatabaseCredentials{} }},
-	AuditDatabaseCredentialsKey:      {"AuditDatabaseCredentials", func() SecretItemData { return &AuditDatabaseCredentials{} }},
-	ElasticsearchCredentialsKey:      {"ElasticsearchCredentials", func() SecretItemData { return &ElasticsearchCredentials{} }},
-	RedisCredentialsKey:              {"RedisCredentials", func() SecretItemData { return &RedisCredentials{} }},
-	AnalyticRedisCredentialsKey:      {"AnalyticRedisCredentials", func() SecretItemData { return &AnalyticRedisCredentials{} }},
-	AdminAPIAuthKeyKey:               {"AdminAPIAuthKey", func() SecretItemData { return &AdminAPIAuthKey{} }},
-	OAuthSSOProviderCredentialsKey:   {"OAuthSSOProviderCredentials", func() SecretItemData { return &OAuthSSOProviderCredentials{} }},
-	SMTPServerCredentialsKey:         {"SMTPServerCredentials", func() SecretItemData { return &SMTPServerCredentials{} }},
-	TwilioCredentialsKey:             {"TwilioCredentials", func() SecretItemData { return &TwilioCredentials{} }},
-	NexmoCredentialsKey:              {"NexmoCredentials", func() SecretItemData { return &NexmoCredentials{} }},
-	OAuthKeyMaterialsKey:             {"OAuthKeyMaterials", func() SecretItemData { return &OAuthKeyMaterials{} }},
-	CSRFKeyMaterialsKey:              {"CSRFKeyMaterials", func() SecretItemData { return &CSRFKeyMaterials{} }},
-	WebhookKeyMaterialsKey:           {"WebhookKeyMaterials", func() SecretItemData { return &WebhookKeyMaterials{} }},
-	ImagesKeyMaterialsKey:            {"ImagesKeyMaterials", func() SecretItemData { return &ImagesKeyMaterials{} }},
-	WATICredentialsKey:               {"WATICredentials", func() SecretItemData { return &WATICredentials{} }},
-	OAuthClientCredentialsKey:        {"OAuthClientCredentials", func() SecretItemData { return &OAuthClientCredentials{} }},
-	CustomSMSProviderConfigKey:       {"CustomSMSProviderConfig", func() SecretItemData { return &CustomSMSProviderConfig{} }},
-	CaptchaCloudflareCredentialsKey:  {"CaptchaCloudflareCredentials", func() SecretItemData { return &CaptchaCloudflareCredentials{} }},
-	WhatsappOnPremisesCredentialsKey: {"WhatsappOnPremisesCredentials", func() SecretItemData { return &WhatsappOnPremisesCredentials{} }},
+	DatabaseCredentialsKey:                     {"DatabaseCredentials", func() SecretItemData { return &DatabaseCredentials{} }},
+	AuditDatabaseCredentialsKey:                {"AuditDatabaseCredentials", func() SecretItemData { return &AuditDatabaseCredentials{} }},
+	SearchDatabaseCredentialsKey:               {"SearchDatabaseCredentials", func() SecretItemData { return &SearchDatabaseCredentials{} }},
+	ElasticsearchCredentialsKey:                {"ElasticsearchCredentials", func() SecretItemData { return &ElasticsearchCredentials{} }},
+	RedisCredentialsKey:                        {"RedisCredentials", func() SecretItemData { return &RedisCredentials{} }},
+	AnalyticRedisCredentialsKey:                {"AnalyticRedisCredentials", func() SecretItemData { return &AnalyticRedisCredentials{} }},
+	AdminAPIAuthKeyKey:                         {"AdminAPIAuthKey", func() SecretItemData { return &AdminAPIAuthKey{} }},
+	OAuthSSOProviderCredentialsKey:             {"OAuthSSOProviderCredentials", func() SecretItemData { return &OAuthSSOProviderCredentials{} }},
+	SMTPServerCredentialsKey:                   {"SMTPServerCredentials", func() SecretItemData { return &SMTPServerCredentials{} }},
+	TwilioCredentialsKey:                       {"TwilioCredentials", func() SecretItemData { return &TwilioCredentials{} }},
+	NexmoCredentialsKey:                        {"NexmoCredentials", func() SecretItemData { return &NexmoCredentials{} }},
+	OAuthKeyMaterialsKey:                       {"OAuthKeyMaterials", func() SecretItemData { return &OAuthKeyMaterials{} }},
+	CSRFKeyMaterialsKey:                        {"CSRFKeyMaterials", func() SecretItemData { return &CSRFKeyMaterials{} }},
+	WebhookKeyMaterialsKey:                     {"WebhookKeyMaterials", func() SecretItemData { return &WebhookKeyMaterials{} }},
+	ImagesKeyMaterialsKey:                      {"ImagesKeyMaterials", func() SecretItemData { return &ImagesKeyMaterials{} }},
+	WATICredentialsKey:                         {"WATICredentials", func() SecretItemData { return &WATICredentials{} }},
+	OAuthClientCredentialsKey:                  {"OAuthClientCredentials", func() SecretItemData { return &OAuthClientCredentials{} }},
+	CustomSMSProviderConfigKey:                 {"CustomSMSProviderConfig", func() SecretItemData { return &CustomSMSProviderConfig{} }},
+	Deprecated_CaptchaCloudflareCredentialsKey: {"Deprecated_CaptchaCloudflareCredentials", func() SecretItemData { return &Deprecated_CaptchaCloudflareCredentials{} }},
+	BotProtectionProviderCredentialsKey:        {"BotProtectionProviderCredentials", func() SecretItemData { return &BotProtectionProviderCredentials{} }},
+	WhatsappOnPremisesCredentialsKey:           {"WhatsappOnPremisesCredentials", func() SecretItemData { return &WhatsappOnPremisesCredentials{} }},
+	LDAPServerUserCredentialsKey:               {"LDAPServerUserCredentials", func() SecretItemData { return &LDAPServerUserCredentials{} }},
+	SAMLIdpSigningMaterialsKey:                 {"SAMLIdpSigningMaterials", func() SecretItemData { return &SAMLIdpSigningMaterials{} }},
+	SAMLSpSigningMaterialsKey:                  {"SAMLSpSigningMaterials", func() SecretItemData { return &SAMLSpSigningMaterials{} }},
 }
 
 var _ = SecretConfigSchema.AddJSON("SecretKey", map[string]interface{}{

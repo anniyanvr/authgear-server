@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -14,7 +15,7 @@ import (
 
 	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
-	"github.com/authgear/authgear-server/pkg/lib/cloudstorage"
+	imagesservice "github.com/authgear/authgear-server/pkg/images/service"
 	"github.com/authgear/authgear-server/pkg/lib/images"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
 	"github.com/authgear/authgear-server/pkg/util/clock"
@@ -37,7 +38,7 @@ type PresignProvider interface {
 }
 
 type ImagesStore interface {
-	Create(file *images.File) error
+	Create(ctx context.Context, file *images.File) error
 }
 
 type PostHandlerLogger struct{ *log.Logger }
@@ -46,16 +47,21 @@ func NewPostHandlerLogger(lf *log.Factory) PostHandlerLogger {
 	return PostHandlerLogger{lf.New("post-handler")}
 }
 
-type PostHandler struct {
-	Logger               PostHandlerLogger
-	JSON                 JSONResponseWriter
-	CloudStorageProvider cloudstorage.Provider
-	PresignProvider      PresignProvider
-	Database             *appdb.Handle
-	ImagesStore          ImagesStore
-	Clock                clock.Clock
+type PostHandlerCloudStorageService interface {
+	PresignPutRequest(ctx context.Context, r *imagesservice.PresignUploadRequest) (*imagesservice.PresignUploadResponse, error)
 }
 
+type PostHandler struct {
+	Logger                         PostHandlerLogger
+	JSON                           JSONResponseWriter
+	PostHandlerCloudStorageService PostHandlerCloudStorageService
+	PresignProvider                PresignProvider
+	Database                       *appdb.Handle
+	ImagesStore                    ImagesStore
+	Clock                          clock.Clock
+}
+
+// nolint:gocognit
 func (h *PostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var err error
 
@@ -105,7 +111,7 @@ func (h *PostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	key := ExtractKey(r)
 	// Transform the form into PresignUploadRequest.
-	presignUploadRequest := cloudstorage.PresignUploadRequest{
+	presignUploadRequest := imagesservice.PresignUploadRequest{
 		Key:     key,
 		Headers: map[string]interface{}{},
 	}
@@ -141,10 +147,10 @@ func (h *PostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	saveImagesFileRecord := func() error {
+	saveImagesFileRecord := func(ctx context.Context) error {
 		objectID := httproute.GetParam(r, "objectid")
-		return h.Database.WithTx(func() error {
-			return h.ImagesStore.Create(&images.File{
+		return h.Database.WithTx(ctx, func(ctx context.Context) error {
+			return h.ImagesStore.Create(ctx, &images.File{
 				ID:        objectID,
 				Metadata:  metadata,
 				Size:      fileHeader.Size,
@@ -153,7 +159,7 @@ func (h *PostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	presignUploadResponse, err := h.CloudStorageProvider.PresignPutRequest(&presignUploadRequest)
+	presignUploadResponse, err := h.PostHandlerCloudStorageService.PresignPutRequest(r.Context(), &presignUploadRequest)
 	if err != nil {
 		return
 	}
@@ -184,7 +190,8 @@ func (h *PostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		err := saveImagesFileRecord()
+		ctx := r.Context()
+		err := saveImagesFileRecord(ctx)
 		if err != nil {
 			h.Logger.WithError(err).Error("failed to save image file record")
 			return err

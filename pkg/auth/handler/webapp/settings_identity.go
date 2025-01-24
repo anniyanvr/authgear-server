@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -17,7 +18,7 @@ import (
 
 var TemplateWebSettingsIdentityHTML = template.RegisterHTML(
 	"web/settings_identity.html",
-	components...,
+	Components...,
 )
 
 func ConfigureSettingsIdentityRoute(route httproute.Route) httproute.Route {
@@ -41,13 +42,13 @@ type SettingsIdentityHandler struct {
 	AccountDeletion         *config.AccountDeletionConfig
 }
 
-func (h *SettingsIdentityHandler) GetData(r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
+func (h *SettingsIdentityHandler) GetData(ctx context.Context, r *http.Request, rw http.ResponseWriter) (map[string]interface{}, error) {
 	data := map[string]interface{}{}
 
 	baseViewModel := h.BaseViewModel.ViewModel(r, rw)
-	userID := session.GetUserID(r.Context())
+	userID := session.GetUserID(ctx)
 
-	candidates, err := h.Identities.ListCandidates(*userID)
+	candidates, err := h.Identities.ListCandidates(ctx, *userID)
 	if err != nil {
 		return nil, err
 	}
@@ -56,11 +57,11 @@ func (h *SettingsIdentityHandler) GetData(r *http.Request, rw http.ResponseWrite
 	viewModel := SettingsIdentityViewModel{
 		AccountDeletionAllowed: h.AccountDeletion.ScheduledByEndUserEnabled,
 	}
-	identities, err := h.Identities.ListByUser(*userID)
+	identities, err := h.Identities.ListByUser(ctx, *userID)
 	if err != nil {
 		return nil, err
 	}
-	viewModel.VerificationStatuses, err = h.Verification.GetVerificationStatuses(identities)
+	viewModel.VerificationStatuses, err = h.Verification.GetVerificationStatuses(ctx, identities)
 	if err != nil {
 		return nil, err
 	}
@@ -78,15 +79,15 @@ func (h *SettingsIdentityHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
 	redirectURI := httputil.HostRelative(r.URL).String()
 	providerAlias := r.Form.Get("x_provider_alias")
 	identityID := r.Form.Get("q_identity_id")
-	userID := ctrl.RequireUserID()
+	userID := ctrl.RequireUserID(r.Context())
 
-	ctrl.Get(func() error {
-		data, err := h.GetData(r, w)
+	ctrl.Get(func(ctx context.Context) error {
+		data, err := h.GetData(ctx, r, w)
 		if err != nil {
 			return err
 		}
@@ -95,13 +96,13 @@ func (h *SettingsIdentityHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return nil
 	})
 
-	ctrl.PostAction("link_oauth", func() error {
+	ctrl.PostAction("link_oauth", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
 		intent := intents.NewIntentAddIdentity(userID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			// FIXME(settings): support prompt parameters for connecting oauth
 			input = &InputUseOAuth{
 				ProviderAlias:    providerAlias,
@@ -117,13 +118,13 @@ func (h *SettingsIdentityHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return nil
 	})
 
-	ctrl.PostAction("unlink_oauth", func() error {
+	ctrl.PostAction("unlink_oauth", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: redirectURI,
 		}
 		intent := intents.NewIntentRemoveIdentity(userID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			input = &InputRemoveIdentity{
 				Type: model.IdentityTypeOAuth,
 				ID:   identityID,
@@ -137,14 +138,14 @@ func (h *SettingsIdentityHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return nil
 	})
 
-	ctrl.PostAction("verify_login_id", func() error {
+	ctrl.PostAction("verify_login_id", func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI:     redirectURI,
 			KeepAfterFinish: true,
 		}
 		intent := intents.NewIntentVerifyIdentity(userID, model.IdentityTypeLoginID, identityID)
 
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			input = nil
 			return
 		})

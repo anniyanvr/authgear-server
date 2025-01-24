@@ -16,9 +16,10 @@ func init() {
 }
 
 type IntentLoginFlowStepPromptCreatePasskey struct {
-	StepName    string        `json:"step_name,omitempty"`
-	JSONPointer jsonpointer.T `json:"json_pointer,omitempty"`
-	UserID      string        `json:"user_id,omitempty"`
+	FlowReference authflow.FlowReference `json:"flow_reference,omitempty"`
+	StepName      string                 `json:"step_name,omitempty"`
+	JSONPointer   jsonpointer.T          `json:"json_pointer,omitempty"`
+	UserID        string                 `json:"user_id,omitempty"`
 }
 
 var _ authflow.Intent = &IntentLoginFlowStepPromptCreatePasskey{}
@@ -55,7 +56,7 @@ func (i *IntentLoginFlowStepPromptCreatePasskey) ReactTo(ctx context.Context, de
 		return authflow.NewNodeSimple(&NodeSentinel{}), nil
 	}
 
-	ais, err := deps.Authenticators.List(
+	ais, err := deps.Authenticators.List(ctx,
 		i.UserID,
 		authenticator.KeepKind(authenticator.KindPrimary),
 		authenticator.KeepType(model.AuthenticatorTypePasskey),
@@ -70,7 +71,7 @@ func (i *IntentLoginFlowStepPromptCreatePasskey) ReactTo(ctx context.Context, de
 	}
 
 	// Otherwise it is OK to prompt.
-	n, err := NewNodePromptCreatePasskey(deps, &NodePromptCreatePasskey{
+	n, err := NewNodePromptCreatePasskey(ctx, deps, &NodePromptCreatePasskey{
 		JSONPointer: i.JSONPointer,
 		UserID:      i.UserID,
 	})

@@ -8,6 +8,7 @@ import {
   parentChildToJSONPointer,
   matchParentChild,
 } from "../util/jsonpointer";
+import { APIResourceUpdateConflictError } from "./resourceUpdateConflict";
 
 export interface FormField {
   parentJSONPointer: string | RegExp;
@@ -181,7 +182,6 @@ function parseResourceTooLargeError(
   };
 }
 
-// eslint-disable-next-line complexity
 function parseError(error: APIError): ParsedAPIError[] {
   const errors: ParsedAPIError[] = [];
   switch (error.reason) {
@@ -253,6 +253,12 @@ function parseError(error: APIError): ParsedAPIError[] {
       });
       break;
     }
+    case "AuthenticatorNotFound": {
+      errors.push({
+        messageID: "errors.authenticator.not-found",
+      });
+      break;
+    }
     default:
       errors.push({
         messageID: "errors.unknown",
@@ -263,18 +269,33 @@ function parseError(error: APIError): ParsedAPIError[] {
 }
 
 export interface ErrorParseRule {
-  (apiError: APIError): ParsedAPIError[];
+  (apiError: APIError): ErrorParseRuleResult;
+}
+
+export interface ErrorParseRuleResult {
+  // The parsed error.
+  parsedAPIErrors: ParsedAPIError[];
+  // The modified API error to be consumed by other rules, or by the later pipeline.
+  modifiedAPIError?: APIError;
+  // Let the rule to terminate further handling of the error.
+  fullyHandled: boolean;
 }
 
 export function makeLocalErrorParseRule(
   sentinel: APIError,
   error: ParsedAPIError
 ): ErrorParseRule {
-  return (apiError: APIError): ParsedAPIError[] => {
+  return (apiError: APIError): ErrorParseRuleResult => {
     if (apiError === sentinel) {
-      return [error];
+      return {
+        parsedAPIErrors: [error],
+        fullyHandled: true,
+      };
     }
-    return [];
+    return {
+      parsedAPIErrors: [],
+      fullyHandled: false,
+    };
   };
 }
 
@@ -282,11 +303,17 @@ export function makeReasonErrorParseRule(
   reason: APIError["reason"],
   errorMessageID: string
 ): ErrorParseRule {
-  return (apiError: APIError): ParsedAPIError[] => {
+  return (apiError: APIError): ErrorParseRuleResult => {
     if (apiError.reason === reason) {
-      return [{ messageID: errorMessageID }];
+      return {
+        parsedAPIErrors: [{ messageID: errorMessageID }],
+        fullyHandled: true,
+      };
     }
-    return [];
+    return {
+      parsedAPIErrors: [],
+      fullyHandled: false,
+    };
   };
 }
 
@@ -296,15 +323,82 @@ export function makeValidationErrorMatchUnknownKindParseRule(
   errorMessageID: string,
   values?: Values
 ): ErrorParseRule {
-  return (apiError: APIError): ParsedAPIError[] => {
+  return (apiError: APIError): ErrorParseRuleResult => {
     if (apiError.reason === "ValidationFailed") {
+      const unhandledCauses = [];
+      const parsedAPIErrors = [];
+
       for (const cause of apiError.info.causes) {
         if (kind === cause.kind && locationRegExp.test(cause.location)) {
-          return [{ messageID: errorMessageID, arguments: values }];
+          parsedAPIErrors.push({
+            messageID: errorMessageID,
+            arguments: values,
+          });
+        } else {
+          unhandledCauses.push(cause);
         }
       }
+
+      const modifiedAPIError = {
+        ...apiError,
+        info: {
+          ...apiError.info,
+          causes: unhandledCauses,
+        },
+      };
+
+      return {
+        parsedAPIErrors,
+        modifiedAPIError: modifiedAPIError,
+        fullyHandled: false,
+      };
     }
-    return [];
+    return {
+      parsedAPIErrors: [],
+      fullyHandled: false,
+    };
+  };
+}
+
+export function makeValidationErrorCustomMessageIDRule(
+  kind: string,
+  locationRegExp: RegExp,
+  errorMessageID: string
+): ErrorParseRule {
+  return (apiError: APIError): ErrorParseRuleResult => {
+    if (apiError.reason === "ValidationFailed") {
+      const unhandledCauses = [];
+      const parsedAPIErrors = [];
+
+      for (const cause of apiError.info.causes) {
+        if (kind === cause.kind && locationRegExp.test(cause.location)) {
+          parsedAPIErrors.push({
+            messageID: errorMessageID,
+            arguments: cause.details as unknown as Values,
+          });
+        } else {
+          unhandledCauses.push(cause);
+        }
+      }
+
+      const modifiedAPIError = {
+        ...apiError,
+        info: {
+          ...apiError.info,
+          causes: unhandledCauses,
+        },
+      };
+
+      return {
+        parsedAPIErrors,
+        modifiedAPIError: modifiedAPIError,
+        fullyHandled: false,
+      };
+    }
+    return {
+      parsedAPIErrors: [],
+      fullyHandled: false,
+    };
   };
 }
 
@@ -312,17 +406,26 @@ export function makeInvariantViolatedErrorParseRule(
   kind: string,
   errorMessageID: string
 ): ErrorParseRule {
-  return (apiError: APIError): ParsedAPIError[] => {
+  return (apiError: APIError): ErrorParseRuleResult => {
     if (apiError.reason === "InvariantViolated") {
       if (apiError.info.cause.kind === kind) {
-        return [{ messageID: errorMessageID }];
+        return {
+          parsedAPIErrors: [{ messageID: errorMessageID }],
+          fullyHandled: true,
+        };
       }
     }
-    return [];
+    return {
+      parsedAPIErrors: [],
+      fullyHandled: false,
+    };
   };
 }
 
-function matchRule(rule: ErrorParseRule, error: APIError): ParsedAPIError[] {
+function matchRule(
+  rule: ErrorParseRule,
+  error: APIError
+): ErrorParseRuleResult {
   return rule(error);
 }
 
@@ -374,6 +477,24 @@ function aggregateRules(
     rules.push({ field: null, rule });
   }
   return rules;
+}
+
+function parseConflictErrors(errors: APIError[]): {
+  conflictErrors: APIResourceUpdateConflictError[];
+  unhandledErrors: APIError[];
+} {
+  const conflictErrors: APIResourceUpdateConflictError[] = [];
+  const unhandledErrors: APIError[] = [];
+
+  for (const error of errors) {
+    if (error.reason === "ResourceUpdateConflict") {
+      conflictErrors.push(error);
+    } else {
+      unhandledErrors.push(error);
+    }
+  }
+
+  return { conflictErrors, unhandledErrors };
 }
 
 function parseValidationErrors(
@@ -437,13 +558,24 @@ function parseErrorWithRules(
   const topErrors: ParsedAPIError[] = [];
   const unhandledErrors: APIError[] = [];
 
-  for (const error of errors) {
+  for (let error of errors) {
     let handled = false;
 
     for (const { field, rule } of rules) {
-      const matchedErrors = matchRule(rule, error);
-      if (matchedErrors.length > 0) {
+      const {
+        parsedAPIErrors: matchedErrors,
+        fullyHandled,
+        modifiedAPIError,
+      } = matchRule(rule, error);
+
+      if (fullyHandled) {
         handled = true;
+      }
+      if (modifiedAPIError != null) {
+        error = modifiedAPIError;
+      }
+
+      if (matchedErrors.length > 0) {
         if (field != null) {
           const value = fieldErrors.get(field);
           if (value == null) {
@@ -472,6 +604,7 @@ function parseErrorWithRules(
 export interface ErrorParseResult {
   fieldErrors: Map<FormField, ParsedAPIError[]>;
   topErrors: ParsedAPIError[];
+  conflictErrors: APIResourceUpdateConflictError[];
 }
 
 export function parseAPIErrors(
@@ -481,7 +614,7 @@ export function parseAPIErrors(
   fallbackMessageID?: string
 ): ErrorParseResult {
   if (errors.length === 0) {
-    return { fieldErrors: new Map(), topErrors: [] };
+    return { fieldErrors: new Map(), topErrors: [], conflictErrors: [] };
   }
 
   const rules = aggregateRules(fields, topRules);
@@ -492,10 +625,8 @@ export function parseAPIErrors(
     unhandledErrors: ruleUnhandledErrors,
   } = parseErrorWithRules(errors, rules);
 
-  const { rawFieldCauses, unhandledErrors } = parseValidationErrors(
-    ruleUnhandledErrors,
-    fields
-  );
+  const { rawFieldCauses, unhandledErrors: validationUnhandledErrors } =
+    parseValidationErrors(ruleUnhandledErrors, fields);
 
   // Add rawFieldCauses to fieldErrors
   for (const [field, causes] of rawFieldCauses.entries()) {
@@ -506,6 +637,10 @@ export function parseAPIErrors(
       errors.push(...causes.map(parseCause));
     }
   }
+
+  const { conflictErrors, unhandledErrors } = parseConflictErrors(
+    validationUnhandledErrors
+  );
 
   // Handle fallbackMessageID
   if (unhandledErrors.length > 0) {
@@ -520,5 +655,5 @@ export function parseAPIErrors(
     }
   }
 
-  return { fieldErrors, topErrors };
+  return { fieldErrors, topErrors, conflictErrors };
 }

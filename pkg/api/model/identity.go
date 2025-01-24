@@ -51,7 +51,15 @@ const (
 	IdentityTypeBiometric IdentityType = "biometric"
 	IdentityTypePasskey   IdentityType = "passkey"
 	IdentityTypeSIWE      IdentityType = "siwe"
+	IdentityTypeLDAP      IdentityType = "ldap"
 )
+
+// This indicates whether the identity type can be used for password-related usage e.g. reset password, change password by admin.
+// After account linking is introduced, different users may have different OAuth accounts with same email.
+// To avoid ambiguity, we only allow login ID to be used for password login.
+func (t IdentityType) SupportsPassword() bool {
+	return t == IdentityTypeLoginID
+}
 
 func (t IdentityType) PrimaryAuthenticatorTypes(loginIDKeyType LoginIDKeyType) []AuthenticatorType {
 	switch t {
@@ -88,6 +96,8 @@ func (t IdentityType) PrimaryAuthenticatorTypes(loginIDKeyType LoginIDKeyType) [
 			AuthenticatorTypePasskey,
 		}
 	case IdentityTypeSIWE:
+		return nil
+	case IdentityTypeLDAP:
 		return nil
 	default:
 		panic(fmt.Sprintf("identity: unexpected identity type: %s", t))

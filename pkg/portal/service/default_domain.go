@@ -1,12 +1,13 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"net"
 
+	apimodel "github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	portalconfig "github.com/authgear/authgear-server/pkg/portal/config"
-	"github.com/authgear/authgear-server/pkg/portal/model"
 	"github.com/authgear/authgear-server/pkg/util/slice"
 )
 
@@ -15,7 +16,7 @@ import (
 var ErrHostSuffixNotConfigured = errors.New("host suffix not configured")
 
 type DefaultDomainDomainService interface {
-	CreateDomain(appID string, domain string, isVerified bool, isCustom bool) (*model.Domain, error)
+	CreateDomain(ctx context.Context, appID string, domain string, isVerified bool, isCustom bool) (*apimodel.Domain, error)
 }
 
 type DefaultDomainService struct {
@@ -24,6 +25,7 @@ type DefaultDomainService struct {
 	Domains         DefaultDomainDomainService
 }
 
+// GetLatestAppHost does not need connection.
 func (s *DefaultDomainService) GetLatestAppHost(appID string) (string, error) {
 	if s.AppConfig.HostSuffix == "" {
 		return "", ErrHostSuffixNotConfigured
@@ -43,7 +45,8 @@ func (s *DefaultDomainService) hostToDomain(host string) string {
 	return host
 }
 
-func (s *DefaultDomainService) CreateAllDefaultDomains(appID string) error {
+// CreateAllDefaultDomains assume acquired connection.
+func (s *DefaultDomainService) CreateAllDefaultDomains(ctx context.Context, appID string) error {
 	if s.AppConfig.HostSuffix == "" {
 		return ErrHostSuffixNotConfigured
 	}
@@ -68,7 +71,7 @@ func (s *DefaultDomainService) CreateAllDefaultDomains(appID string) error {
 	}
 
 	for _, domain := range domains {
-		_, err := s.Domains.CreateDomain(appID, domain, true, false)
+		_, err := s.Domains.CreateDomain(ctx, appID, domain, true, false)
 		if err != nil {
 			return err
 		}

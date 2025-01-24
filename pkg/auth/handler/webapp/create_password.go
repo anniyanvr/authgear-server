@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -16,7 +17,7 @@ import (
 
 var TemplateWebCreatePasswordHTML = template.RegisterHTML(
 	"web/create_password.html",
-	components...,
+	Components...,
 )
 
 var CreatePasswordSchema = validation.NewSimpleSchema(`
@@ -103,15 +104,15 @@ func (h *CreatePasswordHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}
 
-		graph, err := ctrl.InteractionGet()
+		graph, err := ctrl.InteractionGet(ctx)
 		if err != nil {
 			return err
 		}
@@ -125,8 +126,8 @@ func (h *CreatePasswordHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return nil
 	})
 
-	ctrl.PostAction("", func() error {
-		result, err := ctrl.InteractionPost(func() (input interface{}, err error) {
+	ctrl.PostAction("", func(ctx context.Context) error {
+		result, err := ctrl.InteractionPost(ctx, func() (input interface{}, err error) {
 			err = CreatePasswordSchema.Validator().ValidateValue(FormToJSON(r.Form))
 			if err != nil {
 				return

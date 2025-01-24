@@ -8,6 +8,8 @@ value:
     name: my_step
     one_of:
     - identification: email
+      bot_protection:
+        mode: never
       steps:
       - type: authenticate
         one_of:
@@ -40,6 +42,9 @@ part: AuthenticationFlowLoginFlow
 name: invalid
 error: |-
   invalid value:
+  /steps/0/one_of/0/bot_protection: required
+    map[actual:[foobar] expected:[mode] missing:[mode]]
+  /steps/0/one_of/0/bot_protection/foobar: 
   /steps/0/one_of/0/steps/0/one_of/0/authentication: enum
     map[actual:foobar expected:[primary_password primary_passkey primary_oob_otp_email primary_oob_otp_sms secondary_password secondary_totp secondary_oob_otp_email secondary_oob_otp_sms recovery_code device_token]]
   /steps/0/one_of/0/steps/0/one_of/0/target_step: type
@@ -57,6 +62,8 @@ value:
     name: my_step
     one_of:
     - identification: email
+      bot_protection:
+        foobar: true
       steps:
       - type: authenticate
         one_of:
@@ -67,3 +74,43 @@ value:
         one_of:
         - authentication: foobar
   - type: foobar
+---
+part: AuthenticationFlowLoginFlow
+name: bot-protection-mode-always
+error: null
+value:
+  name: id
+  steps:
+  - type: identify
+    name: my_step
+    one_of:
+    - identification: email
+      bot_protection:
+        mode: always
+      steps:
+      - type: authenticate
+        one_of:
+        - authentication: primary_oob_otp_email
+          target_step: my_step
+      - type: authenticate
+        optional: true
+        one_of:
+        - authentication: secondary_totp
+---
+part: AuthenticationFlowLoginFlowStep
+name: optional-true
+error: null
+value:
+  type: authenticate
+  optional: true
+  one_of:
+  - authentication: primary_password
+---
+part: AuthenticationFlowLoginFlowStep
+name: optional-false
+error: null
+value:
+  type: authenticate
+  optional: false
+  one_of:
+  - authentication: primary_password

@@ -4,15 +4,17 @@ import (
 	"github.com/google/wire"
 
 	imagesconfig "github.com/authgear/authgear-server/pkg/images/config"
+	imagesservice "github.com/authgear/authgear-server/pkg/images/service"
 	"github.com/authgear/authgear-server/pkg/lib/cloudstorage"
+	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/deps"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 )
 
-func NewCloudStorage(objectStoreConfig *imagesconfig.ObjectStoreConfig, c clock.Clock) cloudstorage.Storage {
+func NewCloudStorage(objectStoreConfig *imagesconfig.ObjectStoreConfig, c clock.Clock) imagesservice.ImagesCloudStorageServiceStorage {
 	switch objectStoreConfig.Type {
-	case imagesconfig.ObjectStoreTypeAWSS3:
+	case config.ObjectStoreTypeAWSS3:
 		s, err := cloudstorage.NewS3Storage(
 			objectStoreConfig.AWSS3.AccessKeyID,
 			objectStoreConfig.AWSS3.SecretAccessKey,
@@ -23,7 +25,7 @@ func NewCloudStorage(objectStoreConfig *imagesconfig.ObjectStoreConfig, c clock.
 			panic(err)
 		}
 		return s
-	case imagesconfig.ObjectStoreTypeGCPGCS:
+	case config.ObjectStoreTypeGCPGCS:
 		s, err := cloudstorage.NewGCSStorage(
 			objectStoreConfig.GCPGCS.CredentialsJSON,
 			objectStoreConfig.GCPGCS.ServiceAccount,
@@ -34,7 +36,7 @@ func NewCloudStorage(objectStoreConfig *imagesconfig.ObjectStoreConfig, c clock.
 			panic(err)
 		}
 		return s
-	case imagesconfig.ObjectStoreTypeAzureBlobStorage:
+	case config.ObjectStoreTypeAzureBlobStorage:
 		return cloudstorage.NewAzureStorage(
 			objectStoreConfig.AzureBlobStorage.ServiceURL,
 			objectStoreConfig.AzureBlobStorage.StorageAccount,
@@ -42,6 +44,17 @@ func NewCloudStorage(objectStoreConfig *imagesconfig.ObjectStoreConfig, c clock.
 			objectStoreConfig.AzureBlobStorage.Container,
 			c,
 		)
+	case config.ObjectStoreTypeMinIO:
+		s, err := cloudstorage.NewMinIOStorage(
+			objectStoreConfig.MinIO.Endpoint,
+			objectStoreConfig.MinIO.BucketName,
+			objectStoreConfig.MinIO.AccessKeyID,
+			objectStoreConfig.MinIO.SecretAccessKey,
+		)
+		if err != nil {
+			panic(err)
+		}
+		return s
 	default:
 		return nil
 	}
@@ -78,7 +91,6 @@ var RequestDependencySet = wire.NewSet(
 		"AppProvider",
 		"Request",
 	),
-	deps.ProvideRequestContext,
 	deps.ProvideRemoteIP,
 	deps.ProvideUserAgentString,
 	deps.ProvideHTTPHost,
@@ -90,6 +102,6 @@ var DependencySet = wire.NewSet(
 	deps.CommonDependencySet,
 	appdb.NewHandle,
 	clock.DependencySet,
-	cloudstorage.DependencySet,
+	imagesservice.DependencySet,
 	NewCloudStorage,
 )

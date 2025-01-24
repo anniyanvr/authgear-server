@@ -5,20 +5,29 @@ import (
 
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
+	"github.com/authgear/oauthrelyingparty/pkg/api/oauthrelyingparty"
+
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
+	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
 type InputSchemaTakeOAuthAuthorizationRequest struct {
-	JSONPointer  jsonpointer.T
-	OAuthOptions []IdentificationOption
+	JSONPointer             jsonpointer.T
+	FlowRootObject          config.AuthenticationFlowObject
+	OAuthOptions            []IdentificationOption
+	IsBotProtectionRequired bool
+	BotProtectionCfg        *config.BotProtectionConfig
 }
 
 var _ authflow.InputSchema = &InputSchemaTakeOAuthAuthorizationRequest{}
 
 func (i *InputSchemaTakeOAuthAuthorizationRequest) GetJSONPointer() jsonpointer.T {
 	return i.JSONPointer
+}
+
+func (i *InputSchemaTakeOAuthAuthorizationRequest) GetFlowRootObject() config.AuthenticationFlowObject {
+	return i.FlowRootObject
 }
 
 func (i *InputSchemaTakeOAuthAuthorizationRequest) SchemaBuilder() validation.SchemaBuilder {
@@ -28,7 +37,7 @@ func (i *InputSchemaTakeOAuthAuthorizationRequest) SchemaBuilder() validation.Sc
 	b.Properties().Property("redirect_uri", validation.SchemaBuilder{}.Type(validation.TypeString).Format("uri"))
 	b.Properties().Property("response_mode", validation.SchemaBuilder{}.
 		Type(validation.TypeString).
-		Enum(sso.ResponseModeFormPost, sso.ResponseModeQuery))
+		Enum(oauthrelyingparty.ResponseModeFormPost, oauthrelyingparty.ResponseModeQuery))
 
 	var enumValues []interface{}
 	for _, c := range i.OAuthOptions {
@@ -38,6 +47,9 @@ func (i *InputSchemaTakeOAuthAuthorizationRequest) SchemaBuilder() validation.Sc
 	b.Properties().Property("alias", validation.SchemaBuilder{}.
 		Type(validation.TypeString).
 		Enum(enumValues...))
+	if i.IsBotProtectionRequired && i.BotProtectionCfg != nil {
+		b = AddBotProtectionToExistingSchemaBuilder(b, i.BotProtectionCfg)
+	}
 	return b
 }
 
@@ -51,13 +63,15 @@ func (i *InputSchemaTakeOAuthAuthorizationRequest) MakeInput(rawMessage json.Raw
 }
 
 type InputTakeOAuthAuthorizationRequest struct {
-	Alias        string           `json:"alias"`
-	RedirectURI  string           `json:"redirect_uri"`
-	ResponseMode sso.ResponseMode `json:"response_mode,omitempty"`
+	Alias         string                      `json:"alias"`
+	RedirectURI   string                      `json:"redirect_uri"`
+	ResponseMode  string                      `json:"response_mode,omitempty"`
+	BotProtection *InputTakeBotProtectionBody `json:"bot_protection,omitempty"`
 }
 
 var _ authflow.Input = &InputTakeOAuthAuthorizationRequest{}
 var _ inputTakeOAuthAuthorizationRequest = &InputTakeOAuthAuthorizationRequest{}
+var _ inputTakeBotProtection = &InputTakeOAuthAuthorizationRequest{}
 
 func (*InputTakeOAuthAuthorizationRequest) Input() {}
 
@@ -69,6 +83,24 @@ func (i *InputTakeOAuthAuthorizationRequest) GetOAuthRedirectURI() string {
 	return i.RedirectURI
 }
 
-func (i *InputTakeOAuthAuthorizationRequest) GetOAuthResponseMode() sso.ResponseMode {
+func (i *InputTakeOAuthAuthorizationRequest) GetOAuthResponseMode() string {
 	return i.ResponseMode
+}
+
+func (i *InputTakeOAuthAuthorizationRequest) GetBotProtectionProvider() *InputTakeBotProtectionBody {
+	return i.BotProtection
+}
+
+func (i *InputTakeOAuthAuthorizationRequest) GetBotProtectionProviderType() config.BotProtectionProviderType {
+	if i.BotProtection == nil {
+		return ""
+	}
+	return i.BotProtection.Type
+}
+
+func (i *InputTakeOAuthAuthorizationRequest) GetBotProtectionProviderResponse() string {
+	if i.BotProtection == nil {
+		return ""
+	}
+	return i.BotProtection.Response
 }

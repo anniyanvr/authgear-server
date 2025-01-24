@@ -5,14 +5,14 @@
     + [Signup Flow in essence](#signup-flow-in-essence)
     + [Login Flow in essence](#login-flow-in-essence)
     + [Reauth Flow in essence](#reauth-flow-in-essence)
-    + [AccountLinking Flow in essence](#accountlinking-flow-in-essence)
   * [Design](#design)
     + [Design Principles](#design-principles)
     + [Design of the configuration](#design-of-the-configuration)
-    + [SignupFlow](#signupflow)
-    + [LoginFlow](#loginflow)
-    + [SignupLoginFlow](#signuploginflow)
-    + [ReauthFlow](#reauthflow)
+    + [type: signup](#type-signup)
+    + [type: login](#type-login)
+    + [type: signup_login](#type-signup_login)
+    + [type: reauth](#type-reauth)
+    + [type: account_recovery](#type-account_recovery)
   * [Use case examples](#use-case-examples)
     + [Use case example 1: Latte](#use-case-example-1-latte)
     + [Use case example 2: Uber](#use-case-example-2-uber)
@@ -25,8 +25,7 @@
     + [Create a Authentication Flow](#create-a-authentication-flow)
     + [Execute the Authentication Flow](#execute-the-authentication-flow)
     + [Get the Authentication Flow](#get-the-authentication-flow)
-    + [Connect websocket](#connect-websocket)
-  * [Mobile apps using the Default UI](#mobile-apps-using-the-default-ui)
+  * [Mobile apps using Auth UI](#mobile-apps-using-auth-ui)
     + [Ordinary Authentication Flow](#ordinary-authentication-flow)
     + [Authentication Flow involving OAuth](#authentication-flow-involving-oauth)
     + [Authentication Flow involving passkey](#authentication-flow-involving-passkey)
@@ -64,9 +63,9 @@ How Authentication Flow is implemented is intentionally left unspecified in this
 - Support Reauth Flow.
 - Support more than 1 Signup Flow, Login Flow, or Reauth Flow.
 - Support SignupLogin Flow, a flow which switches to a Signup Flow, or a Login Flow, depending on the claimed Identity.
-- The Default UI is driven by generated Authentication Flows, according to the configuration of the app.
+- Builtin flows are derived from the configuration of the project.
+- Auth UI supports running Builtin flows or Custom flows.
 - The developer can use the HTTP API on both the Web platform, and the mobile platforms (iOS and Android).
-- (Future works) Support AccountLink Flow.
 
 ## Non-goals
 
@@ -99,21 +98,12 @@ If the User identifies themselves with the OAuth Identity `johndoe@gmail.com`, t
 ### Reauth Flow in essence
 - Authenticate the User with any Authenticators.
 
-### AccountLinking Flow in essence
-
-AccountLink Flow happens within a Login Flow.
-Each Login Flow can optionally specify the conditions when a AccountLinking Flow can happen.
-If no conditions are specified or no conditions are matched, an error is returned, telling the User to sign in with the existing Identity instead.
-
-The Login Flow is then proceeded as if the existing Identity is selected.
-
-At the end of the flow, the new Identity is added to the User.
 
 ## Design
 
 ### Design Principles
 
-- We want to keep the existing configuration. The Default UI is driven by on-the-fly generated Authentication Flows.
+- We want to keep the existing configuration. Builtin flows are derived from the existing configuration.
 - We want to be able to fulfill the authentication flows in existing consumer apps
 
 ### Design of the configuration
@@ -125,20 +115,20 @@ At the end of the flow, the new Identity is added to the User.
 - Some steps allow branching. Those steps have `one_of`.
 - The branch of a step MAY optionally have zero or more `steps`.
 
-### SignupFlow
+### type: signup
 
 Example:
 
 ```yaml
 signup_flows:
-- id: default_signup_flow
+- name: default_signup_flow
   steps:
-  - id: setup_identity
+  - name: setup_identity
     type: identify
     one_of:
     - identification: phone
       steps:
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_oob_otp_sms
           target_step: setup_identity
@@ -146,17 +136,17 @@ signup_flows:
         target_step: setup_identity
     - identification: email
       steps:
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_oob_otp_email
           target_step: setup_identity
       - type: verify
         target_step: setup_identity
-  - type: authenticate
+  - type: create_authenticator
     one_of:
     - authentication: primary_password
-  - id: setup_phone_2fa
-    type: authenticate
+  - name: setup_phone_2fa
+    type: create_authenticator
     one_of:
     - authentication: secondary_oob_otp_sms
   - type: verify
@@ -176,12 +166,12 @@ signup_flows:
       required: true
 ```
 
-### LoginFlow
+### type: login
 
 ```yaml
 login_flows:
 # Sign in with a phone number and OTP via SMS to any phone number the account has.
-- id: phone_otp_to_any_phone
+- name: phone_otp_to_any_phone
   steps:
   - type: identify
     one_of:
@@ -191,9 +181,9 @@ login_flows:
     - authentication: primary_oob_otp_sms
 
 # Sign in with a phone number and OTP via SMS to the same phone number.
-- id: phone_otp_to_same_phone
+- name: phone_otp_to_same_phone
   steps:
-  - id: identify
+  - name: identify
     type: identify
     one_of:
     - identification: phone
@@ -203,7 +193,7 @@ login_flows:
       target_step: identify
 
 # Sign in with a phone number and a password
-- id: phone_password
+- name: phone_password
   steps:
   - type: identify
     one_of:
@@ -213,7 +203,7 @@ login_flows:
     - authentication: primary_password
 
 # Sign in with a phone number, or an email address, with a password
-- id: phone_email_password
+- name: phone_email_password
   steps:
   - type: identify
     one_of:
@@ -224,7 +214,7 @@ login_flows:
     - authentication: primary_password
 
 # Sign in with an email address, a password and a TOTP
-- id: email_password_totp
+- name: email_password_totp
   steps:
   - type: identify
     one_of:
@@ -237,7 +227,7 @@ login_flows:
     - authentication: secondary_totp
 
 # Sign in with an email address, a password. Perform 2FA if the end-user has configured.
-- id: email_password_optional_2fa
+- name: email_password_optional_2fa
   steps:
   - type: identify
     one_of:
@@ -259,13 +249,13 @@ login_flows:
 
 # Sign in with an email address, a password. Require the end-user to change password,
 # if the password does not fulfill password requirements.
-- id: forced_password_update
+- name: forced_password_update
   steps:
   - type: identify
     one_of:
     - identification: email
   - type: authenticate
-    id: step1
+    name: step1
     one_of:
     - authentication: primary_password
   # Require the end-user to change the password,
@@ -275,42 +265,36 @@ login_flows:
   - type: change_password
     target_step: step1
 
-- id: account_linking
-  account_linking:
-    conditions:
-    # The standard_attribute to determine whether two identities are the "same".
-    # Account linking happens when the existing identity is Email Login ID,
-    # and the incoming identity is any OAuth identity.
-    - standard_attribute: /email
-      existing:
-        identification: email
-      incoming:
-        identification: oauth
-    # Account linking happens when the existing identity is any OAuth identity,
-    # and the incoming identity is Email Login ID.
-    - standard_attribute: /email
-      existing:
-        identification: oauth
-      incoming:
-        identification: email
+# Sign in with an email address, a password. Enforce 2FA but allow the end-user to enroll to proceed.
+# More explanation on enrollment_allowed is in [2FA Grace Period](./2fa-grace-period.md).
+- name: email_password_optional_2fa
   steps:
   - type: identify
     one_of:
-    - identification: oauth
     - identification: email
-      steps:
-      - type: authenticate
-        one_of:
-        - authentication: primary_password
+  - type: authenticate
+    one_of:
+    - authentication: primary_password
+  - type: authenticate
+    # Requires user to satisfy one of the following authentication.
+    optional: false
+    # enrollment_allowed by default is false, meaning user with no applicable method beforehand will be blocked from proceeding.
+    enrollment_allowed: true
+    one_of:
+    - authentication: secondary_totp
+    # If recovery_code is present, the end-user can use recovery_code.
+    - authentication: recovery_code
+    # If device_token is present, the end-user can use device token.
+    - authentication: device_token
 ```
 
-### SignupLoginFlow
+### type: signup_login
 
 Example:
 
 ```yaml
 signup_login_flows:
-- id: default_signup_login_flow
+- name: default_signup_login_flow
   steps:
   - type: identify
     one_of:
@@ -322,21 +306,21 @@ signup_login_flows:
       login_flow: default_login_flow
 ```
 
-### ReauthFlow
+### type: reauth
 
 Example:
 
 ```yaml
 reauth_flows:
 # Re-authenticate with primary password.
-- id: reauth_password
+- name: reauth_password
   steps:
   - type: authenticate
     one_of:
     - authentication: primary_password
 
 # Re-authenticate with any 2nd factor, assuming that 2FA is required in signup flow.
-- id: reauth_2fa
+- name: reauth_2fa
   steps:
   - type: authenticate
     one_of:
@@ -344,7 +328,7 @@ reauth_flows:
     - authentication: secondary_sms_code
 
 # Re-authenticate with the 1st factor AND the 2nd factor.
-- id: reauth_full
+- name: reauth_full
   steps:
   - type: authenticate
     one_of:
@@ -353,6 +337,30 @@ reauth_flows:
     one_of:
     - authentication: secondary_totp
     - authentication: secondary_sms_code
+```
+
+### type: account_recovery
+
+Example:
+
+```yaml
+account_recovery_flows:
+# Reset password with email+link, sms+code
+- name: default
+  steps:
+  - type: identify
+    one_of:
+    - identification: email
+    - identification: phone
+  - type: select_destination
+    enumerate_destinations: false
+    allowed_channels:
+    - channel: email
+      otp_form: link
+    - channel: sms
+      otp_form: code
+  - type: verify_account_recovery_code
+  - type: reset_password
 ```
 
 ## Use case examples
@@ -361,32 +369,32 @@ reauth_flows:
 
 ```yaml
 signup_flows:
-- id: default_signup_flow
+- name: default_signup_flow
   steps:
-  - id: setup_phone
+  - name: setup_phone
     type: identify
     one_of:
     - identification: phone
-  - type: authenticate
+  - type: create_authenticator
     one_of:
     - authentication: primary_oob_otp_sms
       target_step: setup_phone
   - type: verify
     target_step: setup_phone
-  - id: setup_email
+  - name: setup_email
     type: identify
     one_of:
     - identification: email
-  - type: authenticate
+  - type: create_authenticator
     one_of:
     - authentication: primary_oob_otp_email
       target_step: setup_email
-  - type: authenticate
+  - type: create_authenticator
     one_of:
     - authentication: primary_password
 
 login_flows:
-- id: default_login_flow
+- name: default_login_flow
   steps:
   - type: identify
     one_of:
@@ -404,52 +412,52 @@ login_flows:
 
 ```yaml
 signup_flows:
-- id: default_signup_flow
+- name: default_signup_flow
   steps:
-  - id: setup_first_identity
+  - name: setup_first_identity
     type: identify
     one_of:
     - identification: phone
       steps:
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_oob_otp_sms
           target_step: setup_first_identity
       - type: verify
         target_step: setup_first_identity
-      - id: setup_second_identity
+      - name: setup_second_identity
         type: identify
         one_of:
         - identification: email
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_oob_otp_email
           target_step: setup_second_identity
       - type: verify
         target_step: setup_second_identity
     - identification: email
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_oob_otp_email
           target_step: setup_first_identity
       - type: verify
         target_step: setup_first_identity
-      - id: setup_second_identity
+      - name: setup_second_identity
         type: identify
         one_of:
         - identification: phone
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_oob_otp_sms
           target_step: setup_second_identity
       - type: verify
         target_step: setup_second_identity
-  - type: authenticate
+  - type: create_authenticator
     one_of:
     - authentication: primary_password
 
 login_flows:
-- id: default_login_flow
+- name: default_login_flow
   steps:
   - type: identify
     one_of:
@@ -468,7 +476,7 @@ login_flows:
         - authentication: primary_password
 
 signup_login_flows:
-- id: default_signup_login_flow
+- name: default_signup_login_flow
   steps:
   - type: identify
     one_of:
@@ -484,17 +492,17 @@ signup_login_flows:
 
 ```yaml
 signup_flows:
-- id: default_signup_flow
+- name: default_signup_flow
   steps:
   - type: identify
     one_of:
     - identification: email
-  - type: authenticate
+  - type: create_authenticator
     one_of:
     - authentication: primary_password
 
 login_flows:
-- id: default_login_flow
+- name: default_login_flow
   steps:
   - type: identify
     one_of:
@@ -514,7 +522,7 @@ login_flows:
 # signup_flows is omitted here because the exact signup flow is unknown.
 
 login_flows:
-- id: default_login_flow
+- name: default_login_flow
   steps:
   - type: identify
     one_of:
@@ -533,7 +541,7 @@ login_flows:
 # signup_flows are omitted because it does not have public signup.
 
 login_flows:
-- id: default_login_flow
+- name: default_login_flow
   steps:
   - type: identify
     one_of:
@@ -553,24 +561,24 @@ login_flows:
 signup_flows:
 # The end user sign up with OAuth without password or 2FA.
 # Or the end user sign up with verified email with password and 2FA.
-- id: default_signup_flow
+- name: default_signup_flow
   steps:
-  - id: setup_identity
+  - name: setup_identity
     type: identify
     one_of:
     - identification: oauth
     - identification: email
       steps:
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_oob_otp_email
           target_step: setup_identity
       - type: verify
         target_step: setup_identity
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: primary_password
-      - type: authenticate
+      - type: create_authenticator
         one_of:
         - authentication: secondary_totp
 
@@ -578,7 +586,7 @@ login_flows:
 # The end user can sign in with OAuth.
 # The end user can sign in with passkey directly.
 # The end user can sign in with email with OTP, password, or passkey, and with 2FA.
-- id: default_login_flow
+- name: default_login_flow
   steps:
   - type: identify
     one_of:
@@ -613,7 +621,7 @@ Example of a successful response.
 {
   "result": {
     "state_token": "authflowstate_blahblahblah",
-    "type": "login_flow",
+    "type": "login",
     "name": "default",
     "action": {
       "type": "authenticate",
@@ -625,12 +633,12 @@ Example of a successful response.
 ```
 
 - `result.state_token`: The token that refers to a particular state of an Authentication Flow. You must keep this for the next request. This token changes every time you give an input to the flow. As a result, you can back-track by associating the token with your application navigation backstack very easily.
-- `result.type`: The type of the flow. Valid values are `signup_flow`, `login_flow`, `signup_login_flow`, and `reauth_flow`.
-- `result.name`: The name of the flow. Use the special value `default` to refer to the flow generated according to configuration.
+- `result.type`: The type of the flow. Valid values are `signup`, `login`, `signup_login`, `reauth`, and `account_recovery`.
+- `result.name`: The name of the flow. Use the special value `default` to refer to the Builtin flows.
 - `result.action.type`: The action to be taken. Valid values are `identify`, `authenticate`, `verify`, `user_profile`, `recovery_code`, `change_password`, and `prompt_create_passkey`, and `finished`.
 - `result.action.identification`: The taken branch in this action. It is only present when `result.action.type=identify`. Valid values are `email`, `phone`, and `username`.
 - `result.action.authentication`: The taken branch in this action. It is only present when `result.action.type=authenticate`. Valid values are `primary_password`, `primary_oob_otp_email`, `primary_oob_otp_sms`, `secondary_password`, `secondary_totp`, `secondary_oob_otp_email`, `secondary_oob_otp_sms`, `recovery_code`.
-- `result.action.data`: The data associated with the current step of the Authentication Flow. For example, if the flow is currently waiting for the User to enter a OTP, then the data contains information like resend cooldown.
+- `result.action.data`: The data associated with the current step of the Authentication Flow. For example, if the flow is currently waiting for the User to enter a OTP, then the data contains information like resend cooldown. For list of possible values in action data, please read [the action data section](#action-data).
 
 Example of a finished response.
 
@@ -638,7 +646,7 @@ Example of a finished response.
 {
   "result": {
     "state_token": "authflowstate_blahblahblah",
-    "type": "login_flow",
+    "type": "login",
     "name": "default",
     "action": {
       "type": "finished",
@@ -662,7 +670,7 @@ POST /api/v1/authentication_flows
 Content-Type: application/json
 
 {
-  "type": "login_flow",
+  "type": "login",
   "name": "default"
 }
 ```
@@ -683,7 +691,7 @@ Content-Type: application/json
 
 - `state_token`: The `state_token` of a previous request.
 - `input`: A JSON object specific to the current step of the flow.
-- `batch_input`: An array of input. This allows you to execute the flow multiple steps in a single request. In order to do this, you must know in advance how the flow is going. 
+- `batch_input`: An array of input. This allows you to execute the flow multiple steps in a single request. In order to do this, you must know in advance how the flow is going.
 
 ### Get the Authentication Flow
 
@@ -698,7 +706,7 @@ Content-Type: application/json
 }
 ```
 
-## Mobile apps using the Default UI
+## Mobile apps using Auth UI
 
 ### Ordinary Authentication Flow
 
@@ -729,7 +737,7 @@ Not documented at the moment.
 ## Mobile apps using native UI
 
 > This use case is not intended to be supported at the moment.
-> Instead, we want to put resources on making using the Default UI or using Custom UI solve majority of the use cases.
+> Instead, we want to put resources on making using Auth UI or using Custom UI solve majority of the use cases.
 
 When the mobile apps want to use native UI, they can consume the HTTP API directly.
 This implies a user agent is **NOT** involved in this use case.

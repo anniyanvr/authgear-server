@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-type-parameters */
+
 import React, { ReactElement, useMemo, useContext, useCallback } from "react";
 import {
   FormattedMessage,
@@ -9,7 +11,7 @@ import WidgetTitle from "../../WidgetTitle";
 import WidgetDescription from "../../WidgetDescription";
 import { WidgetSubsection } from "./LoginMethodConfigurationScreen";
 import { AuthenticationLockoutType } from "../../types";
-import produce from "immer";
+import { produce } from "immer";
 import { parseIntegerAllowLeadingZeros } from "../../util/input";
 import styles from "./LockoutSettings.module.css";
 import HorizontalDivider from "../../HorizontalDivider";

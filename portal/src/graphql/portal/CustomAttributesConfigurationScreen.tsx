@@ -1,7 +1,7 @@
-import React, { useCallback, useMemo, useContext } from "react";
+import React, { useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Context, FormattedMessage } from "@oursky/react-messageformat";
-import produce from "immer";
+import { FormattedMessage } from "@oursky/react-messageformat";
+import { produce } from "immer";
 import cn from "classnames";
 import { Text } from "@fluentui/react";
 import FormContainer from "../../FormContainer";
@@ -10,7 +10,6 @@ import {
   useAppConfigForm,
 } from "../../hook/useAppConfigForm";
 import ScreenContent from "../../ScreenContent";
-import ScreenTitle from "../../ScreenTitle";
 import ShowError from "../../ShowError";
 import ShowLoading from "../../ShowLoading";
 import UserProfileAttributesList, {
@@ -22,8 +21,8 @@ import {
 } from "../../types";
 import { parseJSONPointer } from "../../util/jsonpointer";
 import styles from "./CustomAttributesConfigurationScreen.module.css";
-import { onRenderCommandBarPrimaryButton } from "../../CommandBarPrimaryButton";
 import PrimaryButton from "../../PrimaryButton";
+import NavBreadcrumb from "../../NavBreadcrumb";
 
 interface FormState {
   items: CustomAttributesAttributeConfig[];
@@ -98,6 +97,17 @@ const CustomAttributesConfigurationScreenContent: React.VFC<CustomAttributesConf
     const { state, setState } = props.form;
     const { items } = state;
 
+    const navBreadcrumbItems = useMemo(() => {
+      return [
+        {
+          to: ".",
+          label: (
+            <FormattedMessage id="CustomAttributesConfigurationScreen.title" />
+          ),
+        },
+      ];
+    }, []);
+
     const onChangeItems = useCallback(
       (newItems: CustomAttributesAttributeConfig[]) => {
         setState((prev) => {
@@ -119,10 +129,22 @@ const CustomAttributesConfigurationScreenContent: React.VFC<CustomAttributesConf
 
     return (
       <>
-        <ScreenContent>
-          <ScreenTitle className={styles.widget}>
-            <FormattedMessage id="CustomAttributesConfigurationScreen.title" />
-          </ScreenTitle>
+        <ScreenContent layout="list">
+          <div className={styles.widget}>
+            <div className="flex gap-x-1">
+              <NavBreadcrumb
+                className="flex-1 overflow-hidden items-center"
+                items={navBreadcrumbItems}
+              />
+              <PrimaryButton
+                text={
+                  <FormattedMessage id="CustomAttributesConfigurationScreen.label.add-new-attribute" />
+                }
+                iconProps={useMemo(() => ({ iconName: "Add" }), [])}
+                onClick={useCallback(() => navigate("./add"), [navigate])}
+              />
+            </div>
+          </div>
           <div className={styles.widget}>
             <UserProfileAttributesList
               items={items}
@@ -146,27 +168,6 @@ const CustomAttributesConfigurationScreen: React.VFC =
       constructFormState,
       constructConfig,
     });
-    const navigate = useNavigate();
-    const { renderToString } = useContext(Context);
-
-    const primaryItems = useMemo(
-      () => [
-        {
-          key: "add",
-          text: renderToString(
-            "CustomAttributesConfigurationScreen.label.add-new-attribute"
-          ),
-          iconProps: { iconName: "CirclePlus" },
-          onClick: (e?: React.SyntheticEvent<unknown>) => {
-            e?.preventDefault();
-            e?.stopPropagation();
-            navigate("./add");
-          },
-          onRender: onRenderCommandBarPrimaryButton,
-        },
-      ],
-      [renderToString, navigate]
-    );
 
     if (form.isLoading) {
       return <ShowLoading />;
@@ -177,7 +178,11 @@ const CustomAttributesConfigurationScreen: React.VFC =
     }
 
     return (
-      <FormContainer form={form} primaryItems={primaryItems}>
+      <FormContainer
+        form={form}
+        showDiscardButton={true}
+        stickyFooterComponent={true}
+      >
         <CustomAttributesConfigurationScreenContent form={form} />
       </FormContainer>
     );

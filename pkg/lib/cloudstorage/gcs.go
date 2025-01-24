@@ -1,18 +1,17 @@
 package cloudstorage
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
-	"cloud.google.com/go/storage"
-	"github.com/authgear/authgear-server/pkg/util/clock"
+	gcs "cloud.google.com/go/storage"
 	"google.golang.org/api/option"
-	raw "google.golang.org/api/storage/v1"
+
+	"github.com/authgear/authgear-server/pkg/util/clock"
 )
 
 type GCSStorage struct {
@@ -20,13 +19,9 @@ type GCSStorage struct {
 	Bucket          string
 	CredentialsJSON []byte
 	Clock           clock.Clock
-
-	privateKey []byte
-	client     *storage.Client
-	service    *raw.Service
 }
 
-var _ Storage = &GCSStorage{}
+var _ storage = &GCSStorage{}
 
 func NewGCSStorage(
 	credentialsJSON []byte,
@@ -34,42 +29,36 @@ func NewGCSStorage(
 	bucket string,
 	c clock.Clock,
 ) (*GCSStorage, error) {
-	s := &GCSStorage{
+	return &GCSStorage{
 		ServiceAccount:  serviceAccount,
 		Bucket:          bucket,
 		CredentialsJSON: credentialsJSON,
 		Clock:           c,
-	}
-
-	var j map[string]interface{}
-	err := json.NewDecoder(bytes.NewReader(credentialsJSON)).Decode(&j)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse credentials JSON: %w", err)
-	}
-
-	privateKeyStr, ok := j["private_key"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing private")
-	}
-	s.privateKey = []byte(privateKeyStr)
-
-	ctx := context.Background()
-	service, err := raw.NewService(ctx, option.WithCredentialsJSON(credentialsJSON))
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize GCS: %w", err)
-	}
-	s.service = service
-
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON(credentialsJSON))
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize GCS: %w", err)
-	}
-	s.client = client
-
-	return s, nil
+	}, nil
 }
 
-func (s *GCSStorage) PresignPutObject(name string, header http.Header) (*http.Request, error) {
+func (s *GCSStorage) makeClient(ctx context.Context) (*gcs.Client, error) {
+	// service account key is optional.
+	// For backward compatibility, it is still unsupported.
+	// When service account key is not provided, then the client is initialized with Application Default Credentials. (That is, without any option.ClientOption)
+	// See https://pkg.go.dev/cloud.google.com/go/storage#hdr-Creating_a_Client
+	var options []option.ClientOption
+	if len(s.CredentialsJSON) > 0 {
+		options = append(options, option.WithCredentialsJSON(s.CredentialsJSON))
+	}
+	client, err := gcs.NewClient(ctx, options...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize GCS: %w", err)
+	}
+	return client, nil
+}
+
+func (s *GCSStorage) PresignPutObject(ctx context.Context, name string, header http.Header) (*http.Request, error) {
+	client, err := s.makeClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	now := s.Clock.NowUTC()
 
 	// We must omit Content-type and Content-MD5 from header because they are special.
@@ -83,17 +72,18 @@ func (s *GCSStorage) PresignPutObject(name string, header http.Header) (*http.Re
 	}
 
 	expires := now.Add(PresignPutExpires)
-	opts := storage.SignedURLOptions{
+	opts := gcs.SignedURLOptions{
+		// We still need to tell the Client SDK which service account we want to sign the URL with.
+		// https://pkg.go.dev/cloud.google.com/go/storage#hdr-Credential_requirements_for_signing
 		GoogleAccessID: s.ServiceAccount,
-		PrivateKey:     s.privateKey,
 		Method:         "PUT",
 		Expires:        expires,
 		ContentType:    header.Get("Content-Type"),
 		Headers:        headers,
 		MD5:            header.Get("Content-MD5"),
-		Scheme:         storage.SigningSchemeV4,
+		Scheme:         gcs.SigningSchemeV4,
 	}
-	urlStr, err := storage.SignedURL(s.Bucket, name, &opts)
+	urlStr, err := client.Bucket(s.Bucket).SignedURL(name, &opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to presign put request: %w", err)
 	}
@@ -108,18 +98,24 @@ func (s *GCSStorage) PresignPutObject(name string, header http.Header) (*http.Re
 	return &req, nil
 }
 
-func (s *GCSStorage) PresignGetOrHeadObject(name string, method string) (*url.URL, error) {
-	now := s.Clock.NowUTC()
-	expires := now.Add(PresignGetExpires)
+func (s *GCSStorage) PresignGetOrHeadObject(ctx context.Context, name string, method string, expire time.Duration) (*url.URL, error) {
+	client, err := s.makeClient(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	opts := storage.SignedURLOptions{
+	now := s.Clock.NowUTC()
+	expires := now.Add(expire)
+
+	opts := gcs.SignedURLOptions{
+		// We still need to tell the Client SDK which service account we want to sign the URL with.
+		// https://pkg.go.dev/cloud.google.com/go/storage#hdr-Credential_requirements_for_signing
 		GoogleAccessID: s.ServiceAccount,
-		PrivateKey:     s.privateKey,
 		Method:         method,
 		Expires:        expires,
-		Scheme:         storage.SigningSchemeV4,
+		Scheme:         gcs.SigningSchemeV4,
 	}
-	urlStr, err := storage.SignedURL(s.Bucket, name, &opts)
+	urlStr, err := client.Bucket(s.Bucket).SignedURL(name, &opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to presign get or head request: %w", err)
 	}
@@ -129,14 +125,18 @@ func (s *GCSStorage) PresignGetOrHeadObject(name string, method string) (*url.UR
 	return u, nil
 }
 
-func (s *GCSStorage) PresignHeadObject(name string) (*url.URL, error) {
-	return s.PresignGetOrHeadObject(name, "HEAD")
+func (s *GCSStorage) PresignHeadObject(ctx context.Context, name string, expire time.Duration) (*url.URL, error) {
+	return s.PresignGetOrHeadObject(ctx, name, "HEAD", expire)
 }
 
-func (s *GCSStorage) MakeDirector(extractKey func(r *http.Request) string) func(r *http.Request) {
+func (s *GCSStorage) PresignGetObject(ctx context.Context, name string, expire time.Duration) (*url.URL, error) {
+	return s.PresignGetOrHeadObject(ctx, name, "GET", expire)
+}
+
+func (s *GCSStorage) MakeDirector(extractKey func(r *http.Request) string, expire time.Duration) func(r *http.Request) {
 	return func(r *http.Request) {
 		key := extractKey(r)
-		u, err := s.PresignGetOrHeadObject(key, "GET")
+		u, err := s.PresignGetOrHeadObject(r.Context(), key, "GET", expire)
 		if err != nil {
 			panic(err)
 		}

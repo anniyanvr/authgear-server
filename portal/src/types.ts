@@ -24,12 +24,14 @@ export interface RateLimitConfig {
 // LoginIDKeyConfig
 
 export const loginIDKeyTypes = ["email", "phone", "username"] as const;
-export type LoginIDKeyType = typeof loginIDKeyTypes[number];
+export type LoginIDKeyType = (typeof loginIDKeyTypes)[number];
 
 export interface LoginIDKeyConfig {
   type: LoginIDKeyType;
   maximum?: number;
-  modify_disabled?: boolean;
+  create_disabled?: boolean;
+  update_disabled?: boolean;
+  delete_disabled?: boolean;
 }
 
 // LoginIDTypesConfig
@@ -72,9 +74,9 @@ export const oauthSSOProviderTypes = [
   "adfs",
   "wechat",
 ] as const;
-export type OAuthSSOProviderType = typeof oauthSSOProviderTypes[number];
+export type OAuthSSOProviderType = (typeof oauthSSOProviderTypes)[number];
 export const oauthSSOWeChatAppType = ["mobile", "web"] as const;
-export type OAuthSSOWeChatAppType = typeof oauthSSOWeChatAppType[number];
+export type OAuthSSOWeChatAppType = (typeof oauthSSOWeChatAppType)[number];
 export interface OAuthClaimConfig {
   required?: boolean;
 }
@@ -84,7 +86,8 @@ export interface OAuthClaimsConfig {
 export interface OAuthSSOProviderConfig {
   alias: string;
   type: OAuthSSOProviderType;
-  modify_disabled?: boolean;
+  create_disabled?: boolean;
+  delete_disabled?: boolean;
   client_id?: string;
   tenant?: string;
   key_id?: string;
@@ -95,6 +98,7 @@ export interface OAuthSSOProviderConfig {
   wechat_redirect_uris?: string[];
   discovery_document_endpoint?: string;
   policy?: string;
+  domain_hint?: string;
   claims?: OAuthClaimsConfig;
 }
 export const oauthSSOProviderItemKeys = [
@@ -109,7 +113,7 @@ export const oauthSSOProviderItemKeys = [
   "wechat.mobile",
   "wechat.web",
 ] as const;
-export type OAuthSSOProviderItemKey = typeof oauthSSOProviderItemKeys[number];
+export type OAuthSSOProviderItemKey = (typeof oauthSSOProviderItemKeys)[number];
 
 export const createOAuthSSOProviderItemKey = (
   type: OAuthSSOProviderType,
@@ -130,9 +134,14 @@ export const parseOAuthSSOProviderItemKey = (
 export const isOAuthSSOProvider = (
   config: OAuthSSOProviderConfig,
   type: OAuthSSOProviderType,
+  alias: string,
   appType?: OAuthSSOWeChatAppType
 ): boolean => {
-  return config.type === type && (!appType || config.app_type === appType);
+  return (
+    config.alias === alias &&
+    config.type === type &&
+    (!appType || config.app_type === appType)
+  );
 };
 
 export interface OAuthSSOConfig {
@@ -142,7 +151,7 @@ export interface OAuthSSOConfig {
 // IdentityConflictConfig
 export const promotionConflictBehaviours = ["error", "login"] as const;
 export type PromotionConflictBehaviour =
-  typeof promotionConflictBehaviours[number];
+  (typeof promotionConflictBehaviours)[number];
 export const isPromotionConflictBehaviour = (
   value: unknown
 ): value is PromotionConflictBehaviour => {
@@ -174,7 +183,7 @@ export interface IdentityConfig {
 
 export const passwordPolicyGuessableLevels = [0, 1, 2, 3, 4, 5] as const;
 export type PasswordPolicyGuessableLevel =
-  typeof passwordPolicyGuessableLevels[number];
+  (typeof passwordPolicyGuessableLevels)[number];
 export const isPasswordPolicyGuessableLevel = (
   value: unknown
 ): value is PasswordPolicyGuessableLevel => {
@@ -197,6 +206,15 @@ export interface PasswordPolicyConfig {
   history_days?: number;
 }
 
+export interface PasswordExpiryConfig {
+  force_change?: PasswordExpiryForceChangeConfig;
+}
+
+export interface PasswordExpiryForceChangeConfig {
+  enabled?: boolean;
+  duration_since_last_update?: DurationString;
+}
+
 export interface AuthenticatorOOBConfig {
   email?: AuthenticatorOOBEmailConfig;
   sms?: AuthenticatorOOBSMSConfig;
@@ -205,18 +223,23 @@ export interface AuthenticatorOOBConfig {
 export interface AuthenticatorOOBEmailConfig {
   maximum?: number;
   email_otp_mode?: AuthenticatorEmailOTPMode;
-  code_valid_period?: DurationString;
+  valid_periods?: AuthenticatorValidPeriods;
 }
 
 export interface AuthenticatorOOBSMSConfig {
   maximum?: number;
   phone_otp_mode?: AuthenticatorPhoneOTPMode;
-  code_valid_period?: DurationString;
+  valid_periods?: AuthenticatorValidPeriods;
+}
+export interface AuthenticatorValidPeriods {
+  link?: DurationString;
+  code?: DurationString;
 }
 
 export interface AuthenticatorPasswordConfig {
   force_change?: boolean;
   policy?: PasswordPolicyConfig;
+  expiry?: PasswordExpiryConfig;
 }
 
 export interface AuthenticatorConfig {
@@ -250,7 +273,8 @@ export const primaryAuthenticatorTypes = [
   "oob_otp_sms",
   "passkey",
 ] as const;
-export type PrimaryAuthenticatorType = typeof primaryAuthenticatorTypes[number];
+export type PrimaryAuthenticatorType =
+  (typeof primaryAuthenticatorTypes)[number];
 export function isPrimaryAuthenticatorType(
   type: any
 ): type is PrimaryAuthenticatorType {
@@ -264,7 +288,7 @@ export const secondaryAuthenticatorTypes = [
   "totp",
 ] as const;
 export type SecondaryAuthenticatorType =
-  typeof secondaryAuthenticatorTypes[number];
+  (typeof secondaryAuthenticatorTypes)[number];
 export function isSecondaryAuthenticatorType(
   type: any
 ): type is SecondaryAuthenticatorType {
@@ -279,7 +303,7 @@ export const identityTypes = [
   "passkey",
   "siwe",
 ] as const;
-export type IdentityType = typeof identityTypes[number];
+export type IdentityType = (typeof identityTypes)[number];
 
 export const secondaryAuthenticationModes = [
   "disabled",
@@ -287,12 +311,17 @@ export const secondaryAuthenticationModes = [
   "required",
 ] as const;
 export type SecondaryAuthenticationMode =
-  typeof secondaryAuthenticationModes[number];
+  (typeof secondaryAuthenticationModes)[number];
 
 export interface RecoveryCodeConfig {
   disabled?: boolean;
   count?: number;
   list_enabled?: boolean;
+}
+
+export interface MFAGlobalGracePeriodConfig {
+  enabled?: boolean;
+  endAt?: string;
 }
 
 export interface DeviceTokenConfig {
@@ -304,6 +333,7 @@ export interface AuthenticationConfig {
   primary_authenticators?: PrimaryAuthenticatorType[];
   secondary_authenticators?: SecondaryAuthenticatorType[];
   secondary_authentication_mode?: SecondaryAuthenticationMode;
+  secondary_authentication_grace_period?: MFAGlobalGracePeriodConfig;
   recovery_code?: RecoveryCodeConfig;
   device_token?: DeviceTokenConfig;
   rate_limits?: AuthenticationRateLimitsConfig;
@@ -321,11 +351,11 @@ export interface VerificationClaimsConfig {
 }
 
 export const verificationCriteriaList = ["any", "all"] as const;
-export type VerificationCriteria = typeof verificationCriteriaList[number];
+export type VerificationCriteria = (typeof verificationCriteriaList)[number];
 
 export const authenticatorEmailOTPModeList = ["code", "login_link"] as const;
 export type AuthenticatorEmailOTPMode =
-  typeof authenticatorEmailOTPModeList[number];
+  (typeof authenticatorEmailOTPModeList)[number];
 
 export const authenticatorPhoneOTPModeList = [
   "sms",
@@ -333,7 +363,7 @@ export const authenticatorPhoneOTPModeList = [
   "whatsapp",
 ] as const;
 export type AuthenticatorPhoneOTPMode =
-  typeof authenticatorPhoneOTPModeList[number];
+  (typeof authenticatorPhoneOTPModeList)[number];
 
 export const authenticatorPhoneOTPSMSModeList = ["sms", "whatsapp_sms"];
 
@@ -382,6 +412,7 @@ export interface VerificationRateLimitsSMSConfig {
 
 export interface MessagingConfig {
   rate_limits?: MessagingRateLimitsConfig;
+  template_customization_disabled?: boolean;
 }
 
 export interface MessagingRateLimitsConfig {
@@ -401,10 +432,15 @@ export interface PhoneInputConfig {
 }
 
 export interface UIConfig {
+  implementation?: UIImplementation;
+  signup_login_flow_enabled?: boolean;
   phone_input?: PhoneInputConfig;
   dark_theme_disabled?: boolean;
+  light_theme_disabled?: boolean;
   watermark_disabled?: boolean;
+  direct_access_disabled?: boolean;
   default_client_uri?: string;
+  brand_page_uri?: string;
   default_redirect_uri?: string;
   default_post_logout_redirect_uri?: string;
   forgot_password?: UIForgotPasswordConfig;
@@ -455,7 +491,7 @@ export const applicationTypes = [
   "confidential",
   "third_party_app",
 ] as const;
-export type ApplicationType = typeof applicationTypes[number];
+export type ApplicationType = (typeof applicationTypes)[number];
 
 // OAuthConfig
 export interface OAuthClientConfig {
@@ -557,7 +593,7 @@ export const customAttributeTypes = [
   "url",
   "country_code",
 ] as const;
-export type CustomAttributeType = typeof customAttributeTypes[number];
+export type CustomAttributeType = (typeof customAttributeTypes)[number];
 export function isCustomAttributeType(v: unknown): v is CustomAttributeType {
   // @ts-expect-error
   return typeof v === "string" && customAttributeTypes.includes(v);
@@ -566,20 +602,6 @@ export function isCustomAttributeType(v: unknown): v is CustomAttributeType {
 export interface UserProfileConfig {
   standard_attributes?: StandardAttributesConfig;
   custom_attributes?: CustomAttributesConfig;
-}
-
-// Web3 Configs
-export interface SIWEConfig {
-  networks?: string[];
-}
-
-export interface NFTConfig {
-  collections?: string[];
-}
-
-export interface Web3Config {
-  nft?: NFTConfig;
-  siwe?: SIWEConfig;
 }
 
 // PortalAPIAppConfig
@@ -597,11 +619,12 @@ export interface PortalAPIAppConfig {
   oauth?: OAuthConfig;
   session?: SessionConfig;
   hook?: HookConfig;
-  web3?: Web3Config;
   user_profile?: UserProfileConfig;
   account_deletion?: AccountDeletionConfig;
   account_anonymization?: AccountAnonymizationConfig;
   google_tag_manager?: GoogleTagManagerConfig;
+  bot_protection?: BotProtectionConfig;
+  saml?: SAMLConfig;
 }
 
 export interface OAuthSSOProviderClientSecret {
@@ -638,12 +661,40 @@ export interface OAuthClientSecret {
   keys?: OAuthClientSecretKey[] | null;
 }
 
+export interface BotProtectionProviderSecret {
+  secretKey?: string | null;
+  type: string;
+}
+
+export interface SAMLSpSigningCertificate {
+  certificateFingerprint: string;
+  certificatePEM: string;
+}
+
+export interface SAMLSpSigningSecrets {
+  clientID: string;
+  certificates: SAMLSpSigningCertificate[];
+}
+
+export interface SAMLIdpSigningCertificate {
+  certificateFingerprint: string;
+  certificatePEM: string;
+  keyID: string;
+}
+
+export interface SAMLIdpSigningSecrets {
+  certificates: SAMLIdpSigningCertificate[];
+}
+
 export interface PortalAPISecretConfig {
   oauthSSOProviderClientSecrets?: OAuthSSOProviderClientSecret[] | null;
   webhookSecret?: WebhookSecret | null;
   adminAPISecrets?: AdminAPISecret[] | null;
   smtpSecret?: SMTPSecret | null;
   oauthClientSecrets?: OAuthClientSecret[] | null;
+  botProtectionProviderSecret?: BotProtectionProviderSecret | null;
+  samlIdpSigningSecrets?: SAMLIdpSigningSecrets | null;
+  samlSpSigningSecrets?: SAMLSpSigningSecrets[] | null;
 }
 
 export interface OAuthSSOProviderClientSecretUpdateInstructionDataItem
@@ -672,6 +723,15 @@ export interface SMTPSecretUpdateInstruction {
   data?: SMTPSecretUpdateInstructionData | null;
 }
 
+export interface BotProtectionProviderSecretUpdateInstructionData {
+  secretKey: string | null;
+  type: BotProtectionProviderType;
+}
+export interface BotProtectionProviderSecretUpdateInstruction {
+  action: string;
+  data?: BotProtectionProviderSecretUpdateInstructionData | null;
+}
+
 export interface OAuthClientSecretsUpdateInstructionGenerateData {
   clientID: string;
 }
@@ -695,11 +755,37 @@ export interface AdminApiAuthKeyUpdateInstruction {
   deleteData?: AdminAPIAuthKeyDeleteDataInput | null;
 }
 
+export interface SAMLSpSigningSecretsSetDataInputItem {
+  clientID: string;
+  certificates: string[];
+}
+
+export interface SAMLSpSigningSecretsSetDataInput {
+  items: SAMLSpSigningSecretsSetDataInputItem[];
+}
+
+export interface SAMLSpSigningSecretsUpdateInstruction {
+  action: string;
+  setData?: SAMLSpSigningSecretsSetDataInput | null;
+}
+
+export interface SAMLIdpSigningSecretsDeleteDataInput {
+  keyIDs: string[];
+}
+
+export interface SAMLIdpSigningSecretsUpdateInstruction {
+  action: string;
+  deleteData?: SAMLIdpSigningSecretsDeleteDataInput | null;
+}
+
 export interface PortalAPISecretConfigUpdateInstruction {
   oauthSSOProviderClientSecrets?: OAuthSSOProviderClientSecretUpdateInstruction | null;
   smtpSecret?: SMTPSecretUpdateInstruction | null;
   oauthClientSecrets?: OAuthClientSecretsUpdateInstruction | null;
   adminAPIAuthKey?: AdminApiAuthKeyUpdateInstruction | null;
+  botProtectionProviderSecret?: BotProtectionProviderSecretUpdateInstruction | null;
+  samlIdpSigningSecrets?: SAMLIdpSigningSecretsUpdateInstruction | null;
+  samlSpSigningSecrets?: SAMLSpSigningSecretsUpdateInstruction | null;
 }
 
 export interface PortalAPIApp {
@@ -720,7 +806,6 @@ export interface PortalAPIFeatureConfig {
   audit_log?: AuditLogFeatureConfig;
   google_tag_manager?: GoogleTagManagerFeatureConfig;
   collaborator?: CollaboratorFeatureConfig;
-  web3?: Web3FeatureConfig;
 }
 
 export interface AuthenticatorFeatureConfig {
@@ -759,14 +844,6 @@ export interface AuthenticatorsFeatureConfig {
 
 export interface AuthenticatorOOBOTBSMSFeatureConfig {
   disabled?: boolean;
-}
-
-export interface Web3NFTFeatureConfig {
-  maximum?: number;
-}
-
-export interface Web3FeatureConfig {
-  nft?: Web3NFTFeatureConfig;
 }
 
 export interface IdentityFeatureConfig {
@@ -862,6 +939,54 @@ export interface GoogleTagManagerConfig {
   container_id?: string;
 }
 
+export interface BotProtectionProviderConfig {
+  site_key?: string; // assume all provides have site_key for now
+  type?: BotProtectionProviderType;
+}
+
+export type BotProtectionRiskMode = "never" | "always";
+export interface BotProtectionRequirementsObject {
+  mode?: BotProtectionRiskMode;
+}
+export interface BotProtectionRequirements {
+  signup_or_login?: BotProtectionRequirementsObject;
+  account_recovery?: BotProtectionRequirementsObject;
+  password?: BotProtectionRequirementsObject;
+  oob_otp_email?: BotProtectionRequirementsObject;
+  oob_otp_sms?: BotProtectionRequirementsObject;
+}
+
+export interface BotProtectionConfig {
+  enabled?: boolean;
+  provider?: BotProtectionProviderConfig;
+  requirements?: BotProtectionRequirements;
+}
+
+export interface SAMLConfig {
+  signing?: SAMLSigningConfig;
+  service_providers?: SAMLServiceProviderConfig[];
+}
+
+export interface SAMLSigningConfig {
+  key_id?: string;
+  signature_method?: SAMLSigningSignatureMethod;
+}
+
+export interface SAMLServiceProviderConfig {
+  client_id: string;
+  nameid_format: SAMLNameIDFormat;
+  nameid_attribute_pointer?: SAMLNameIDAttributePointer;
+  acs_urls: string[];
+  destination?: string;
+  recipient?: string;
+  audience?: string;
+  assertion_valid_duration?: DurationString;
+  slo_enabled?: boolean;
+  slo_callback_url?: string;
+  slo_binding?: SAMLBinding;
+  signature_verification_enabled?: boolean;
+}
+
 export interface StandardAttributes {
   email?: string;
   email_verified?: boolean;
@@ -895,51 +1020,6 @@ export interface StandardAttributesAddress {
   country?: string;
 }
 
-export interface NFTContract {
-  name: string;
-  address: string;
-  type: string;
-}
-
-export interface TransactionIdentifier {
-  hash: string;
-}
-
-export interface BlockIdentifier {
-  index: number;
-  timestamp: Date;
-}
-
-export interface NFTToken {
-  token_id: string;
-  transaction_identifier: TransactionIdentifier;
-  block_identifier: BlockIdentifier;
-  balance: string;
-}
-
-export interface NFT {
-  contract: NFTContract;
-  tokens: NFTToken[];
-}
-
-export interface AccountIdentifier {
-  address?: string;
-}
-
-export interface NetworkIdentifier {
-  blockchain?: string;
-  network?: string;
-}
-export interface Web3Account {
-  account_identifier?: AccountIdentifier;
-  network_identifier?: NetworkIdentifier;
-  nfts?: NFT[];
-}
-
-export interface Web3Claims {
-  accounts?: Web3Account[];
-}
-
 export interface Identity {
   id: string;
   claims: IdentityClaims;
@@ -959,6 +1039,7 @@ export interface Session {
   lastAccessedAt: string;
   lastAccessedByIP: string;
   displayName: string;
+  userAgent?: string | null;
   clientID?: string | null;
 }
 
@@ -978,4 +1059,34 @@ export interface TutorialStatusData {
     sso?: boolean;
     invite?: boolean;
   };
+}
+
+export const botProtectionProviderTypes = [
+  "cloudflare",
+  "recaptchav2",
+] as const;
+export type BotProtectionProviderType =
+  (typeof botProtectionProviderTypes)[number];
+
+export type UIImplementation = "interaction" | "authflow" | "authflowv2";
+
+export enum SAMLNameIDFormat {
+  Unspecified = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+  EmailAddress = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+}
+
+export enum SAMLNameIDAttributePointer {
+  Sub = "/sub",
+  PreferredUsername = "/preferred_username",
+  Email = "/email",
+  PhoneNumber = "/phone_number",
+}
+
+export enum SAMLBinding {
+  HTTPRedirect = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+  HTTPPOST = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+}
+
+export enum SAMLSigningSignatureMethod {
+  RSASHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
 }

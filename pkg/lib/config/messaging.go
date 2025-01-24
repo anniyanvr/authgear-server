@@ -6,6 +6,7 @@ var _ = Schema.Add("MessagingConfig", `
 	"additionalProperties": false,
 	"properties": {
 		"sms_provider": { "$ref": "#/$defs/SMSProvider" },
+		"sms_gateway": { "$ref": "#/$defs/SMSGatewayConfig" },
 		"sms": { "$ref": "#/$defs/SMSConfig" },
 		"email": { "$ref": "#/$defs/EmailConfig" },
 		"whatsapp": { "$ref": "#/$defs/WhatsappConfig" },
@@ -15,11 +16,17 @@ var _ = Schema.Add("MessagingConfig", `
 `)
 
 type MessagingConfig struct {
-	SMSProvider SMSProvider                `json:"sms_provider,omitempty"`
-	SMS         *SMSConfig                 `json:"sms,omitempty"`
-	Email       *EmailConfig               `json:"email,omitempty"`
-	Whatsapp    *WhatsappConfig            `json:"whatsapp,omitempty"`
-	RateLimits  *MessagingRateLimitsConfig `json:"rate_limits,omitempty"`
+	SMSProvider      SMSProvider                `json:"sms_provider,omitempty"`
+	SMSGateway       *SMSGatewayConfig          `json:"sms_gateway,omitempty" nullable:"true"`
+	Deprecated_SMS   *SMSConfig                 `json:"sms,omitempty"`
+	Deprecated_Email *EmailConfig               `json:"email,omitempty"`
+	Whatsapp         *WhatsappConfig            `json:"whatsapp,omitempty"`
+	RateLimits       *MessagingRateLimitsConfig `json:"rate_limits,omitempty"`
+}
+
+func (c *MessagingConfig) SetDefaults() {
+	c.Deprecated_SMS = nil
+	c.Deprecated_Email = nil
 }
 
 var _ = Schema.Add("SMSProvider", `

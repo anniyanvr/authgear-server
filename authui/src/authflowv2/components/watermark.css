@@ -1,0 +1,28 @@
+@layer components {
+  :root {
+    --watermark-display: block;
+  }
+
+  html[data-watermark-enabled="false"] {
+    --watermark-display: none;
+  }
+
+  .watermark {
+    @apply h-[22px] w-[120px] bg-no-repeat bg-center;
+    display: var(--watermark-display);
+    background-size: auto 22px;
+    background-image: url("../icons/raw/watermark.svg");
+  }
+
+  .watermark__container {
+    /* Use gap to implement the top padding, so that when watermark is not displayed,
+    the margin is also hidden */
+    @apply gap-y-8 flex flex-col items-center;
+  }
+
+  @media (min-width: theme("screens.tablet")) {
+    .watermark__container {
+      @apply gap-y-16;
+    }
+  }
+}

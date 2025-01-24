@@ -4,24 +4,27 @@ import { gql } from '@apollo/client';
 import * as Apollo from '@apollo/client';
 const defaultOptions = {} as const;
 export type UpdateAppAndSecretConfigMutationMutationVariables = Types.Exact<{
-  appID: Types.Scalars['ID'];
-  appConfig: Types.Scalars['AppConfig'];
+  appID: Types.Scalars['ID']['input'];
+  appConfig?: Types.InputMaybe<Types.Scalars['AppConfig']['input']>;
+  appConfigChecksum?: Types.InputMaybe<Types.Scalars['String']['input']>;
   secretConfigUpdateInstructions?: Types.InputMaybe<Types.SecretConfigUpdateInstructionsInput>;
+  secretConfigUpdateInstructionsChecksum?: Types.InputMaybe<Types.Scalars['String']['input']>;
 }>;
 
 
-export type UpdateAppAndSecretConfigMutationMutation = { __typename?: 'Mutation', updateApp: { __typename?: 'UpdateAppPayload', app: { __typename?: 'App', id: string, effectiveAppConfig: any, rawAppConfig: any, secretConfig: { __typename?: 'SecretConfig', oauthSSOProviderClientSecrets?: Array<{ __typename?: 'OAuthSSOProviderClientSecret', alias: string, clientSecret?: string | null }> | null, webhookSecret?: { __typename?: 'WebhookSecret', secret?: string | null } | null, adminAPISecrets?: Array<{ __typename?: 'AdminAPISecret', keyID: string, createdAt?: any | null, publicKeyPEM: string, privateKeyPEM?: string | null }> | null, smtpSecret?: { __typename?: 'SMTPSecret', host: string, port: number, username: string, password?: string | null } | null, oauthClientSecrets?: Array<{ __typename?: 'oauthClientSecretItem', clientID: string, keys?: Array<{ __typename?: 'oauthClientSecretKey', keyID: string, createdAt?: any | null, key: string }> | null }> | null } } } };
+export type UpdateAppAndSecretConfigMutationMutation = { __typename?: 'Mutation', updateApp: { __typename?: 'UpdateAppPayload', app: { __typename?: 'App', id: string, effectiveAppConfig: any, rawAppConfig: any, rawAppConfigChecksum: any, secretConfigChecksum: any, samlIdpEntityID: string, secretConfig: { __typename?: 'SecretConfig', oauthSSOProviderClientSecrets?: Array<{ __typename?: 'OAuthSSOProviderClientSecret', alias: string, clientSecret?: string | null }> | null, webhookSecret?: { __typename?: 'WebhookSecret', secret?: string | null } | null, adminAPISecrets?: Array<{ __typename?: 'AdminAPISecret', keyID: string, createdAt?: any | null, publicKeyPEM: string, privateKeyPEM?: string | null }> | null, smtpSecret?: { __typename?: 'SMTPSecret', host: string, port: number, username: string, password?: string | null } | null, oauthClientSecrets?: Array<{ __typename?: 'oauthClientSecretItem', clientID: string, keys?: Array<{ __typename?: 'oauthClientSecretKey', keyID: string, createdAt?: any | null, key: string }> | null }> | null, botProtectionProviderSecret?: { __typename?: 'BotProtectionProviderSecret', type: string, secretKey?: string | null } | null, samlIdpSigningSecrets?: { __typename?: 'SAMLIdpSigningSecrets', certificates: Array<{ __typename?: 'SAMLIdpSigningCertificate', certificateFingerprint: string, certificatePEM: string, keyID: string }> } | null, samlSpSigningSecrets?: Array<{ __typename?: 'SAMLSpSigningSecrets', clientID: string, certificates: Array<{ __typename?: 'samlSpSigningCertificate', certificateFingerprint: string, certificatePEM: string }> }> | null } } } };
 
 
 export const UpdateAppAndSecretConfigMutationDocument = gql`
-    mutation updateAppAndSecretConfigMutation($appID: ID!, $appConfig: AppConfig!, $secretConfigUpdateInstructions: SecretConfigUpdateInstructionsInput) {
+    mutation updateAppAndSecretConfigMutation($appID: ID!, $appConfig: AppConfig, $appConfigChecksum: String, $secretConfigUpdateInstructions: SecretConfigUpdateInstructionsInput, $secretConfigUpdateInstructionsChecksum: String) {
   updateApp(
-    input: {appID: $appID, appConfig: $appConfig, secretConfigUpdateInstructions: $secretConfigUpdateInstructions}
+    input: {appID: $appID, appConfig: $appConfig, appConfigChecksum: $appConfigChecksum, secretConfigUpdateInstructions: $secretConfigUpdateInstructions, secretConfigUpdateInstructionsChecksum: $secretConfigUpdateInstructionsChecksum}
   ) {
     app {
       id
       effectiveAppConfig
       rawAppConfig
+      rawAppConfigChecksum
       secretConfig {
         oauthSSOProviderClientSecrets {
           alias
@@ -50,7 +53,27 @@ export const UpdateAppAndSecretConfigMutationDocument = gql`
             key
           }
         }
+        botProtectionProviderSecret {
+          type
+          secretKey
+        }
+        samlIdpSigningSecrets {
+          certificates {
+            certificateFingerprint
+            certificatePEM
+            keyID
+          }
+        }
+        samlSpSigningSecrets {
+          clientID
+          certificates {
+            certificateFingerprint
+            certificatePEM
+          }
+        }
       }
+      secretConfigChecksum
+      samlIdpEntityID
     }
   }
 }
@@ -72,7 +95,9 @@ export type UpdateAppAndSecretConfigMutationMutationFn = Apollo.MutationFunction
  *   variables: {
  *      appID: // value for 'appID'
  *      appConfig: // value for 'appConfig'
+ *      appConfigChecksum: // value for 'appConfigChecksum'
  *      secretConfigUpdateInstructions: // value for 'secretConfigUpdateInstructions'
+ *      secretConfigUpdateInstructionsChecksum: // value for 'secretConfigUpdateInstructionsChecksum'
  *   },
  * });
  */

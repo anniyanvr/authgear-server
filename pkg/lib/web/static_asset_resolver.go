@@ -20,12 +20,21 @@ const AppAssetsURLDirname = "static"
 const GeneratedAssetsURLDirname = "shared-assets"
 
 var StaticAssetResources = map[string]resource.Descriptor{
-	"app-logo":      AppLogo,
-	"app-logo-dark": AppLogoDark,
-	"favicon":       Favicon,
+	"app-logo":                  AppLogo,
+	"app-logo-dark":             AppLogoDark,
+	"favicon":                   Favicon,
+	"app-background-image":      AppBackgroundImage,
+	"app-background-image-dark": AppBackgroundImageDark,
 
-	"authgear-light-theme.css": AuthgearLightThemeCSS,
-	"authgear-dark-theme.css":  AuthgearDarkThemeCSS,
+	"csrf-ios-instruction":     CSRFIOSInsturction,
+	"csrf-android-instruction": CSRFAndroidInsturction,
+	"csrf-chrome-instruction":  CSRFChromeInsturction,
+	"csrf-samsung-instruction": CSRFSamsungInsturction,
+
+	"authgear-light-theme.css":            AuthgearLightThemeCSS,
+	"authgear-dark-theme.css":             AuthgearDarkThemeCSS,
+	"authgear-authflowv2-light-theme.css": AuthgearAuthflowV2LightThemeCSS,
+	"authgear-authflowv2-dark-theme.css":  AuthgearAuthflowV2DarkThemeCSS,
 }
 
 type ResourceManager interface {
@@ -37,7 +46,6 @@ type EmbeddedResourceManager interface {
 }
 
 type StaticAssetResolver struct {
-	Context           context.Context
 	Localization      *config.LocalizationConfig
 	HTTPOrigin        httputil.HTTPOrigin
 	HTTPProto         httputil.HTTPProto
@@ -64,13 +72,13 @@ func (r *StaticAssetResolver) HasAppSpecificAsset(id string) bool {
 	return err == nil
 }
 
-func (r *StaticAssetResolver) StaticAssetURL(id string) (string, error) {
+func (r *StaticAssetResolver) StaticAssetURL(ctx context.Context, id string) (string, error) {
 	desc, ok := StaticAssetResources[id]
 	if !ok {
 		return "", fmt.Errorf("unknown static asset: %s", id)
 	}
 
-	preferredLanguageTags := intl.GetPreferredLanguageTags(r.Context)
+	preferredLanguageTags := intl.GetPreferredLanguageTags(ctx)
 	result, err := r.Resources.Read(desc, resource.EffectiveResource{
 		SupportedTags: r.Localization.SupportedLanguages,
 		DefaultTag:    *r.Localization.FallbackLanguage,
@@ -101,7 +109,7 @@ func (r *StaticAssetResolver) GeneratedStaticAssetURL(key string) (string, error
 		origin = fmt.Sprintf("%s://%s", r.HTTPProto, r.WebAppCDNHost)
 	}
 
-	return staticAssetURL(origin, GeneratedAssetsURLDirname, name)
+	return staticAssetURL(origin, "", name)
 }
 
 func staticAssetURL(origin string, prefix string, assetPath string) (string, error) {

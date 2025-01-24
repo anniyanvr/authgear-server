@@ -1,6 +1,8 @@
 package hook
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/event"
 	"github.com/authgear/authgear-server/pkg/api/event/blocking"
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -47,12 +49,12 @@ func (e *MockNonBlockingEvent1) ForAudit() bool {
 	return true
 }
 
-func (e *MockNonBlockingEvent1) ReindexUserNeeded() bool {
-	return true
+func (e *MockNonBlockingEvent1) RequireReindexUserIDs() []string {
+	return []string{e.UserID()}
 }
 
-func (e *MockNonBlockingEvent1) IsUserDeleted() bool {
-	return false
+func (e *MockNonBlockingEvent1) DeletedUserIDs() []string {
+	return nil
 }
 
 type MockNonBlockingEvent2 struct {
@@ -74,12 +76,12 @@ func (e *MockNonBlockingEvent2) ForAudit() bool {
 	return true
 }
 
-func (e *MockNonBlockingEvent2) ReindexUserNeeded() bool {
-	return true
+func (e *MockNonBlockingEvent2) RequireReindexUserIDs() []string {
+	return []string{e.UserID()}
 }
 
-func (e *MockNonBlockingEvent2) IsUserDeleted() bool {
-	return false
+func (e *MockNonBlockingEvent2) DeletedUserIDs() []string {
+	return nil
 }
 
 type MockNonBlockingEvent3 struct {
@@ -101,12 +103,12 @@ func (e *MockNonBlockingEvent3) ForAudit() bool {
 	return true
 }
 
-func (e *MockNonBlockingEvent3) ReindexUserNeeded() bool {
-	return true
+func (e *MockNonBlockingEvent3) RequireReindexUserIDs() []string {
+	return []string{e.UserID()}
 }
 
-func (e *MockNonBlockingEvent3) IsUserDeleted() bool {
-	return false
+func (e *MockNonBlockingEvent3) DeletedUserIDs() []string {
+	return nil
 }
 
 type MockNonBlockingEvent4 struct {
@@ -128,12 +130,12 @@ func (e *MockNonBlockingEvent4) ForAudit() bool {
 	return true
 }
 
-func (e *MockNonBlockingEvent4) ReindexUserNeeded() bool {
-	return true
+func (e *MockNonBlockingEvent4) RequireReindexUserIDs() []string {
+	return []string{e.UserID()}
 }
 
-func (e *MockNonBlockingEvent4) IsUserDeleted() bool {
-	return false
+func (e *MockNonBlockingEvent4) DeletedUserIDs() []string {
+	return nil
 }
 
 type MockBlockingEvent1 struct {
@@ -147,7 +149,7 @@ func (e *MockBlockingEvent1) BlockingEventType() event.Type {
 func (e *MockBlockingEvent1) FillContext(ctx *event.Context) {
 }
 
-func (e *MockBlockingEvent1) ApplyMutations(mutations event.Mutations) bool {
+func (e *MockBlockingEvent1) ApplyMutations(ctx context.Context, mutations event.Mutations) bool {
 	user, mutated := ApplyMutations(e.User, mutations)
 	if mutated {
 		e.User = user
@@ -157,10 +159,10 @@ func (e *MockBlockingEvent1) ApplyMutations(mutations event.Mutations) bool {
 	return false
 }
 
-func (e *MockBlockingEvent1) PerformEffects(ctx event.MutationsEffectContext) error {
+func (e *MockBlockingEvent1) PerformEffects(ctx context.Context, effectCtx event.MutationsEffectContext) error {
 	userID := e.UserID()
 	userMutations := blocking.MakeUserMutations(e.User)
-	return blocking.PerformEffectsOnUser(ctx, userID, userMutations)
+	return blocking.PerformEffectsOnUser(ctx, effectCtx, userID, userMutations)
 }
 
 type MockBlockingEvent2 struct {
@@ -174,7 +176,7 @@ func (e *MockBlockingEvent2) BlockingEventType() event.Type {
 func (e *MockBlockingEvent2) FillContext(ctx *event.Context) {
 }
 
-func (e *MockBlockingEvent2) ApplyMutations(mutations event.Mutations) bool {
+func (e *MockBlockingEvent2) ApplyMutations(ctx context.Context, mutations event.Mutations) bool {
 	user, mutated := ApplyMutations(e.User, mutations)
 	if mutated {
 		e.User = user
@@ -184,10 +186,10 @@ func (e *MockBlockingEvent2) ApplyMutations(mutations event.Mutations) bool {
 	return false
 }
 
-func (e *MockBlockingEvent2) PerformEffects(ctx event.MutationsEffectContext) error {
+func (e *MockBlockingEvent2) PerformEffects(ctx context.Context, effectCtx event.MutationsEffectContext) error {
 	userID := e.UserID()
 	userMutations := blocking.MakeUserMutations(e.User)
-	return blocking.PerformEffectsOnUser(ctx, userID, userMutations)
+	return blocking.PerformEffectsOnUser(ctx, effectCtx, userID, userMutations)
 }
 
 var _ event.NonBlockingPayload = &MockNonBlockingEvent1{}

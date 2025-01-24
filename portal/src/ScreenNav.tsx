@@ -2,14 +2,24 @@ import React, { useCallback, useContext, useMemo, useState } from "react";
 import { useQuery } from "@apollo/client";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { Context } from "@oursky/react-messageformat";
-import { INavLink, INavLinkGroup, INavStyleProps, Nav } from "@fluentui/react";
+import {
+  INavLink,
+  INavLinkGroup,
+  INavStyleProps,
+  Nav,
+  Text,
+} from "@fluentui/react";
+import authgear from "@authgear/web";
 import { useSystemConfig } from "./context/SystemConfigContext";
 import {
   ScreenNavQueryQuery,
   ScreenNavQueryDocument,
 } from "./graphql/portal/query/screenNavQuery.generated";
-import { client } from "./graphql/portal/apollo";
+import { usePortalClient } from "./graphql/portal/apollo";
 import { useAppFeatureConfigQuery } from "./graphql/portal/query/appFeatureConfigQuery";
+import { useViewerQuery } from "./graphql/portal/query/viewerQuery";
+import styles from "./ScreenNav.module.css";
+import ExternalLink from "./ExternalLink";
 
 function getStyles(props: INavStyleProps) {
   return {
@@ -105,6 +115,9 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
   const navigate = useNavigate();
   const { renderToString } = useContext(Context);
   const { pathname } = useLocation();
+  const { authgearEndpoint } = useSystemConfig();
+  const { viewer } = useViewerQuery();
+  const client = usePortalClient();
   const queryResult = useQuery<ScreenNavQueryQuery>(ScreenNavQueryDocument, {
     client,
     variables: {
@@ -120,7 +133,7 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
     false;
   const skippedTutorial = app?.tutorialStatus.data.skipped === true;
 
-  const { auditLogEnabled, analyticEnabled, web3Enabled } = useSystemConfig();
+  const { auditLogEnabled, analyticEnabled } = useSystemConfig();
 
   const app2appEnabled = useMemo(() => {
     if (effectiveFeatureConfig != null) {
@@ -161,9 +174,26 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
           ]
         : []),
       {
-        type: "link" as const,
-        textKey: "ScreenNav.users",
-        url: `/project/${appID}/users`,
+        type: "group" as const,
+        textKey: "ScreenNav.user-management",
+        urlPrefix: `/project/${appID}/user-management`,
+        children: [
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.users",
+            url: `/project/${appID}/user-management/users`,
+          },
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.roles",
+            url: `/project/${appID}/user-management/roles`,
+          },
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.groups",
+            url: `/project/${appID}/user-management/groups`,
+          },
+        ],
       },
       {
         type: "group" as const,
@@ -190,15 +220,6 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
             textKey: "ScreenNav.mfa",
             url: `/project/${appID}/configuration/authentication/2fa`,
           },
-          ...(web3Enabled
-            ? [
-                {
-                  type: "link" as const,
-                  textKey: "ScreenNav.web3",
-                  url: `/project/${appID}/configuration/authentication/web3`,
-                },
-              ]
-            : []),
           {
             type: "link" as const,
             textKey: "ScreenNav.anonymous-users",
@@ -221,24 +242,36 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
         url: `/project/${appID}/configuration/apps`,
       },
       {
-        type: "link" as const,
-        textKey: "CustomDomainListScreen.title",
-        url: `/project/${appID}/custom-domains`,
+        type: "group" as const,
+        textKey: "ScreenNav.branding",
+        urlPrefix: `/project/${appID}/branding`,
+        children: [
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.design",
+            url: `/project/${appID}/branding/design`,
+          },
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.localization",
+            url: `/project/${appID}/branding/localization`,
+          },
+          {
+            type: "link" as const,
+            textKey: "CustomDomainListScreen.title",
+            url: `/project/${appID}/branding/custom-domains`,
+          },
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.customText",
+            url: `/project/${appID}/branding/custom-text`,
+          },
+        ],
       },
       {
         type: "link" as const,
-        textKey: "ScreenNav.smtp",
-        url: `/project/${appID}/configuration/smtp`,
-      },
-      {
-        type: "link" as const,
-        textKey: "ScreenNav.ui-settings",
-        url: `/project/${appID}/configuration/ui-settings`,
-      },
-      {
-        type: "link" as const,
-        textKey: "ScreenNav.localization",
-        url: `/project/${appID}/configuration/localization`,
+        textKey: "ScreenNav.languages",
+        url: `/project/${appID}/configuration/languages`,
       },
       {
         type: "group" as const,
@@ -256,6 +289,11 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
             url: `/project/${appID}/configuration/user-profile/custom-attributes`,
           },
         ],
+      },
+      {
+        type: "link" as const,
+        textKey: "ScreenNav.bot-protection",
+        url: `/project/${appID}/bot-protection`,
       },
       ...(showIntegrations
         ? [
@@ -301,6 +339,21 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
             textKey: "ScreenNav.session",
             url: `/project/${appID}/advanced/session`,
           },
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.smtp",
+            url: `/project/${appID}/advanced/smtp`,
+          },
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.endpoint-direct-access",
+            url: `/project/${appID}/advanced/endpoint-direct-access`,
+          },
+          {
+            type: "link" as const,
+            textKey: "ScreenNav.saml-certificate",
+            url: `/project/${appID}/advanced/saml-certificate`,
+          },
         ],
       },
       ...(auditLogEnabled
@@ -325,7 +378,6 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
     skippedTutorial,
     appID,
     analyticEnabled,
-    web3Enabled,
     app2appEnabled,
     showIntegrations,
     auditLogEnabled,
@@ -404,19 +456,58 @@ const ScreenNav: React.VFC<ScreenNavProps> = function ScreenNav(props) {
     []
   );
 
+  const settingURL = authgearEndpoint + "/settings";
+  const redirectURI = window.location.origin + "/";
+  const onClickLogout = useCallback(() => {
+    authgear
+      .logout({
+        redirectURI,
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  }, [redirectURI]);
+
   if (queryResult.loading) {
     return null;
   }
 
   return (
-    <Nav
-      ariaLabel={label}
-      groups={navGroups}
-      onLinkClick={onLinkClick}
-      onLinkExpandClick={onLinkExpandClick}
-      selectedKey={selectedKey}
-      styles={getStyles}
-    />
+    <>
+      <Nav
+        ariaLabel={label}
+        groups={navGroups}
+        onLinkClick={onLinkClick}
+        onLinkExpandClick={onLinkExpandClick}
+        selectedKey={selectedKey}
+        styles={getStyles}
+      />
+      {mobileView ? (
+        <div className={styles.userActions}>
+          <Text variant="small" className={styles.userActionEmail}>
+            {viewer?.email}
+          </Text>
+          <ExternalLink
+            href={settingURL}
+            target="_self"
+            className={styles.userActionItem}
+          >
+            <Text variant="small">
+              {renderToString("ScreenHeader.settings")}
+            </Text>
+          </ExternalLink>
+          <button
+            type="button"
+            className={styles.userActionItem}
+            onClick={onClickLogout}
+          >
+            <Text variant="small">
+              {renderToString("ScreenHeader.sign-out")}
+            </Text>
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 };
 

@@ -34,6 +34,7 @@ import {
 } from "./webhook";
 import { APIBadNFTCollectionError, APIAlchemyProtocolError } from "./web3";
 import type { ParsedAPIError } from "./parse";
+import { APIResourceUpdateConflictError } from "./resourceUpdateConflict";
 
 export interface NetworkError {
   errorName: "NetworkFailed";
@@ -73,6 +74,26 @@ export interface APIDenoCheckError {
   reason: "DenoCheckError";
 }
 
+export interface APIRoleDuplicateKeyError {
+  errorName: string;
+  reason: "RoleDuplicateKey";
+}
+
+export interface APIGroupDuplicateKeyError {
+  errorName: string;
+  reason: "GroupDuplicateKey";
+}
+
+export interface APISendPasswordNoTargetError {
+  errorName: string;
+  reason: "SendPasswordNoTarget";
+}
+
+export interface APIAuthenticatorNotFoundError {
+  errorName: string;
+  reason: "AuthenticatorNotFound";
+}
+
 export type APIError = { message?: string } & (
   | NetworkError
   | RequestEntityTooLargeError
@@ -107,6 +128,11 @@ export type APIError = { message?: string } & (
   | APIBadNFTCollectionError
   | APIAlchemyProtocolError
   | APIDenoCheckError
+  | APIResourceUpdateConflictError
+  | APIRoleDuplicateKeyError
+  | APIGroupDuplicateKeyError
+  | APISendPasswordNoTargetError
+  | APIAuthenticatorNotFoundError
 );
 
 export function isAPIError(value: unknown): value is APIError {

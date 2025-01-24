@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/alicebob/miniredis/v2"
-	goredis "github.com/go-redis/redis/v8"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 type scheduleEntry struct {
@@ -39,12 +39,12 @@ func TestGCRA(t *testing.T) {
 			s.FlushAll()
 
 			cli := goredis.NewClient(&goredis.Options{Addr: s.Addr()})
-			conn := cli.Conn(ctx)
+			conn := cli.Conn()
 
 			period, _ := time.ParseDuration(sch.period)
 			burst := sch.burst
 
-			now := time.UnixMilli(epoch)
+			now := time.UnixMilli(epoch).UTC()
 			for _, e := range sch.entries {
 				if e.fn != nil {
 					e.fn()
@@ -52,7 +52,7 @@ func TestGCRA(t *testing.T) {
 				}
 
 				t, _ := time.ParseDuration(e.time)
-				newNow := time.UnixMilli(epoch).Add(t)
+				newNow := time.UnixMilli(epoch).UTC().Add(t)
 				s.SetTime(newNow)
 				s.FastForward(newNow.Sub(now))
 				now = newNow

@@ -1,7 +1,10 @@
 package validation
 
 import (
+	"bytes"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -9,8 +12,10 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"text/template"
 	"time"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 	jsonschemaformat "github.com/iawaknahc/jsonschema/pkg/jsonschema/format"
 	"github.com/iawaknahc/originmatcher"
@@ -18,6 +23,7 @@ import (
 
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/util/phone"
+	"github.com/authgear/authgear-server/pkg/util/rolesgroupsutil"
 	"github.com/authgear/authgear-server/pkg/util/secretcode"
 	"github.com/authgear/authgear-server/pkg/util/territoryutil"
 
@@ -30,9 +36,14 @@ func init() {
 	jsonschemaformat.DefaultChecker["uri"] = FormatURI{}
 	jsonschemaformat.DefaultChecker["http_origin"] = FormatHTTPOrigin{}
 	jsonschemaformat.DefaultChecker["http_origin_spec"] = FormatHTTPOriginSpec{}
+	jsonschemaformat.DefaultChecker["ldap_url"] = FormatLDAPURL{}
+	jsonschemaformat.DefaultChecker["ldap_dn"] = FormatLDAPDN{}
+	jsonschemaformat.DefaultChecker["ldap_search_filter_template"] = FormatLDAPSearchFilterTemplate{}
+	jsonschemaformat.DefaultChecker["ldap_attribute_name"] = FormatLDAPAttribute{}
 	jsonschemaformat.DefaultChecker["wechat_account_id"] = FormatWeChatAccountID{}
 	jsonschemaformat.DefaultChecker["bcp47"] = FormatBCP47{}
 	jsonschemaformat.DefaultChecker["timezone"] = FormatTimezone{}
+	jsonschemaformat.DefaultChecker["date-time"] = FormatDateTime{}
 	jsonschemaformat.DefaultChecker["birthdate"] = FormatBirthdate{}
 	jsonschemaformat.DefaultChecker["iso3166-1-alpha-2"] = FormatAlpha2{}
 	jsonschemaformat.DefaultChecker["x_totp_code"] = secretcode.OOBOTPSecretCode
@@ -48,6 +59,8 @@ func init() {
 	jsonschemaformat.DefaultChecker["x_duration_string"] = FormatDurationString{}
 	jsonschemaformat.DefaultChecker["x_base64_url"] = FormatBase64URL{}
 	jsonschemaformat.DefaultChecker["x_re2_regex"] = FormatRe2Regex{}
+	jsonschemaformat.DefaultChecker["x_role_group_key"] = rolesgroupsutil.FormatKey{}
+	jsonschemaformat.DefaultChecker["x_x509_certificate_pem"] = FormatX509CertPem{}
 }
 
 // FormatPhone checks if input is a phone number in E.164 format.
@@ -61,7 +74,13 @@ func (f FormatPhone) CheckFormat(value interface{}) error {
 	if !ok {
 		return nil
 	}
-	return phone.EnsureE164(str)
+
+	err := phone.Require_IsPossibleNumber_IsValidNumber_UserInputInE164(str)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // FormatEmail checks if input is an email address.
@@ -200,6 +219,127 @@ func (FormatHTTPOriginSpec) CheckFormat(value interface{}) error {
 	return nil
 }
 
+type FormatLDAPURL struct{}
+
+func (FormatLDAPURL) CheckFormat(value interface{}) error {
+	str, ok := value.(string)
+	if !ok {
+		return nil
+	}
+
+	u, err := url.Parse(str)
+	if err != nil {
+		return err
+	}
+
+	if u.Scheme != "ldap" && u.Scheme != "ldaps" {
+		return errors.New("expect input URL with scheme ldap / ldaps")
+	}
+
+	if u.Host == "" {
+		return errors.New("expect input URL with non-empty host")
+	}
+
+	err = errors.New("expect input URL without user info, path, query and fragment")
+	if u.User != nil {
+		return err
+	}
+	if u.Path != "" || u.RawPath != "" {
+		return err
+	}
+	if u.RawQuery != "" {
+		return err
+	}
+	if u.Fragment != "" || u.RawFragment != "" {
+		return err
+	}
+
+	return nil
+
+}
+
+type FormatLDAPDN struct{}
+
+func (FormatLDAPDN) CheckFormat(value interface{}) error {
+	str, ok := value.(string)
+	if !ok {
+		return nil
+	}
+
+	if str == "" {
+		return errors.New("expect non-empty base DN")
+	}
+
+	dn, err := ldap.ParseDN(str)
+
+	if err != nil || len(dn.RDNs) == 0 {
+		return errors.New("invalid DN")
+	}
+
+	return nil
+
+}
+
+type FormatLDAPSearchFilterTemplate struct{}
+
+func (FormatLDAPSearchFilterTemplate) CheckFormat(value interface{}) error {
+	str, ok := value.(string)
+	if !ok {
+		return nil
+	}
+
+	tmpl, err := template.New("search_filter").Parse(str)
+	tmplError := errors.New("invalid template")
+	if err != nil {
+		return tmplError
+	}
+	// check if the template can be execute with valid input (phone no., username, email)
+	testcases := []string{"+85298765432", "username", "test@test.com"}
+	for _, testcase := range testcases {
+		var buf bytes.Buffer
+		err := tmpl.Execute(&buf, map[string]string{"Username": testcase})
+		if err != nil {
+			return err
+		}
+		filterString := buf.String()
+		filterString = strings.TrimSpace(filterString)
+		_, err = ldap.CompileFilter(filterString)
+		if err != nil {
+			return errors.New("invalid search filter")
+		}
+	}
+
+	return nil
+}
+
+type FormatLDAPAttribute struct{}
+
+func (FormatLDAPAttribute) CheckFormat(value interface{}) error {
+	str, ok := value.(string)
+	if !ok {
+		return nil
+	}
+
+	if len(str) == 0 {
+		return errors.New("expect non-empty attribute")
+	}
+
+	// An attribute description option is represented by the ABNF:
+	// options = *( SEMI option )
+	// option = 1*keychar
+	// keychar = ALPHA / DIGIT / HYPHEN
+	// According to https://datatracker.ietf.org/doc/html/rfc4512#section-2.5
+	matched, err := regexp.MatchString(`^[a-zA-Z][a-zA-Z\d-]*$`, str)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return errors.New("invalid attribute")
+	}
+
+	return nil
+}
+
 // FormatWeChatAccountID checks if input start with gh_.
 type FormatWeChatAccountID struct {
 }
@@ -254,6 +394,22 @@ func (FormatTimezone) CheckFormat(value interface{}) error {
 	_, err := time.LoadLocation(str)
 	if err != nil {
 		return fmt.Errorf("invalid timezone name: %w", err)
+	}
+
+	return nil
+}
+
+type FormatDateTime struct{}
+
+func (FormatDateTime) CheckFormat(value interface{}) error {
+	str, ok := value.(string)
+	if !ok {
+		return nil
+	}
+
+	_, err := time.Parse(time.RFC3339, str)
+	if err != nil {
+		return fmt.Errorf("date-time must be in rfc3999 format")
 	}
 
 	return nil
@@ -513,6 +669,26 @@ func (FormatRe2Regex) CheckFormat(value interface{}) error {
 
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+type FormatX509CertPem struct{}
+
+func (FormatX509CertPem) CheckFormat(value interface{}) error {
+	str, ok := value.(string)
+	if !ok {
+		return nil
+	}
+
+	block, _ := pem.Decode([]byte(str))
+	if block == nil {
+		return fmt.Errorf("invalid pem")
+	}
+
+	_, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("invalid x509 cert")
 	}
 	return nil
 }

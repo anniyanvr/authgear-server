@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 
 	"sigs.k8s.io/yaml"
 )
@@ -21,7 +22,6 @@ var _ = FeatureConfigSchema.Add("FeatureConfig", `
 		"hook": { "$ref": "#/$defs/HookFeatureConfig" },
 		"audit_log": { "$ref": "#/$defs/AuditLogFeatureConfig" },
 		"google_tag_manager": { "$ref": "#/$defs/GoogleTagManagerFeatureConfig" },
-		"rate_limit": { "$ref": "#/$defs/RateLimitFeatureConfig" },
 		"rate_limits": { "$ref": "#/$defs/RateLimitsFeatureConfig" },
 		"messaging": { "$ref": "#/$defs/MessagingFeatureConfig" },
 		"collaborator": { "$ref": "#/$defs/CollaboratorFeatureConfig" },
@@ -42,16 +42,34 @@ type FeatureConfig struct {
 	Hook             *HookFeatureConfig             `json:"hook,omitempty"`
 	AuditLog         *AuditLogFeatureConfig         `json:"audit_log,omitempty"`
 	GoogleTagManager *GoogleTagManagerFeatureConfig `json:"google_tag_manager,omitempty"`
-	RateLimit        *RateLimitFeatureConfig        `json:"rate_limit,omitempty"`
 	RateLimits       *RateLimitsFeatureConfig       `json:"rate_limits,omitempty"`
 	Messaging        *MessagingFeatureConfig        `json:"messaging,omitempty"`
 	Collaborator     *CollaboratorFeatureConfig     `json:"collaborator,omitempty"`
-	Web3             *Web3FeatureConfig             `json:"web3,omitempty"`
+	Deprecated_Web3  *Deprecated_Web3FeatureConfig  `json:"web3,omitempty"`
 	AdminAPI         *AdminAPIFeatureConfig         `json:"admin_api,omitempty"`
 	TestMode         *TestModeFeatureConfig         `json:"test_mode,omitempty"`
 }
 
-func ParseFeatureConfig(inputYAML []byte) (*FeatureConfig, error) {
+func (c *FeatureConfig) Merge(layer *FeatureConfig) *FeatureConfig {
+	t := reflect.TypeOf(*c)
+	v := reflect.ValueOf(c).Elem()
+	numField := t.NumField()
+	for j := 0; j < numField; j++ {
+		field := v.Field(j)
+		if mergeable, ok := field.Interface().(MergeableFeatureConfig); ok {
+			newValue := mergeable.Merge(layer)
+			newV := reflect.ValueOf(newValue).Elem()
+			if newV.CanAddr() {
+				field.Set(newV.Addr())
+			}
+		}
+	}
+
+	newFeatureConfig := v.Interface().(FeatureConfig)
+	return &newFeatureConfig
+}
+
+func ParseFeatureConfigWithoutDefaults(inputYAML []byte) (*FeatureConfig, error) {
 	jsonData, err := yaml.YAMLToJSON(inputYAML)
 	if err != nil {
 		return nil, err
@@ -72,9 +90,18 @@ func ParseFeatureConfig(inputYAML []byte) (*FeatureConfig, error) {
 		return nil, err
 	}
 
-	SetFieldDefaults(&config)
-
 	return &config, nil
+}
+
+func ParseFeatureConfig(inputYAML []byte) (*FeatureConfig, error) {
+	config, err := ParseFeatureConfigWithoutDefaults(inputYAML)
+	if err != nil {
+		return nil, err
+	}
+
+	SetFieldDefaults(config)
+
+	return config, nil
 }
 
 func NewEffectiveDefaultFeatureConfig() *FeatureConfig {
@@ -85,4 +112,8 @@ func NewEffectiveDefaultFeatureConfig() *FeatureConfig {
 
 func PopulateFeatureConfigDefaultValues(config *FeatureConfig) {
 	SetFieldDefaults(config)
+}
+
+type MergeableFeatureConfig interface {
+	Merge(layer *FeatureConfig) MergeableFeatureConfig
 }

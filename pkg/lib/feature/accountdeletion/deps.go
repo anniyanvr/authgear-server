@@ -13,8 +13,9 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/log"
 )
 
-func NewRunner(loggerFactory *log.Factory, runnableFactory backgroundjob.RunnableFactory) *backgroundjob.Runner {
+func NewRunner(ctx context.Context, loggerFactory *log.Factory, runnableFactory backgroundjob.RunnableFactory) *backgroundjob.Runner {
 	return backgroundjob.NewRunner(
+		ctx,
 		loggerFactory.New("account-deletion-runner"),
 		runnableFactory,
 	)
@@ -29,8 +30,8 @@ func NewRunnableFactory(
 	appContextResolver AppContextResolver,
 	userServiceFactory UserServiceFactory,
 ) backgroundjob.RunnableFactory {
-	factory := func(ctx context.Context) backgroundjob.Runnable {
-		return newRunnable(ctx, pool, globalDBCredentials, databaseCfg, logFactory, clock, appContextResolver, userServiceFactory)
+	factory := func() backgroundjob.Runnable {
+		return newRunnable(pool, globalDBCredentials, databaseCfg, logFactory, clock, appContextResolver, userServiceFactory)
 	}
 	return factory
 }

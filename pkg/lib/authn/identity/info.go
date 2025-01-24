@@ -6,6 +6,7 @@ import (
 
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/util/stringutil"
 )
 
 type Info struct {
@@ -21,6 +22,7 @@ type Info struct {
 	Biometric *Biometric `json:"biometric,omitempty"`
 	Passkey   *Passkey   `json:"passkey,omitempty"`
 	SIWE      *SIWE      `json:"siwe,omitempty"`
+	LDAP      *LDAP      `json:"ldap,omitempty"`
 }
 
 func (i *Info) ToSpec() Spec {
@@ -31,7 +33,7 @@ func (i *Info) ToSpec() Spec {
 			LoginID: &LoginIDSpec{
 				Key:   i.LoginID.LoginIDKey,
 				Type:  i.LoginID.LoginIDType,
-				Value: i.LoginID.LoginID,
+				Value: stringutil.NewUserInputString(i.LoginID.LoginID),
 			},
 		}
 	case model.IdentityTypeOAuth:
@@ -78,6 +80,11 @@ func (i *Info) ToSpec() Spec {
 				Signature: i.SIWE.Data.Signature,
 			},
 		}
+	case model.IdentityTypeLDAP:
+		return Spec{
+			Type: i.Type,
+			LDAP: i.LDAP.ToLDAPSpec(),
+		}
 	default:
 		panic("identity: unknown identity type: " + i.Type)
 	}
@@ -117,6 +124,8 @@ func (i *Info) AMR() []string {
 		return nil
 	case model.IdentityTypeSIWE:
 		return nil
+	case model.IdentityTypeLDAP:
+		return []string{model.AMRPWD}
 	default:
 		panic("identity: unknown identity type: " + i.Type)
 	}
@@ -159,6 +168,15 @@ func (i *Info) ToModel() model.Identity {
 		claims[IdentityClaimSIWEAddress] = i.SIWE.Address
 		claims[IdentityClaimSIWEChainID] = i.SIWE.ChainID
 
+	case model.IdentityTypeLDAP:
+		claims[IdentityClaimLDAPServerName] = i.LDAP.ServerName
+		claims[IdentityClaimLDAPLastLoginUserName] = i.LDAP.LastLoginUserName
+		claims[IdentityClaimLDAPUserIDAttributeName] = i.LDAP.UserIDAttributeName
+		claims[IdentityClaimLDAPUserIDAttributeValue] = i.LDAP.UserIDAttributeValueDisplayValue()
+		claims[IdentityClaimLDAPRawUserIDAttributeValue] = i.LDAP.UserIDAttributeValue
+		claims[IdentityClaimLDAPAttributes] = i.LDAP.EntryJSON()
+		claims[IdentityClaimLDAPRawAttributes] = i.LDAP.RawEntryJSON
+
 	default:
 		panic("identity: unknown identity type: " + i.Type)
 	}
@@ -177,18 +195,19 @@ func (i *Info) ToModel() model.Identity {
 // If it is a biometric identity, the kid is returned.
 // If it is a passkey identity, the name is returned.
 // If it is a SIWE identity, EIP681 of the address and chainID is returned
+// If it is a LDAP identity, dn or user id attribute value is returned
 func (i *Info) DisplayID() string {
 	switch i.Type {
 	case model.IdentityTypeLoginID:
 		return i.LoginID.OriginalLoginID
 	case model.IdentityTypeOAuth:
-		if email, ok := i.OAuth.Claims[StandardClaimEmail].(string); ok {
+		if email, ok := i.OAuth.Claims[string(model.ClaimEmail)].(string); ok {
 			return email
 		}
-		if phoneNumber, ok := i.OAuth.Claims[StandardClaimPhoneNumber].(string); ok {
+		if phoneNumber, ok := i.OAuth.Claims[string(model.ClaimPhoneNumber)].(string); ok {
 			return phoneNumber
 		}
-		if preferredUsername, ok := i.OAuth.Claims[StandardClaimPreferredUsername].(string); ok {
+		if preferredUsername, ok := i.OAuth.Claims[string(model.ClaimPreferredUsername)].(string); ok {
 			return preferredUsername
 		}
 		return ""
@@ -204,24 +223,21 @@ func (i *Info) DisplayID() string {
 			panic(fmt.Errorf("identity: failed to parse SIWE identity: %w", err))
 		}
 		return eip681.URL().String()
+	case model.IdentityTypeLDAP:
+		return i.LDAP.DisplayID()
 	default:
 		panic(fmt.Errorf("identity: unexpected identity type %v", i.Type))
 	}
 }
 
+// IdentityAwareStandardClaims means attributes that may related to other identities
+// Most likely will be used in account linking or duplication check
 func (i *Info) IdentityAwareStandardClaims() map[model.ClaimName]string {
-	claims := map[model.ClaimName]string{}
 	switch i.Type {
 	case model.IdentityTypeLoginID:
-		loginIDType := i.LoginID.LoginIDType
-		loginIDValue := i.LoginID.LoginID
-		if claimName, ok := model.GetLoginIDKeyTypeClaim(loginIDType); ok {
-			claims[claimName] = loginIDValue
-		}
+		return i.LoginID.IdentityAwareStandardClaims()
 	case model.IdentityTypeOAuth:
-		if email, ok := i.OAuth.Claims[StandardClaimEmail].(string); ok {
-			claims[model.ClaimEmail] = email
-		}
+		return i.OAuth.IdentityAwareStandardClaims()
 	case model.IdentityTypeAnonymous:
 		break
 	case model.IdentityTypeBiometric:
@@ -230,10 +246,12 @@ func (i *Info) IdentityAwareStandardClaims() map[model.ClaimName]string {
 		break
 	case model.IdentityTypeSIWE:
 		break
+	case model.IdentityTypeLDAP:
+		return i.LDAP.IdentityAwareStandardClaims()
 	default:
 		panic(fmt.Errorf("identity: unexpected identity type %v", i.Type))
 	}
-	return claims
+	return map[model.ClaimName]string{}
 }
 
 func (i *Info) AllStandardClaims() map[string]interface{} {
@@ -251,6 +269,8 @@ func (i *Info) AllStandardClaims() map[string]interface{} {
 		break
 	case model.IdentityTypeSIWE:
 		break
+	case model.IdentityTypeLDAP:
+		return i.LDAP.Claims
 	default:
 		panic(fmt.Errorf("identity: unexpected identity type %v", i.Type))
 	}
@@ -265,51 +285,147 @@ func (i *Info) PrimaryAuthenticatorTypes() []model.AuthenticatorType {
 	return i.Type.PrimaryAuthenticatorTypes(loginIDKeyType)
 }
 
-func (i *Info) ModifyDisabled(c *config.IdentityConfig) bool {
+func (i *Info) findLoginIDConfig(c *config.IdentityConfig) (*config.LoginIDKeyConfig, bool) {
+	loginIDKey := i.LoginID.LoginIDKey
+	var keyConfig *config.LoginIDKeyConfig
+	var ok bool = false
+	for _, kc := range c.LoginID.Keys {
+		if kc.Key == loginIDKey {
+			kcc := kc
+			keyConfig = &kcc
+			ok = true
+		}
+	}
+	return keyConfig, ok
+}
+
+func (i *Info) findOAuthConfig(c *config.IdentityConfig) (config.OAuthSSOProviderConfig, bool) {
+	alias := i.OAuth.ProviderAlias
+	var providerConfig config.OAuthSSOProviderConfig
+	var ok bool = false
+	for _, pc := range c.OAuth.Providers {
+		pcAlias := pc.Alias()
+		if pcAlias == alias {
+			pcc := pc
+			providerConfig = pcc
+			ok = true
+		}
+	}
+	return providerConfig, ok
+}
+
+func (i *Info) CreateDisabled(c *config.IdentityConfig) bool {
 	switch i.Type {
 	case model.IdentityTypeLoginID:
-		loginIDKey := i.LoginID.LoginIDKey
-		var keyConfig *config.LoginIDKeyConfig
-		for _, kc := range c.LoginID.Keys {
-			if kc.Key == loginIDKey {
-				kcc := kc
-				keyConfig = &kcc
-			}
-		}
-		if keyConfig == nil {
+		keyConfig, ok := i.findLoginIDConfig(c)
+		if !ok {
 			return true
 		}
-		return *keyConfig.ModifyDisabled
+		return *keyConfig.CreateDisabled
 	case model.IdentityTypeOAuth:
-		alias := i.OAuth.ProviderAlias
-		var providerConfig *config.OAuthSSOProviderConfig
-		for _, pc := range c.OAuth.Providers {
-			if pc.Alias == alias {
-				pcc := pc
-				providerConfig = &pcc
-			}
-		}
-		if providerConfig == nil {
+		providerConfig, ok := i.findOAuthConfig(c)
+		if !ok {
 			return true
 		}
-		return *providerConfig.ModifyDisabled
+		return providerConfig.CreateDisabled()
 	case model.IdentityTypeAnonymous:
-		// modify_disabled is only applicable to login_id and oauth.
-		// So we return false here.
-		return false
+		fallthrough
 	case model.IdentityTypeBiometric:
-		// modify_disabled is only applicable to login_id and oauth.
-		// So we return false here.
-		return false
+		fallthrough
 	case model.IdentityTypePasskey:
-		// modify_disabled is only applicable to login_id and oauth.
-		// So we return false here.
-		return false
+		fallthrough
 	case model.IdentityTypeSIWE:
-		// modify_disabled is only applicable to login_id and oauth.
+		// create_disabled is only applicable to login_id and oauth.
 		// So we return false here.
 		return false
+	case model.IdentityTypeLDAP:
+		// TODO(DEV-1671): Support LDAP in settings page
+		return true
 	default:
 		panic(fmt.Sprintf("identity: unexpected identity type: %s", i.Type))
 	}
+}
+
+func (i *Info) DeleteDisabled(c *config.IdentityConfig) bool {
+	switch i.Type {
+	case model.IdentityTypeLoginID:
+		keyConfig, ok := i.findLoginIDConfig(c)
+		if !ok {
+			return true
+		}
+		return *keyConfig.DeleteDisabled
+	case model.IdentityTypeOAuth:
+		providerConfig, ok := i.findOAuthConfig(c)
+		if !ok {
+			return true
+		}
+		return providerConfig.DeleteDisabled()
+	case model.IdentityTypeAnonymous:
+		fallthrough
+	case model.IdentityTypeBiometric:
+		fallthrough
+	case model.IdentityTypePasskey:
+		fallthrough
+	case model.IdentityTypeSIWE:
+		// delete_disabled is only applicable to login_id and oauth.
+		// So we return false here.
+		return false
+	case model.IdentityTypeLDAP:
+		// TODO(DEV-1671): Support LDAP in settings page
+		return true
+	default:
+		panic(fmt.Sprintf("identity: unexpected identity type: %s", i.Type))
+	}
+}
+
+func (i *Info) UpdateDisabled(c *config.IdentityConfig) bool {
+	switch i.Type {
+	case model.IdentityTypeLoginID:
+		keyConfig, ok := i.findLoginIDConfig(c)
+		if !ok {
+			return true
+		}
+		return *keyConfig.UpdateDisabled
+	case model.IdentityTypeOAuth:
+		// Update is not supported for oauth identity
+		return false
+	case model.IdentityTypeAnonymous:
+		fallthrough
+	case model.IdentityTypeBiometric:
+		fallthrough
+	case model.IdentityTypePasskey:
+		fallthrough
+	case model.IdentityTypeSIWE:
+		// update_disabled is only applicable to login_id and oauth.
+		// So we return false here.
+		return false
+	case model.IdentityTypeLDAP:
+		// TODO(DEV-1671): Support LDAP in settings page
+		return true
+	default:
+		panic(fmt.Sprintf("identity: unexpected identity type: %s", i.Type))
+	}
+}
+
+func (i *Info) UpdateUserID(newUserID string) *Info {
+	i.UserID = newUserID
+	switch i.Type {
+	case model.IdentityTypeLoginID:
+		i.LoginID.UserID = newUserID
+	case model.IdentityTypeOAuth:
+		i.OAuth.UserID = newUserID
+	case model.IdentityTypeBiometric:
+		i.Biometric.UserID = newUserID
+	case model.IdentityTypePasskey:
+		i.Passkey.UserID = newUserID
+	case model.IdentityTypeLDAP:
+		i.LDAP.UserID = newUserID
+	case model.IdentityTypeSIWE:
+		i.SIWE.UserID = newUserID
+	case model.IdentityTypeAnonymous:
+		fallthrough
+	default:
+		panic(fmt.Errorf("identity: identity type %v does not support updating user ID", i.Type))
+	}
+	return i
 }

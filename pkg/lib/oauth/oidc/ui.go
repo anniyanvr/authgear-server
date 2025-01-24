@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/lestrrat-go/jwx/v2/jwt"
 
-	"github.com/authgear/authgear-server/pkg/lib/authn/authenticationinfo"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/oauth"
 	"github.com/authgear/authgear-server/pkg/lib/oauth/oauthsession"
@@ -18,7 +18,6 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/uiparam"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
-	"github.com/authgear/authgear-server/pkg/util/slice"
 )
 
 const queryNameOAuthSessionID = "x_ref"
@@ -69,16 +68,16 @@ func (i *UIInfo) ToUIParam() uiparam.T {
 
 type UIInfoByProduct struct {
 	IDToken        jwt.Token
-	SIDSession     session.Session
+	SIDSession     session.ListableSession
 	IDTokenHintSID string
 }
 
 type UIInfoResolverPromptResolver interface {
-	ResolvePrompt(r protocol.AuthorizationRequest, sidSession session.Session) (prompt []string)
+	ResolvePrompt(r protocol.AuthorizationRequest, sidSession session.ListableSession) (prompt []string)
 }
 
 type UIInfoResolverIDTokenHintResolver interface {
-	ResolveIDTokenHint(client *config.OAuthClientConfig, r protocol.AuthorizationRequest) (idToken jwt.Token, sidSession session.Session, err error)
+	ResolveIDTokenHint(ctx context.Context, client *config.OAuthClientConfig, r protocol.AuthorizationRequest) (idToken jwt.Token, sidSession session.ListableSession, err error)
 }
 
 type UIInfoResolverCookieManager interface {
@@ -98,32 +97,6 @@ type UIInfoResolver struct {
 	Clock               clock.Clock
 	Cookies             UIInfoResolverCookieManager
 	ClientResolver      UIInfoClientResolver
-}
-
-func (r *UIInfoResolver) SetAuthenticationInfoInQuery(redirectURI string, e *authenticationinfo.Entry) string {
-	consentURI := r.EndpointsProvider.ConsentEndpointURL().String()
-	// Not redirecting to the consent endpoint.
-	// Do not set anything.
-	if redirectURI != consentURI {
-		return redirectURI
-	}
-	u, err := url.Parse(redirectURI)
-	if err != nil {
-		panic(err)
-	}
-
-	q := u.Query()
-	q.Set("code", e.ID)
-	u.RawQuery = q.Encode()
-	return u.String()
-}
-
-func (r *UIInfoResolver) GetAuthenticationInfoID(req *http.Request) (string, bool) {
-	code := req.FormValue("code")
-	if code != "" {
-		return code, true
-	}
-	return "", false
 }
 
 func (r *UIInfoResolver) GetOAuthSessionID(req *http.Request, urlQuery string) (string, bool) {
@@ -172,23 +145,33 @@ func (r *UIInfoResolver) RemoveOAuthSessionID(w http.ResponseWriter, req *http.R
 	httputil.UpdateCookie(w, r.Cookies.ClearCookie(oauthsession.UICookieDef))
 }
 
-func (r *UIInfoResolver) ResolveForUI(req protocol.AuthorizationRequest) (*UIInfo, error) {
+func (r *UIInfoResolver) ResolveForUI(ctx context.Context, req protocol.AuthorizationRequest) (*UIInfo, error) {
 	client := r.ClientResolver.ResolveClient(req.ClientID())
 	if client == nil {
 		return nil, fmt.Errorf("client not found: %v", req.ClientID())
 	}
 
-	uiInfo, _, err := r.ResolveForAuthorizationEndpoint(client, req)
+	uiInfo, _, err := r.ResolveForAuthorizationEndpoint(ctx, client, req)
 	return uiInfo, err
 }
 
 func (r *UIInfoResolver) ResolveForAuthorizationEndpoint(
+	ctx context.Context,
 	client *config.OAuthClientConfig,
 	req protocol.AuthorizationRequest,
 ) (*UIInfo, *UIInfoByProduct, error) {
-	redirectURI := r.EndpointsProvider.ConsentEndpointURL().String()
+	redirectURI := r.EndpointsProvider.ConsentEndpointURL()
 
-	idToken, sidSession, err := r.IDTokenHintResolver.ResolveIDTokenHint(client, req)
+	// Add client_id, redirect_uri, state to URL as hint when oauth session expires / not found
+	q := redirectURI.Query()
+	q.Add("client_id", req.ClientID())
+	q.Add("redirect_uri", req.RedirectURI())
+	if state := req.State(); state != "" {
+		q.Add("state", state)
+	}
+	redirectURI.RawQuery = q.Encode()
+
+	idToken, sidSession, err := r.IDTokenHintResolver.ResolveIDTokenHint(ctx, client, req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -197,7 +180,7 @@ func (r *UIInfoResolver) ResolveForAuthorizationEndpoint(
 
 	var idTokenHintSID string
 	if sidSession != nil {
-		idTokenHintSID = EncodeSID(sidSession)
+		idTokenHintSID = oauth.EncodeSID(sidSession)
 	}
 
 	var userIDHint string
@@ -213,7 +196,7 @@ func (r *UIInfoResolver) ResolveForAuthorizationEndpoint(
 					canUseIntentReauthenticate = true
 				case session.TypeOfflineGrant:
 					if offlineGrant, ok := sidSession.(*oauth.OfflineGrant); ok {
-						if slice.ContainsString(offlineGrant.Scopes, oauth.FullAccessScope) {
+						if offlineGrant.HasAllScopes(req.ClientID(), []string{oauth.FullAccessScope}) {
 							canUseIntentReauthenticate = true
 						}
 					}
@@ -228,7 +211,7 @@ func (r *UIInfoResolver) ResolveForAuthorizationEndpoint(
 
 	info := &UIInfo{
 		ClientID:                   req.ClientID(),
-		RedirectURI:                redirectURI,
+		RedirectURI:                redirectURI.String(),
 		Prompt:                     prompt,
 		UserIDHint:                 userIDHint,
 		CanUseIntentReauthenticate: canUseIntentReauthenticate,
@@ -251,13 +234,15 @@ func (r *UIInfoResolver) ResolveForAuthorizationEndpoint(
 
 type UIURLBuilderAuthUIEndpointsProvider interface {
 	OAuthEntrypointURL() *url.URL
+	SettingsChangePasswordURL() *url.URL
+	SettingsDeleteAccountURL() *url.URL
 }
 
 type UIURLBuilder struct {
 	Endpoints UIURLBuilderAuthUIEndpointsProvider
 }
 
-func (b *UIURLBuilder) Build(client *config.OAuthClientConfig, r protocol.AuthorizationRequest, e *oauthsession.Entry) (*url.URL, error) {
+func (b *UIURLBuilder) BuildAuthenticationURL(client *config.OAuthClientConfig, r protocol.AuthorizationRequest, e *oauthsession.Entry) (*url.URL, error) {
 	var endpoint *url.URL
 	if client != nil && client.CustomUIURI != "" {
 		var err error
@@ -269,6 +254,36 @@ func (b *UIURLBuilder) Build(client *config.OAuthClientConfig, r protocol.Author
 		endpoint = b.Endpoints.OAuthEntrypointURL()
 	}
 
+	b.addToEndpoint(endpoint, r, e)
+	return endpoint, nil
+}
+
+func BuildCustomUIEndpoint(base string) (*url.URL, error) {
+	customUIURL, err := url.Parse(base)
+	if err != nil {
+		return nil, err
+	}
+
+	return customUIURL, nil
+}
+
+func (b *UIURLBuilder) BuildSettingsActionURL(client *config.OAuthClientConfig, r protocol.AuthorizationRequest, e *oauthsession.Entry) (*url.URL, error) {
+	var endpoint *url.URL
+	switch r.SettingsAction() {
+	case "change_password":
+		endpoint = b.Endpoints.SettingsChangePasswordURL()
+		b.addToEndpoint(endpoint, r, e)
+		return endpoint, nil
+	case "delete_account":
+		endpoint = b.Endpoints.SettingsDeleteAccountURL()
+		b.addToEndpoint(endpoint, r, e)
+		return endpoint, nil
+	default:
+		return nil, ErrInvalidSettingsAction.New("invalid settings action")
+	}
+}
+
+func (b *UIURLBuilder) addToEndpoint(endpoint *url.URL, r protocol.AuthorizationRequest, e *oauthsession.Entry) {
 	q := endpoint.Query()
 	q.Set(queryNameOAuthSessionID, e.ID)
 	q.Set("client_id", r.ClientID())
@@ -286,15 +301,4 @@ func (b *UIURLBuilder) Build(client *config.OAuthClientConfig, r protocol.Author
 		q.Set("x_state", r.XState())
 	}
 	endpoint.RawQuery = q.Encode()
-
-	return endpoint, nil
-}
-
-func BuildCustomUIEndpoint(base string) (*url.URL, error) {
-	customUIURL, err := url.Parse(base)
-	if err != nil {
-		return nil, err
-	}
-
-	return customUIURL, nil
 }

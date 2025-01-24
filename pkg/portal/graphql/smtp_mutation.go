@@ -1,8 +1,9 @@
 package graphql
 
 import (
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/portal/smtp"
@@ -63,20 +64,21 @@ var _ = registerMutationField(
 			}
 			appID := resolvedNodeID.ID
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 
 			// Access control: collaborator.
-			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(appID)
+			_, err := gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			app, err := gqlCtx.AppService.Get(appID)
+			app, err := gqlCtx.AppService.Get(ctx, appID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.SMTPService.SendTestEmail(app, smtp.SendTestEmailOptions{
+			err = gqlCtx.SMTPService.SendTestEmail(ctx, app, smtp.SendTestEmailOptions{
 				To:           to,
 				SMTPHost:     smtpHost,
 				SMTPPort:     smtpPort,

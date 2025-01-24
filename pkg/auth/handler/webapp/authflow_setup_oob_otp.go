@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -16,7 +17,7 @@ import (
 
 var TemplateWebAuthflowSetupOOBOTPHTML = template.RegisterHTML(
 	"web/authflow_setup_oob_otp.html",
-	components...,
+	Components...,
 )
 
 var AuthflowSetupOOBOTPSchema = validation.NewSimpleSchema(`
@@ -37,6 +38,7 @@ func ConfigureAuthflowSetupOOBOTPRoute(route httproute.Route) httproute.Route {
 
 type AuthflowSetupOOBOTPViewModel struct {
 	OOBAuthenticatorType model.AuthenticatorType
+	Channel              model.AuthenticatorOOBChannel
 }
 
 type AuthflowSetupOOBOTPHandler struct {
@@ -52,7 +54,7 @@ func (h *AuthflowSetupOOBOTPHandler) GetData(w http.ResponseWriter, r *http.Requ
 	viewmodels.Embed(data, baseViewModel)
 
 	index := *screen.Screen.TakenBranchIndex
-	screenData := screen.StateTokenFlowResponse.Action.Data.(declarative.IntentSignupFlowStepCreateAuthenticatorData)
+	screenData := screen.StateTokenFlowResponse.Action.Data.(declarative.CreateAuthenticatorData)
 	option := screenData.Options[index]
 
 	var oobAuthenticatorType model.AuthenticatorType
@@ -68,8 +70,10 @@ func (h *AuthflowSetupOOBOTPHandler) GetData(w http.ResponseWriter, r *http.Requ
 	default:
 		panic(fmt.Errorf("unexpected authentication: %v", option.Authentication))
 	}
+	channel := screen.Screen.TakenChannel
 	screenViewModel := AuthflowSetupOOBOTPViewModel{
 		OOBAuthenticatorType: oobAuthenticatorType,
+		Channel:              channel,
 	}
 	viewmodels.Embed(data, screenViewModel)
 
@@ -81,7 +85,7 @@ func (h *AuthflowSetupOOBOTPHandler) GetData(w http.ResponseWriter, r *http.Requ
 
 func (h *AuthflowSetupOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var handlers AuthflowControllerHandlers
-	handlers.Get(func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.Get(func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		data, err := h.GetData(w, r, s, screen)
 		if err != nil {
 			return err
@@ -90,25 +94,33 @@ func (h *AuthflowSetupOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		h.Renderer.RenderHTML(w, r, TemplateWebAuthflowSetupOOBOTPHTML, data)
 		return nil
 	})
-	handlers.PostAction("", func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.PostAction("", func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		err := AuthflowSetupOOBOTPSchema.Validator().ValidateValue(FormToJSON(r.Form))
 		if err != nil {
 			return err
 		}
 
 		index := *screen.Screen.TakenBranchIndex
-		screenData := screen.StateTokenFlowResponse.Action.Data.(declarative.IntentSignupFlowStepCreateAuthenticatorData)
+		screenData := screen.StateTokenFlowResponse.Action.Data.(declarative.CreateAuthenticatorData)
 		option := screenData.Options[index]
 		authentication := option.Authentication
+		channel := screen.Screen.TakenChannel
 
 		target := r.Form.Get("x_target")
+
+		if channel == "" {
+			channel = option.Channels[0]
+		}
 
 		input := map[string]interface{}{
 			"authentication": authentication,
 			"target":         target,
+			"channel":        channel,
 		}
 
-		result, err := h.Controller.AdvanceWithInput(r, s, screen, input)
+		result, err := h.Controller.AdvanceWithInput(ctx, r, s, screen, input, &AdvanceOptions{
+			InheritTakenBranchState: true,
+		})
 		if err != nil {
 			return err
 		}
@@ -116,5 +128,5 @@ func (h *AuthflowSetupOOBOTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		result.WriteResponse(w, r)
 		return nil
 	})
-	h.Controller.HandleStep(w, r, &handlers)
+	h.Controller.HandleStep(r.Context(), w, r, &handlers)
 }

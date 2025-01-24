@@ -9,7 +9,6 @@ import (
 	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	authflow "github.com/authgear/authgear-server/pkg/lib/authenticationflow"
-	"github.com/authgear/authgear-server/pkg/lib/authn/sso"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 )
 
@@ -22,7 +21,7 @@ type NodeLookupIdentityOAuth struct {
 	SyntheticInput *InputStepIdentify `json:"synthetic_input,omitempty"`
 	Alias          string             `json:"alias,omitempty"`
 	RedirectURI    string             `json:"redirect_uri,omitempty"`
-	ResponseMode   sso.ResponseMode   `json:"response_mode,omitempty"`
+	ResponseMode   string             `json:"response_mode,omitempty"`
 }
 
 var _ authflow.NodeSimple = &NodeLookupIdentityOAuth{}
@@ -34,13 +33,22 @@ func (*NodeLookupIdentityOAuth) Kind() string {
 }
 
 func (n *NodeLookupIdentityOAuth) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
+	flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
 	return &InputSchemaTakeOAuthAuthorizationResponse{
-		JSONPointer: n.JSONPointer,
+		FlowRootObject: flowRootObject,
+		JSONPointer:    n.JSONPointer,
 	}, nil
 }
 
 func (n *NodeLookupIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
-	current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), n.JSONPointer)
+	flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
+	current, err := authflow.FlowObject(flowRootObject, n.JSONPointer)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +57,7 @@ func (n *NodeLookupIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.De
 
 	var inputOAuth inputTakeOAuthAuthorizationResponse
 	if authflow.AsInput(input, &inputOAuth) {
-		spec, err := handleOAuthAuthorizationResponse(deps, HandleOAuthAuthorizationResponseOptions{
+		spec, err := handleOAuthAuthorizationResponse(ctx, deps, HandleOAuthAuthorizationResponseOptions{
 			Alias:       n.Alias,
 			RedirectURI: n.RedirectURI,
 		}, inputOAuth)
@@ -63,9 +71,10 @@ func (n *NodeLookupIdentityOAuth) ReactTo(ctx context.Context, deps *authflow.De
 			RedirectURI:    n.SyntheticInput.RedirectURI,
 			ResponseMode:   n.SyntheticInput.ResponseMode,
 			IdentitySpec:   spec,
+			BotProtection:  n.SyntheticInput.BotProtection,
 		}
 
-		_, err = findExactOneIdentityInfo(deps, spec)
+		_, err = findExactOneIdentityInfo(ctx, deps, spec)
 		if err != nil {
 			if apierrors.IsKind(err, api.UserNotFound) {
 				// signup

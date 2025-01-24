@@ -9,7 +9,7 @@ import (
 
 var TemplateWebNotFoundHTML = template.RegisterHTML(
 	"web/not_found.html",
-	components...,
+	Components...,
 )
 
 type NotFoundHandler struct {
@@ -26,20 +26,10 @@ func (h *NotFoundHandler) GetData(r *http.Request, w http.ResponseWriter) (map[s
 }
 
 func (h *NotFoundHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctrl, err := h.ControllerFactory.New(r, w)
+	data, err := h.GetData(r, w)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		panic(err)
 	}
-	defer ctrl.Serve()
 
-	ctrl.Get(func() error {
-		data, err := h.GetData(r, w)
-		if err != nil {
-			return err
-		}
-
-		h.Renderer.RenderHTML(w, r, TemplateWebNotFoundHTML, data)
-		return nil
-	})
+	h.Renderer.RenderHTMLStatus(w, r, http.StatusNotFound, TemplateWebNotFoundHTML, data)
 }

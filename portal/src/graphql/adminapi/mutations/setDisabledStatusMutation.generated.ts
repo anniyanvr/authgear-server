@@ -4,12 +4,12 @@ import { gql } from '@apollo/client';
 import * as Apollo from '@apollo/client';
 const defaultOptions = {} as const;
 export type SetDisabledStatusMutationMutationVariables = Types.Exact<{
-  userID: Types.Scalars['ID'];
-  isDisabled: Types.Scalars['Boolean'];
+  userID: Types.Scalars['ID']['input'];
+  isDisabled: Types.Scalars['Boolean']['input'];
 }>;
 
 
-export type SetDisabledStatusMutationMutation = { __typename?: 'Mutation', setDisabledStatus: { __typename?: 'SetDisabledStatusPayload', user: { __typename?: 'User', id: string, isDisabled: boolean, disableReason?: string | null, isDeactivated: boolean, deleteAt?: any | null } } };
+export type SetDisabledStatusMutationMutation = { __typename?: 'Mutation', setDisabledStatus: { __typename?: 'SetDisabledStatusPayload', user: { __typename?: 'User', id: string, isDisabled: boolean, disableReason?: string | null, isDeactivated: boolean, deleteAt?: any | null, isAnonymized: boolean, anonymizeAt?: any | null } } };
 
 
 export const SetDisabledStatusMutationDocument = gql`
@@ -21,6 +21,8 @@ export const SetDisabledStatusMutationDocument = gql`
       disableReason
       isDeactivated
       deleteAt
+      isAnonymized
+      anonymizeAt
     }
   }
 }

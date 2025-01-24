@@ -57,6 +57,7 @@ custom_domain:
 oauth:
   client:
     maximum: 99
+    soft_maximum: 99
 hook:
   blocking_handler:
     maximum: 99
@@ -94,23 +95,25 @@ messaging:
       period: 24h
       burst: 50
   sms_usage:
-    enabled: true
-    period: month
-    quota: 100000
+    enabled: false
   email_usage:
-    enabled: true
-    period: month
-    quota: 100000
+    enabled: false
   whatsapp_usage:
-    enabled: true
-    period: month
-    quota: 100000
+    enabled: false
+  sms_usage_count_disabled: false
+  whatsapp_usage_count_disabled: false
+  template_customization_disabled: false
+  custom_smtp_disabled: false
 collaborator: {}
 web3:
   nft:
     maximum: 3
 admin_api:
   create_session_enabled: false
+  user_import_usage:
+    enabled: false
+  user_export_usage:
+    enabled: false
 test_mode:
   fixed_oob_otp:
     enabled: false

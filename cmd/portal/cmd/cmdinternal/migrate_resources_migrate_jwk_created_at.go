@@ -31,7 +31,7 @@ var cmdInternalMigrateJWKCreatedAt = &cobra.Command{
 			return err
 		}
 
-		internal.MigrateResources(&internal.MigrateResourcesOptions{
+		internal.MigrateResources(cmd.Context(), &internal.MigrateResourcesOptions{
 			DatabaseURL:            dbURL,
 			DatabaseSchema:         dbSchema,
 			UpdateConfigSourceFunc: migrateJWKCreatedAt,
@@ -42,6 +42,7 @@ var cmdInternalMigrateJWKCreatedAt = &cobra.Command{
 	},
 }
 
+//nolint:gocognit
 func migrateJWKCreatedAt(appID string, configSourceData map[string]string, dryRun bool) error {
 	encodedData := configSourceData["authgear.secrets.yaml"]
 	decoded, err := base64.StdEncoding.DecodeString(encodedData)

@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
@@ -11,7 +12,7 @@ import (
 
 var TemplateWebForgotPasswordSuccessHTML = template.RegisterHTML(
 	"web/forgot_password_success.html",
-	components...,
+	Components...,
 )
 
 func ConfigureForgotPasswordSuccessRoute(route httproute.Route) httproute.Route {
@@ -53,10 +54,10 @@ func (h *ForgotPasswordSuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
-	ctrl.Get(func() error {
-		session, err := ctrl.InteractionSession()
+	ctrl.Get(func(ctx context.Context) error {
+		session, err := ctrl.InteractionSession(ctx)
 		if err != nil {
 			return err
 		}

@@ -95,6 +95,7 @@ const DNSRecordListValueCell: React.VFC<DNSRecordListValueCellProps> =
   function DNSRecordListValueCell(props: DNSRecordListValueCellProps) {
     const { value } = props;
 
+    // eslint-disable-next-line no-useless-assignment
     const { copyButtonProps, Feedback } = useCopyFeedback({
       textToCopy: value,
     });
@@ -122,7 +123,7 @@ const VerifyDomain: React.VFC<VerifyDomainProps> = function VerifyDomain(
   const navBreadcrumbItems = useMemo(() => {
     return [
       {
-        to: `/project/${appID}/custom-domains`,
+        to: `/project/${appID}/branding/custom-domains`,
         label: <FormattedMessage id="CustomDomainListScreen.title" />,
       },
       { to: ".", label: <FormattedMessage id="VerifyDomainScreen.title" /> },

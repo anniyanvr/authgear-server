@@ -30,14 +30,17 @@ var _ = Schema.Add("AppConfig", `
 		"ui": { "$ref": "#/$defs/UIConfig" },
 		"localization": { "$ref": "#/$defs/LocalizationConfig" },
 		"messaging": { "$ref": "#/$defs/MessagingConfig" },
+		"search": { "$ref": "#/$defs/SearchConfig" },
 		"authentication": { "$ref": "#/$defs/AuthenticationConfig" },
 		"session": { "$ref": "#/$defs/SessionConfig" },
 		"oauth": { "$ref": "#/$defs/OAuthConfig" },
+		"saml": { "$ref": "#/$defs/SAMLConfig" },
 		"identity": { "$ref": "#/$defs/IdentityConfig" },
 		"authenticator": { "$ref": "#/$defs/AuthenticatorConfig" },
 		"user_profile": { "$ref": "#/$defs/UserProfileConfig" },
 		"account_deletion": { "$ref": "#/$defs/AccountDeletionConfig" },
 		"account_anonymization": { "$ref": "#/$defs/AccountAnonymizationConfig" },
+		"account_linking": { "$ref": "#/$defs/AccountLinkingConfig" },
 		"forgot_password": { "$ref": "#/$defs/ForgotPasswordConfig" },
 		"welcome_message": { "$ref": "#/$defs/WelcomeMessageConfig" },
 		"verification": { "$ref": "#/$defs/VerificationConfig" },
@@ -46,6 +49,7 @@ var _ = Schema.Add("AppConfig", `
 		"google_tag_manager": { "$ref": "#/$defs/GoogleTagManagerConfig" },
 		"account_migration": { "$ref": "#/$defs/AccountMigrationConfig" },
 		"captcha": { "$ref": "#/$defs/CaptchaConfig" },
+		"bot_protection": { "$ref": "#/$defs/BotProtectionConfig" },
 		"test_mode": { "$ref": "#/$defs/TestModeConfig" },
 		"authentication_flow": { "$ref": "#/$defs/AuthenticationFlowConfig" }
 	},
@@ -62,39 +66,48 @@ type AppConfig struct {
 	UI           *UIConfig           `json:"ui,omitempty"`
 	Localization *LocalizationConfig `json:"localization,omitempty"`
 	Messaging    *MessagingConfig    `json:"messaging,omitempty"`
+	Search       *SearchConfig       `json:"search,omitempty"`
 
 	Authentication       *AuthenticationConfig       `json:"authentication,omitempty"`
 	Session              *SessionConfig              `json:"session,omitempty"`
 	OAuth                *OAuthConfig                `json:"oauth,omitempty"`
+	SAML                 *SAMLConfig                 `json:"saml,omitempty"`
 	Identity             *IdentityConfig             `json:"identity,omitempty"`
 	Authenticator        *AuthenticatorConfig        `json:"authenticator,omitempty"`
 	UserProfile          *UserProfileConfig          `json:"user_profile,omitempty"`
 	AccountDeletion      *AccountDeletionConfig      `json:"account_deletion,omitempty"`
 	AccountAnonymization *AccountAnonymizationConfig `json:"account_anonymization,omitempty"`
+	AccountLinking       *AccountLinkingConfig       `json:"account_linking,omitempty"`
 
-	ForgotPassword *ForgotPasswordConfig `json:"forgot_password,omitempty"`
-	WelcomeMessage *WelcomeMessageConfig `json:"welcome_message,omitempty"`
-	Verification   *VerificationConfig   `json:"verification,omitempty"`
-	OTP            *OTPLegacyConfig      `json:"otp,omitempty"`
+	ForgotPassword            *ForgotPasswordConfig `json:"forgot_password,omitempty"`
+	Deprecated_WelcomeMessage *WelcomeMessageConfig `json:"welcome_message,omitempty"`
+	Verification              *VerificationConfig   `json:"verification,omitempty"`
+	Deprecated_OTP            *OTPLegacyConfig      `json:"otp,omitempty"`
 
-	Web3 *Web3Config `json:"web3,omitempty"`
+	Deprecated_Web3 *Deprecated_Web3Config `json:"web3,omitempty"`
 
 	GoogleTagManager *GoogleTagManagerConfig `json:"google_tag_manager,omitempty"`
 
 	AccountMigration *AccountMigrationConfig `json:"account_migration,omitempty"`
 
-	Captcha *CaptchaConfig `json:"captcha,omitempty"`
+	Captcha       *CaptchaConfig       `json:"captcha,omitempty"`
+	BotProtection *BotProtectionConfig `json:"bot_protection,omitempty"`
 
 	TestMode *TestModeConfig `json:"test_mode,omitempty"`
 
 	AuthenticationFlow *AuthenticationFlowConfig `json:"authentication_flow,omitempty"`
 }
 
+func (c *AppConfig) SetDefaults() {
+	c.Deprecated_WelcomeMessage = nil
+	c.Deprecated_OTP = nil
+}
+
 func (c *AppConfig) Validate(ctx *validation.Context) {
 	// Validation 1: lifetime of refresh token >= lifetime of access token
 	c.validateTokenLifetime(ctx)
 
-	// Validation 2: OAuth provider cannot duplicate.
+	// Validation 2: oauth provider
 	c.validateOAuthProvider(ctx)
 
 	// Validation 3: identity must have usable primary authenticator.
@@ -114,6 +127,12 @@ func (c *AppConfig) Validate(ctx *validation.Context) {
 
 	// Validation 8: validate lockout configs
 	c.validateLockout(ctx)
+
+	// Validation 9: validate authentication flow
+	c.validateAuthenticationFlow(ctx)
+
+	// Validation 10: validate saml configs
+	c.validateSAML(ctx)
 }
 
 func (c *AppConfig) validateTokenLifetime(ctx *validation.Context) {
@@ -127,36 +146,72 @@ func (c *AppConfig) validateTokenLifetime(ctx *validation.Context) {
 }
 
 func (c *AppConfig) validateOAuthProvider(ctx *validation.Context) {
-	oAuthProviderIDs := map[string]struct{}{}
+	// We used to validate that ProviderID is unique.
+	// We now relax the validation, only alias is unique.
 	oauthProviderAliases := map[string]struct{}{}
-	for i, provider := range c.Identity.OAuth.Providers {
-		// Ensure provider ID is not duplicated
-		// Except WeChat provider with different app type
-		providerID := map[string]interface{}{}
-		for k, v := range provider.ProviderID().Claims() {
-			providerID[k] = v
-		}
-		if provider.Type == OAuthSSOProviderTypeWechat {
-			providerID["app_type"] = provider.AppType
-		}
-		id, err := json.Marshal(providerID)
-		if err != nil {
-			panic("config: cannot marshal provider ID claims: " + err.Error())
-		}
-		if _, ok := oAuthProviderIDs[string(id)]; ok {
-			ctx.Child("identity", "oauth", "providers", strconv.Itoa(i)).
-				EmitErrorMessage("duplicated OAuth provider")
-			continue
-		}
-		oAuthProviderIDs[string(id)] = struct{}{}
+	for i, providerConfig := range c.Identity.OAuth.Providers {
+		// We used to ensure provider ID is not duplicated.
+		// We now expect alias to be unique.
+		alias := providerConfig.Alias()
+		childCtx := ctx.Child("identity", "oauth", "providers", strconv.Itoa(i))
 
-		// Ensure alias is not duplicated.
-		if _, ok := oauthProviderAliases[provider.Alias]; ok {
-			ctx.Child("identity", "oauth", "providers", strconv.Itoa(i)).
-				EmitErrorMessage("duplicated OAuth provider alias")
+		if _, ok := oauthProviderAliases[alias]; ok {
+			childCtx.EmitErrorMessage("duplicated OAuth provider alias")
 			continue
 		}
-		oauthProviderAliases[provider.Alias] = struct{}{}
+		oauthProviderAliases[alias] = struct{}{}
+
+		// Validate provider config
+		provider := providerConfig.AsProviderConfig().MustGetProvider()
+		schema := OAuthSSOProviderConfigSchemaBuilder(validation.SchemaBuilder(provider.GetJSONSchema())).ToSimpleSchema()
+		childCtx.AddError(schema.Validator().ValidateValue(providerConfig))
+	}
+}
+
+func (c *AppConfig) validateIdentityPrimaryAuthenticatorLoginID(
+	ctx *validation.Context,
+	authenticatorTypes map[model.AuthenticatorType]struct{},
+	k LoginIDKeyConfig,
+	idx int) {
+	hasAtLeastOnePrimaryAuthenticator := false
+	required := model.IdentityTypeLoginID.PrimaryAuthenticatorTypes(k.Type)
+	for _, typ := range required {
+		if _, ok := authenticatorTypes[typ]; ok {
+			hasAtLeastOnePrimaryAuthenticator = true
+		}
+	}
+	if len(required) > 0 && !hasAtLeastOnePrimaryAuthenticator {
+		ctx.Child("authentication", "identities", strconv.Itoa(idx)).
+			EmitError(
+				"noPrimaryAuthenticator",
+				map[string]interface{}{
+					"identity_type": model.IdentityTypeLoginID,
+					"login_id_type": k.Type,
+				},
+			)
+	}
+}
+
+func (c *AppConfig) validateIdentityPrimaryAuthenticatorOthers(
+	ctx *validation.Context,
+	authenticatorTypes map[model.AuthenticatorType]struct{},
+	it model.IdentityType,
+	idx int) {
+	hasAtLeastOnePrimaryAuthenticator := false
+	required := it.PrimaryAuthenticatorTypes("")
+	for _, typ := range required {
+		if _, ok := authenticatorTypes[typ]; ok {
+			hasAtLeastOnePrimaryAuthenticator = true
+		}
+	}
+	if len(required) > 0 && !hasAtLeastOnePrimaryAuthenticator {
+		ctx.Child("authentication", "identities", strconv.Itoa(idx)).
+			EmitError(
+				"noPrimaryAuthenticator",
+				map[string]interface{}{
+					"identity_type": it,
+				},
+			)
 	}
 }
 
@@ -166,44 +221,13 @@ func (c *AppConfig) validateIdentityPrimaryAuthenticator(ctx *validation.Context
 		authenticatorTypes[a] = struct{}{}
 	}
 
-	for i, it := range c.Authentication.Identities {
+	for idx, it := range c.Authentication.Identities {
 		if it == model.IdentityTypeLoginID {
 			for _, k := range c.Identity.LoginID.Keys {
-				hasAtLeastOnePrimaryAuthenticator := false
-				required := it.PrimaryAuthenticatorTypes(k.Type)
-				for _, typ := range required {
-					if _, ok := authenticatorTypes[typ]; ok {
-						hasAtLeastOnePrimaryAuthenticator = true
-					}
-				}
-				if len(required) > 0 && !hasAtLeastOnePrimaryAuthenticator {
-					ctx.Child("authentication", "identities", strconv.Itoa(i)).
-						EmitError(
-							"noPrimaryAuthenticator",
-							map[string]interface{}{
-								"identity_type": it,
-								"login_id_type": k.Type,
-							},
-						)
-				}
+				c.validateIdentityPrimaryAuthenticatorLoginID(ctx, authenticatorTypes, k, idx)
 			}
 		} else {
-			hasAtLeastOnePrimaryAuthenticator := false
-			required := it.PrimaryAuthenticatorTypes("")
-			for _, typ := range required {
-				if _, ok := authenticatorTypes[typ]; ok {
-					hasAtLeastOnePrimaryAuthenticator = true
-				}
-			}
-			if len(required) > 0 && !hasAtLeastOnePrimaryAuthenticator {
-				ctx.Child("authentication", "identities", strconv.Itoa(i)).
-					EmitError(
-						"noPrimaryAuthenticator",
-						map[string]interface{}{
-							"identity_type": it,
-						},
-					)
-			}
+			c.validateIdentityPrimaryAuthenticatorOthers(ctx, authenticatorTypes, it, idx)
 		}
 	}
 }
@@ -303,6 +327,163 @@ func (c *AppConfig) validateLockout(ctx *validation.Context) {
 			"maximum": maxDuration.Seconds(),
 			"actual":  minDuration.Seconds(),
 		})
+	}
+}
+
+func (c *AppConfig) validateAuthenticationFlow(ctx *validation.Context) {
+	if c.UI.AuthenticationFlow == nil {
+		return
+	}
+
+	definedFlows := constructDefinedFlows(c.AuthenticationFlow)
+	definedGroups := constructDefinedGroups(c.UI.AuthenticationFlow)
+
+	// Ensure defined groups are valid and unique
+	validateDefinedGroups(ctx, c.UI.AuthenticationFlow, definedFlows)
+
+	for i, client := range c.OAuth.Clients {
+		// Ensure client's group allowlist is valid
+		validateGroupAllowlist(ctx, client.AuthenticationFlowAllowlist.Groups, definedGroups, i)
+
+		// Ensure client's flow allowlist is valid
+		validateFlowAllowlist(ctx, client.AuthenticationFlowAllowlist.Flows, definedFlows, i)
+	}
+}
+
+func (c *AppConfig) validateSAML(ctx *validation.Context) {
+	if len(c.SAML.ServiceProviders) > 0 {
+		if c.SAML.Signing.KeyID == "" {
+			// Signing key must be configured if at least one service provider exist
+			ctx.Child("saml", "signing", "key_id").EmitError("minLength", map[string]interface{}{
+				"expected": 1,
+				"actual":   0,
+			})
+		}
+
+		for idx, sp := range c.SAML.ServiceProviders {
+			if sp.ClientID != "" {
+				found := false
+				for _, oauthClient := range c.OAuth.Clients {
+					if sp.ClientID == oauthClient.ClientID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					ctx.Child("saml", "service_providers", strconv.Itoa(idx), "client_id").
+						EmitErrorMessage("client_id does not exist in /oauth/clients")
+				}
+			}
+		}
+	}
+}
+
+func constructDefinedFlows(flowConfig *AuthenticationFlowConfig) []*AuthenticationFlowAllowlistFlow {
+	definedlist := []*AuthenticationFlowAllowlistFlow{}
+	definedlist = append(definedlist, flowsToAllowlist(flowConfig.SignupFlows, AuthenticationFlowTypeSignup)...)
+	definedlist = append(definedlist, flowsToAllowlist(flowConfig.LoginFlows, AuthenticationFlowTypeLogin)...)
+	definedlist = append(definedlist, flowsToAllowlist(flowConfig.PromoteFlows, AuthenticationFlowTypePromote)...)
+	definedlist = append(definedlist, flowsToAllowlist(flowConfig.SignupLoginFlows, AuthenticationFlowTypeSignupLogin)...)
+	definedlist = append(definedlist, flowsToAllowlist(flowConfig.ReauthFlows, AuthenticationFlowTypeReauth)...)
+	definedlist = append(definedlist, flowsToAllowlist(flowConfig.AccountRecoveryFlows, AuthenticationFlowTypeAccountRecovery)...)
+	return definedlist
+}
+
+func constructDefinedGroups(groupConfig *UIAuthenticationFlowConfig) []string {
+	definedlist := []string{}
+	if groupConfig.Groups != nil {
+		for _, group := range groupConfig.Groups {
+			definedlist = append(definedlist, group.Name)
+		}
+	}
+	return definedlist
+}
+
+func flowsToAllowlist[TA AuthenticationFlowObjectFlowRoot](definedFlows []TA, flowType AuthenticationFlowType) []*AuthenticationFlowAllowlistFlow {
+	allowlist := []*AuthenticationFlowAllowlistFlow{}
+	for _, flow := range definedFlows {
+		allowlist = append(allowlist, &AuthenticationFlowAllowlistFlow{
+			Type: flowType,
+			Name: flow.GetName(),
+		})
+	}
+	return allowlist
+}
+
+func validateDefinedGroups(ctx *validation.Context, config *UIAuthenticationFlowConfig, definedFlows []*AuthenticationFlowAllowlistFlow) {
+	definedGroups := map[string]struct{}{}
+	for i, group := range config.Groups {
+		// Ensure defined groups are unique
+		if _, ok := definedGroups[group.Name]; ok {
+			ctx.Child("ui", "authentication_flow", "groups", strconv.Itoa(i)).EmitErrorMessage("duplicated authentication flow group")
+			continue
+		}
+		definedGroups[group.Name] = struct{}{}
+
+		hasLoginFlow := false
+		for j, flow := range group.Flows {
+			if flow.Type == AuthenticationFlowTypeLogin {
+				hasLoginFlow = true
+			}
+
+			// Ensure allowed flows are defined
+			flowIsDefined := false
+			if flow.Name == "default" {
+				flowIsDefined = true
+			}
+			for _, definedFlow := range definedFlows {
+				if flow.Type == definedFlow.Type && flow.Name == definedFlow.Name {
+					flowIsDefined = true
+					break
+				}
+			}
+			if !flowIsDefined {
+				ctx.Child("ui", "authentication_flow", "groups", strconv.Itoa(i), "flows", strconv.Itoa(j)).EmitErrorMessage("invalid authentication flow")
+			}
+		}
+		// Require at least one login flow
+		if !hasLoginFlow {
+			ctx.Child("ui", "authentication_flow", "groups", strconv.Itoa(i)).EmitErrorMessage("authentication flow group must contain one login flow")
+		}
+	}
+}
+
+func validateGroupAllowlist(ctx *validation.Context, allowlist []*AuthenticationFlowAllowlistGroup, definedlist []string, idx int) {
+	for i, group := range allowlist {
+		groupIsDefined := false
+		if group.Name == "default" {
+			groupIsDefined = true
+		}
+
+		for _, definedGroup := range definedlist {
+			if group.Name == definedGroup {
+				groupIsDefined = true
+				break
+			}
+		}
+
+		if !groupIsDefined {
+			ctx.Child("oauth", "clients", strconv.Itoa(idx), "authentication_flow_allowlist", "groups", strconv.Itoa(i)).EmitErrorMessage("invalid authentication flow group")
+		}
+	}
+}
+
+func validateFlowAllowlist(ctx *validation.Context, allowlist []*AuthenticationFlowAllowlistFlow, definedlist []*AuthenticationFlowAllowlistFlow, idx int) {
+	for i, flow := range allowlist {
+		flowIsDefined := false
+		if flow.Name == "default" {
+			flowIsDefined = true
+		}
+
+		for _, definedFlow := range definedlist {
+			if flow.Type == definedFlow.Type && flow.Name == definedFlow.Name {
+				flowIsDefined = true
+				break
+			}
+		}
+		if !flowIsDefined {
+			ctx.Child("oauth", "clients", strconv.Itoa(idx), "authentication_flow_allowlist", "flows", strconv.Itoa(i)).EmitErrorMessage("invalid authentication flow")
+		}
 	}
 }
 

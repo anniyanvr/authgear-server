@@ -1,10 +1,11 @@
 package loader
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
-	relay "github.com/authgear/graphql-go-relay"
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/portal/model"
 	"github.com/authgear/authgear-server/pkg/portal/service"
@@ -12,15 +13,15 @@ import (
 )
 
 type UserLoaderAppService interface {
-	GetManyProjectQuota(userIDs []string) ([]int, error)
+	GetManyProjectQuota(ctx context.Context, userIDs []string) ([]int, error)
 }
 
 type UserLoaderCollaboratorService interface {
-	GetManyProjectOwnerCount(userIDs []string) ([]int, error)
+	GetManyProjectOwnerCount(ctx context.Context, userIDs []string) ([]int, error)
 }
 
 type UserLoaderAdminAPIService interface {
-	SelfDirector(actorUserID string, usage service.Usage) (func(*http.Request), error)
+	SelfDirector(ctx context.Context, actorUserID string, usage service.Usage) (func(*http.Request), error)
 }
 
 type UserLoader struct {
@@ -29,19 +30,21 @@ type UserLoader struct {
 	AdminAPI      UserLoaderAdminAPIService
 	Apps          UserLoaderAppService
 	Collaborators UserLoaderCollaboratorService
+	HTTPClient    HTTPClient
 }
 
-func NewUserLoader(adminAPI UserLoaderAdminAPIService, apps UserLoaderAppService, collaborators UserLoaderCollaboratorService) *UserLoader {
+func NewUserLoader(adminAPI UserLoaderAdminAPIService, apps UserLoaderAppService, collaborators UserLoaderCollaboratorService, httpClient HTTPClient) *UserLoader {
 	l := &UserLoader{
 		AdminAPI:      adminAPI,
 		Apps:          apps,
 		Collaborators: collaborators,
+		HTTPClient:    httpClient,
 	}
 	l.DataLoader = graphqlutil.NewDataLoader(l.LoadFunc)
 	return l
 }
 
-func (l *UserLoader) LoadFunc(keys []interface{}) ([]interface{}, error) {
+func (l *UserLoader) LoadFunc(ctx context.Context, keys []interface{}) ([]interface{}, error) {
 	var globalIDs []string
 	var ids []string
 	for _, iface := range keys {
@@ -57,6 +60,7 @@ func (l *UserLoader) LoadFunc(keys []interface{}) ([]interface{}, error) {
 			nodes(ids: $ids) {
 				... on User {
 					id
+					formattedName
 					standardAttributes
 				}
 			}
@@ -67,19 +71,19 @@ func (l *UserLoader) LoadFunc(keys []interface{}) ([]interface{}, error) {
 		},
 	}
 
-	r, err := http.NewRequest("POST", "/graphql", nil)
+	r, err := http.NewRequestWithContext(ctx, "POST", "/graphql", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	director, err := l.AdminAPI.SelfDirector("", service.UsageInternal)
+	director, err := l.AdminAPI.SelfDirector(ctx, "", service.UsageInternal)
 	if err != nil {
 		return nil, err
 	}
 
 	director(r)
 
-	result, err := graphqlutil.HTTPDo(r, params)
+	result, err := graphqlutil.HTTPDo(l.HTTPClient.Client, r, params)
 	if err != nil {
 		return nil, err
 	}
@@ -88,12 +92,12 @@ func (l *UserLoader) LoadFunc(keys []interface{}) ([]interface{}, error) {
 		return nil, fmt.Errorf("unexpected graphql errors: %v", result.Errors)
 	}
 
-	quotas, err := l.Apps.GetManyProjectQuota(ids)
+	quotas, err := l.Apps.GetManyProjectQuota(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
 
-	ownerCounts, err := l.Collaborators.GetManyProjectOwnerCount(ids)
+	ownerCounts, err := l.Collaborators.GetManyProjectOwnerCount(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +122,10 @@ func (l *UserLoader) LoadFunc(keys []interface{}) ([]interface{}, error) {
 			email, ok := standardAttributes["email"].(string)
 			if ok {
 				userModel.Email = email
+			}
+			formattedName, ok := userNode["formattedName"].(string)
+			if ok {
+				userModel.FormattedName = formattedName
 			}
 
 			quota := quotas[idx]

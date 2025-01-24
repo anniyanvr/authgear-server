@@ -21,14 +21,14 @@ var cmdInternalMigrateMediaQueryDarkTheme = &cobra.Command{
 		binder := portalcmd.GetBinder()
 		dbURL, err := binder.GetRequiredString(cmd, portalcmd.ArgDatabaseURL)
 		if err != nil {
-			log.Fatalf(err.Error())
+			log.Fatalf("%v", err.Error())
 		}
 		dbSchema, err := binder.GetRequiredString(cmd, portalcmd.ArgDatabaseSchema)
 		if err != nil {
-			log.Fatalf(err.Error())
+			log.Fatalf("%v", err.Error())
 		}
 
-		internal.MigrateResources(&internal.MigrateResourcesOptions{
+		internal.MigrateResources(cmd.Context(), &internal.MigrateResourcesOptions{
 			DatabaseURL:            dbURL,
 			DatabaseSchema:         dbSchema,
 			UpdateConfigSourceFunc: migrateMediaQueryDarkTheme,

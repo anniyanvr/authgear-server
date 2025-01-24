@@ -1,6 +1,8 @@
 package facade
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticationinfo"
 	"github.com/authgear/authgear-server/pkg/lib/config"
@@ -13,6 +15,7 @@ import (
 
 type OAuthAuthorizationService interface {
 	CheckAndGrant(
+		ctx context.Context,
 		clientID string,
 		userID string,
 		scopes []string,
@@ -21,17 +24,14 @@ type OAuthAuthorizationService interface {
 
 type OAuthTokenService interface {
 	IssueOfflineGrant(
+		ctx context.Context,
 		client *config.OAuthClientConfig,
 		opts handler.IssueOfflineGrantOptions,
 		resp protocol.TokenResponse,
-	) (*oauth.OfflineGrant, error)
+	) (offlineGrant *oauth.OfflineGrant, tokenHash string, err error)
 	IssueAccessGrant(
-		client *config.OAuthClientConfig,
-		scopes []string,
-		authzID string,
-		userID string,
-		sessionID string,
-		sessionKind oauth.GrantSessionKind,
+		ctx context.Context,
+		options oauth.IssueAccessGrantOptions,
 		resp protocol.TokenResponse,
 	) error
 }
@@ -49,10 +49,10 @@ type OAuthFacade struct {
 	OAuthClientResolver OAuthClientResolver
 }
 
-func (f *OAuthFacade) CreateSession(clientID string, userID string) (session.Session, protocol.TokenResponse, error) {
+func (f *OAuthFacade) CreateSession(ctx context.Context, clientID string, userID string) (session.ListableSession, protocol.TokenResponse, error) {
 	scopes := []string{
 		"openid",
-		"offline_access",
+		oauth.OfflineAccess,
 		oauth.FullAccessScope,
 	}
 	authenticationInfo := authenticationinfo.T{
@@ -70,12 +70,13 @@ func (f *OAuthFacade) CreateSession(clientID string, userID string) (session.Ses
 	}
 
 	// Check user existence.
-	_, err := f.Users.GetRaw(userID)
+	_, err := f.Users.GetRaw(ctx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	authz, err := f.Authorizations.CheckAndGrant(
+		ctx,
 		clientID,
 		userID,
 		scopes,
@@ -89,21 +90,26 @@ func (f *OAuthFacade) CreateSession(clientID string, userID string) (session.Ses
 		AuthorizationID:    authz.ID,
 		AuthenticationInfo: authenticationInfo,
 		DeviceInfo:         deviceInfo,
+		// dpop not supported for offline grants created by this method
+		DPoPJKT: "",
 	}
 
 	resp := protocol.TokenResponse{}
-	offlineGrant, err := f.Tokens.IssueOfflineGrant(client, offlineGrantOpts, resp)
+	offlineGrant, tokenHash, err := f.Tokens.IssueOfflineGrant(ctx, client, offlineGrantOpts, resp)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	err = f.Tokens.IssueAccessGrant(
-		client,
-		scopes,
-		authz.ID,
-		authz.UserID,
-		offlineGrant.ID,
-		oauth.GrantSessionKindOffline,
+		ctx,
+		oauth.IssueAccessGrantOptions{
+			ClientConfig:       client,
+			Scopes:             scopes,
+			AuthorizationID:    authz.ID,
+			AuthenticationInfo: offlineGrant.GetAuthenticationInfo(),
+			SessionLike:        offlineGrant,
+			RefreshTokenHash:   tokenHash,
+		},
 		resp,
 	)
 	if err != nil {

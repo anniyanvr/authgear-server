@@ -26,11 +26,14 @@ func (n *NodeDoMarkClaimVerified) Kind() string {
 
 func (*NodeDoMarkClaimVerified) Milestone()                      {}
 func (n *NodeDoMarkClaimVerified) MilestoneDoMarkClaimVerified() {}
+func (n *NodeDoMarkClaimVerified) MilestoneDoMarkClaimVerifiedUpdateUserID(newUserID string) {
+	n.Claim.UserID = newUserID
+}
 
 func (n *NodeDoMarkClaimVerified) GetEffects(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (effs []authflow.Effect, err error) {
 	return []authflow.Effect{
 		authflow.RunEffect(func(ctx context.Context, deps *authflow.Dependencies) error {
-			err := deps.Verification.MarkClaimVerified(n.Claim)
+			err := deps.Verification.MarkClaimVerified(ctx, n.Claim)
 			if err != nil {
 				return err
 			}

@@ -1,0 +1,7 @@
+Verifica la tua email e configura la verifica in 2 passaggi su {{ template "app.name" }}
+
+Per favore clicca sul link sottostante per configurare la verifica in 2 passaggi su {{ template "app.name" }}.
+
+{{ .URL }}
+
+Se non hai avviato questa configurazione, ignora questa email.

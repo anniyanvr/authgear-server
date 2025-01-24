@@ -1,8 +1,9 @@
 package graphql
 
 import (
-	relay "github.com/authgear/graphql-go-relay"
 	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/admin/model"
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
@@ -49,19 +50,20 @@ var _ = registerMutationField(
 				return nil, apierrors.NewInvalid("invalid identity ID")
 			}
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 
-			info, err := gqlCtx.IdentityFacade.Get(resolvedNodeID.ID)
+			info, err := gqlCtx.IdentityFacade.Get(ctx, resolvedNodeID.ID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.IdentityFacade.Remove(info)
+			err = gqlCtx.IdentityFacade.Remove(ctx, info)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.Events.DispatchEvent(&nonblocking.AdminAPIMutationDeleteIdentityExecutedEventPayload{
+			err = gqlCtx.Events.DispatchEventOnCommit(ctx, &nonblocking.AdminAPIMutationDeleteIdentityExecutedEventPayload{
 				UserRef: apimodel.UserRef{
 					Meta: apimodel.Meta{
 						ID: info.UserID,
@@ -74,7 +76,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"user": gqlCtx.Users.Load(info.UserID),
+				"user": gqlCtx.Users.Load(ctx, info.UserID),
 			}).Value, nil
 		},
 	},
@@ -138,19 +140,20 @@ var _ = registerMutationField(
 
 			password, _ := input["password"].(string)
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 
-			ref, err := gqlCtx.IdentityFacade.Create(userID, identityDef, password)
+			ref, err := gqlCtx.IdentityFacade.Create(ctx, userID, identityDef, password)
 			if err != nil {
 				return nil, err
 			}
 
-			info, err := gqlCtx.IdentityFacade.Get(ref.ID)
+			info, err := gqlCtx.IdentityFacade.Get(ctx, ref.ID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.Events.DispatchEvent(&nonblocking.AdminAPIMutationCreateIdentityExecutedEventPayload{
+			err = gqlCtx.Events.DispatchEventOnCommit(ctx, &nonblocking.AdminAPIMutationCreateIdentityExecutedEventPayload{
 				UserRef: apimodel.UserRef{
 					Meta: apimodel.Meta{
 						ID: userID,
@@ -163,7 +166,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"user":     gqlCtx.Users.Load(userID),
+				"user":     gqlCtx.Users.Load(ctx, userID),
 				"identity": ref,
 			}).Value, nil
 		},
@@ -233,19 +236,20 @@ var _ = registerMutationField(
 				return nil, err
 			}
 
-			gqlCtx := GQLContext(p.Context)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
 
-			ref, err := gqlCtx.IdentityFacade.Update(identityID, userID, identityDef)
+			ref, err := gqlCtx.IdentityFacade.Update(ctx, identityID, userID, identityDef)
 			if err != nil {
 				return nil, err
 			}
 
-			info, err := gqlCtx.IdentityFacade.Get(ref.ID)
+			info, err := gqlCtx.IdentityFacade.Get(ctx, ref.ID)
 			if err != nil {
 				return nil, err
 			}
 
-			err = gqlCtx.Events.DispatchEvent(&nonblocking.AdminAPIMutationUpdateIdentityExecutedEventPayload{
+			err = gqlCtx.Events.DispatchEventOnCommit(ctx, &nonblocking.AdminAPIMutationUpdateIdentityExecutedEventPayload{
 				UserRef: apimodel.UserRef{
 					Meta: apimodel.Meta{
 						ID: ref.UserID,
@@ -258,7 +262,7 @@ var _ = registerMutationField(
 			}
 
 			return graphqlutil.NewLazyValue(map[string]interface{}{
-				"user":     gqlCtx.Users.Load(userID),
+				"user":     gqlCtx.Users.Load(ctx, userID),
 				"identity": ref,
 			}).Value, nil
 		},

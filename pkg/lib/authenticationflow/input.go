@@ -8,6 +8,7 @@ import (
 
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
+	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
@@ -24,6 +25,7 @@ type InputReactor interface {
 // It is associated with a json pointer which points to the a step, or a branch of a step.
 type InputSchema interface {
 	GetJSONPointer() jsonpointer.T
+	GetFlowRootObject() config.AuthenticationFlowObject
 	SchemaBuilder() validation.SchemaBuilder
 	// MakeInput MUST return *validation.AggregateError if rawMessage does not validate against the JSON schema.
 	MakeInput(rawMessage json.RawMessage) (Input, error)
@@ -80,7 +82,7 @@ func FindInputReactorForFlow(ctx context.Context, deps *Dependencies, flows Flow
 			return findInputReactorResult, nil
 		}
 		// Return non ErrEOF error.
-		if err != nil && !errors.Is(err, ErrEOF) {
+		if !errors.Is(err, ErrEOF) {
 			return nil, err
 		}
 		// err is ErrEOF, fallthrough

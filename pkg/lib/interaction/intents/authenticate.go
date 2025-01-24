@@ -1,12 +1,14 @@
 package intents
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/authgear/authgear-server/pkg/api"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn"
+	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/interaction"
 	"github.com/authgear/authgear-server/pkg/lib/interaction/nodes"
@@ -31,16 +33,16 @@ type IntentAuthenticate struct {
 	UserIDHint               string                 `json:"user_id_hint,omitempty"`
 }
 
-func (i *IntentAuthenticate) InstantiateRootNode(ctx *interaction.Context, graph *interaction.Graph) (interaction.Node, error) {
+func (i *IntentAuthenticate) InstantiateRootNode(goCtx context.Context, ctx *interaction.Context, graph *interaction.Graph) (interaction.Node, error) {
 	isAuthentication := i.Kind == IntentAuthenticateKindLogin
 	edge := nodes.EdgeSelectIdentityBegin{
 		IsAuthentication: isAuthentication,
 	}
-	return edge.Instantiate(ctx, graph, i)
+	return edge.Instantiate(goCtx, ctx, graph, i)
 }
 
-// nolint:gocyclo
-func (i *IntentAuthenticate) DeriveEdgesForNode(graph *interaction.Graph, node interaction.Node) ([]interaction.Edge, error) {
+// nolint: gocognit
+func (i *IntentAuthenticate) DeriveEdgesForNode(goCtx context.Context, graph *interaction.Graph, node interaction.Node) ([]interaction.Edge, error) {
 	ensureSession := func() ([]interaction.Edge, error) {
 		var reason session.CreateReason
 		_, creating := graph.GetNewUserID()
@@ -102,7 +104,7 @@ func (i *IntentAuthenticate) DeriveEdgesForNode(graph *interaction.Graph, node i
 						},
 					}, nil
 				default:
-					return nil, node.FillDetails(api.ErrDuplicatedIdentity)
+					return nil, node.FillDetails(identity.Deprecated_ErrDuplicatedIdentity)
 				}
 			}
 
@@ -153,7 +155,7 @@ func (i *IntentAuthenticate) DeriveEdgesForNode(graph *interaction.Graph, node i
 		case IntentAuthenticateKindPromote:
 			switch node.IdentityConflictConfig.Promotion {
 			case config.PromotionConflictBehaviorError:
-				return nil, node.FillDetails(api.ErrDuplicatedIdentity)
+				return nil, node.FillDetails(identity.Deprecated_ErrDuplicatedIdentity)
 			case config.PromotionConflictBehaviorLogin:
 				// Authenticate using duplicated identity
 				return []interaction.Edge{
@@ -167,7 +169,7 @@ func (i *IntentAuthenticate) DeriveEdgesForNode(graph *interaction.Graph, node i
 			}
 		default:
 			// TODO(interaction): handle OAuth identity conflict
-			return nil, node.FillDetails(api.ErrDuplicatedIdentity)
+			return nil, node.FillDetails(identity.Deprecated_ErrDuplicatedIdentity)
 		}
 
 	case *nodes.NodeDoCreateIdentity:

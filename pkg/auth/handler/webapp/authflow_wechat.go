@@ -1,8 +1,10 @@
 package webapp
 
 import (
+	"context"
 	htmltemplate "html/template"
 	"net/http"
+
 	"net/url"
 
 	"github.com/boombuler/barcode/qr"
@@ -11,15 +13,18 @@ import (
 	"github.com/authgear/authgear-server/pkg/auth/handler/webapp/viewmodels"
 	"github.com/authgear/authgear-server/pkg/auth/webapp"
 	"github.com/authgear/authgear-server/pkg/lib/authenticationflow/declarative"
+	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/webappoauth"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 	coreimage "github.com/authgear/authgear-server/pkg/util/image"
 	"github.com/authgear/authgear-server/pkg/util/template"
+	"github.com/authgear/authgear-server/pkg/util/urlutil"
 	"github.com/authgear/authgear-server/pkg/util/wechat"
 )
 
 var TemplateWebAuthflowWechatHTML = template.RegisterHTML(
 	"web/authflow_wechat.html",
-	components...,
+	Components...,
 )
 
 func ConfigureAuthflowWechatRoute(route httproute.Route) httproute.Route {
@@ -33,22 +38,45 @@ type AuthflowWechatViewModel struct {
 	WechatRedirectURI htmltemplate.URL
 }
 
-type AuthflowWechatHandler struct {
-	Controller    *AuthflowController
-	BaseViewModel *viewmodels.BaseViewModeler
-	Renderer      Renderer
+type AuthflowWechatHandlerOAuthStateStore interface {
+	GenerateState(ctx context.Context, state *webappoauth.WebappOAuthState) (stateToken string, err error)
 }
 
-func (h *AuthflowWechatHandler) GetData(w http.ResponseWriter, r *http.Request, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) (map[string]interface{}, error) {
+type AuthflowWechatHandler struct {
+	Controller      *AuthflowController
+	BaseViewModel   *viewmodels.BaseViewModeler
+	Renderer        Renderer
+	OAuthStateStore AuthflowWechatHandlerOAuthStateStore
+}
+
+func (h *AuthflowWechatHandler) GetData(ctx context.Context, w http.ResponseWriter, r *http.Request, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) (map[string]interface{}, error) {
 	data := make(map[string]interface{})
 
 	baseViewModel := h.BaseViewModel.ViewModelForAuthFlow(r, w)
 	viewmodels.Embed(data, baseViewModel)
 
 	screenData := screen.StateTokenFlowResponse.Action.Data.(declarative.OAuthData)
+	state := &webappoauth.WebappOAuthState{
+		WebSessionID:     s.ID,
+		UIImplementation: config.Deprecated_UIImplementationAuthflow,
+		XStep:            screen.Screen.StateToken.XStep,
+		ErrorRedirectURI: (&url.URL{
+			Path:     r.URL.Path,
+			RawQuery: r.URL.Query().Encode(),
+		}).String(),
+	}
+	stateToken, err := h.OAuthStateStore.GenerateState(ctx, state)
+	if err != nil {
+		return nil, err
+	}
 
-	authorizationURL := screenData.OAuthAuthorizationURL
-	img, err := createQRCodeImage(authorizationURL, 512, 512, qr.M)
+	authorizationURL, err := url.Parse(screenData.OAuthAuthorizationURL)
+	if err != nil {
+		return nil, err
+	}
+	authorizationURL = urlutil.WithQueryParamsAdded(authorizationURL, map[string]string{"state": stateToken})
+
+	img, err := CreateQRCodeImage(authorizationURL.String(), 512, 512, qr.M)
 	if err != nil {
 		return nil, err
 	}
@@ -61,22 +89,14 @@ func (h *AuthflowWechatHandler) GetData(w http.ResponseWriter, r *http.Request, 
 		// nolint: gosec
 		ImageURI: htmltemplate.URL(dataURI),
 	}
-	wechatRedirectURI := wechat.GetWeChatRedirectURI(r.Context())
+	wechatRedirectURI := wechat.GetWeChatRedirectURI(ctx)
 	if wechatRedirectURI != "" {
 		u, err := url.Parse(wechatRedirectURI)
 		if err != nil {
 			return nil, err
 		}
 		q := u.Query()
-		state := webapp.AuthflowOAuthState{
-			WebSessionID: s.ID,
-			XStep:        screen.Screen.StateToken.XStep,
-			ErrorRedirectURI: (&url.URL{
-				Path:     r.URL.Path,
-				RawQuery: r.URL.Query().Encode(),
-			}).String(),
-		}
-		q.Set("state", state.Encode())
+		q.Set("state", stateToken)
 		u.RawQuery = q.Encode()
 		// nolint: gosec
 		screenViewModel.WechatRedirectURI = htmltemplate.URL(u.String())
@@ -93,7 +113,7 @@ func (h *AuthflowWechatHandler) GetData(w http.ResponseWriter, r *http.Request, 
 func (h *AuthflowWechatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var handlers AuthflowControllerHandlers
 
-	submit := func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	submit := func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		data := screen.Screen.WechatCallbackData
 
 		input := map[string]interface{}{}
@@ -105,7 +125,7 @@ func (h *AuthflowWechatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			input["error_description"] = data.ErrorDescription
 		}
 
-		result, err := h.Controller.AdvanceWithInput(r, s, screen, input)
+		result, err := h.Controller.AdvanceWithInput(ctx, r, s, screen, input, nil)
 		if err != nil {
 			return err
 		}
@@ -114,13 +134,13 @@ func (h *AuthflowWechatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return nil
 	}
 
-	handlers.Get(func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.Get(func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		if screen.Screen.WechatCallbackData != nil {
-			return submit(s, screen)
+			return submit(ctx, s, screen)
 		}
 
 		// Otherwise render the page.
-		data, err := h.GetData(w, r, s, screen)
+		data, err := h.GetData(ctx, w, r, s, screen)
 		if err != nil {
 			return err
 		}
@@ -128,9 +148,9 @@ func (h *AuthflowWechatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.Renderer.RenderHTML(w, r, TemplateWebAuthflowWechatHTML, data)
 		return nil
 	})
-	handlers.PostAction("", func(s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
+	handlers.PostAction("", func(ctx context.Context, s *webapp.Session, screen *webapp.AuthflowScreenWithFlowResponse) error {
 		if screen.Screen.WechatCallbackData != nil {
-			return submit(s, screen)
+			return submit(ctx, s, screen)
 		}
 
 		// Otherwise redirect to the same page.
@@ -139,11 +159,11 @@ func (h *AuthflowWechatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			RawQuery: r.URL.Query().Encode(),
 		}
 		result := &webapp.Result{
-			NavigationAction: "replace",
+			NavigationAction: webapp.NavigationActionReplace,
 			RedirectURI:      redirectURI.String(),
 		}
 		result.WriteResponse(w, r)
 		return nil
 	})
-	h.Controller.HandleStep(w, r, &handlers)
+	h.Controller.HandleStep(r.Context(), w, r, &handlers)
 }

@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/google"
 )
 
 func TestGenerateReauthFlowConfig(t *testing.T) {
@@ -49,7 +50,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -74,7 +75,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -99,7 +100,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -124,7 +125,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -152,7 +153,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -181,7 +182,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -207,7 +208,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -232,7 +233,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -271,7 +272,7 @@ identity:
 `, `
 name: default
 steps:
-- name: identify
+- name: reauth_identify
   type: identify
   one_of:
   - identification: id_token
@@ -281,6 +282,69 @@ steps:
   - authentication: primary_password
   - authentication: primary_passkey
   - authentication: secondary_totp
+`)
+		// bot_protection should have no effect on reauth
+		test(`
+authentication:
+  identities:
+  - login_id
+  primary_authenticators:
+  - password
+  secondary_authenticators: []
+identity:
+  login_id:
+    keys:
+    - type: email
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+`, `
+name: default
+steps:
+- name: reauth_identify
+  type: identify
+  one_of:
+  - identification: id_token
+- name: reauthenticate
+  type: authenticate
+  one_of:
+  - authentication: primary_password
+`)
+		// bot_protection should have no effect on reauth
+		test(`
+authentication:
+  identities:
+  - login_id
+  primary_authenticators:
+  - password
+  - oob_otp_email
+  - oob_otp_sms
+  secondary_authenticators: []
+identity:
+  login_id:
+    keys:
+    - type: email
+    - type: phone
+bot_protection:
+  enabled: true
+  provider:
+    type: recaptchav2
+    site_key: some-site-key
+`, `
+name: default
+steps:
+- name: reauth_identify
+  type: identify
+  one_of:
+  - identification: id_token
+- name: reauthenticate
+  type: authenticate
+  one_of:
+  - authentication: primary_password
+  - authentication: primary_oob_otp_email
+  - authentication: primary_oob_otp_sms
 `)
 	})
 }

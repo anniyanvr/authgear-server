@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"crypto/subtle"
+	"context"
 	"errors"
 
 	"github.com/authgear/authgear-server/pkg/lib/oauth"
@@ -10,26 +10,35 @@ import (
 )
 
 type SessionManager interface {
-	RevokeWithEvent(session session.Session, isTermination bool, isAdminAPI bool) error
-	RevokeWithoutEvent(session session.Session) error
+	RevokeWithEvent(ctx context.Context, session session.SessionBase, isTermination bool, isAdminAPI bool) error
+	RevokeWithoutEvent(ctx context.Context, session session.SessionBase) error
+}
+
+type RevokeHandlerOfflineGrantService interface {
+	GetOfflineGrant(ctx context.Context, id string) (*oauth.OfflineGrant, error)
+}
+
+type RevokeHandlerAccessGrantStore interface {
+	GetAccessGrant(ctx context.Context, tokenHash string) (*oauth.AccessGrant, error)
+	DeleteAccessGrant(ctx context.Context, g *oauth.AccessGrant) error
 }
 
 type RevokeHandler struct {
-	SessionManager SessionManager
-	OfflineGrants  oauth.OfflineGrantStore
-	AccessGrants   oauth.AccessGrantStore
+	SessionManager      SessionManager
+	OfflineGrantService RevokeHandlerOfflineGrantService
+	AccessGrants        RevokeHandlerAccessGrantStore
 }
 
-func (h *RevokeHandler) Handle(r protocol.RevokeRequest) error {
+func (h *RevokeHandler) Handle(ctx context.Context, r protocol.RevokeRequest) error {
 	token, grantID, err := oauth.DecodeRefreshToken(r.Token())
 	if err == nil {
-		return h.revokeOfflineGrant(token, grantID)
+		return h.revokeOfflineGrant(ctx, token, grantID)
 	}
-	return h.revokeAccessGrant(r.Token())
+	return h.revokeAccessGrant(ctx, r.Token())
 }
 
-func (h *RevokeHandler) revokeOfflineGrant(token, grantID string) error {
-	offlineGrant, err := h.OfflineGrants.GetOfflineGrant(grantID)
+func (h *RevokeHandler) revokeOfflineGrant(ctx context.Context, token, grantID string) error {
+	offlineGrant, err := h.OfflineGrantService.GetOfflineGrant(ctx, grantID)
 	if errors.Is(err, oauth.ErrGrantNotFound) {
 		return nil
 	} else if err != nil {
@@ -37,11 +46,11 @@ func (h *RevokeHandler) revokeOfflineGrant(token, grantID string) error {
 	}
 
 	tokenHash := oauth.HashToken(token)
-	if subtle.ConstantTimeCompare([]byte(tokenHash), []byte(offlineGrant.TokenHash)) != 1 {
+	if !offlineGrant.MatchHash(tokenHash) {
 		return nil
 	}
 
-	err = h.SessionManager.RevokeWithEvent(offlineGrant, false, false)
+	err = h.SessionManager.RevokeWithEvent(ctx, offlineGrant, false, false)
 	if err != nil {
 		return err
 	}
@@ -49,16 +58,16 @@ func (h *RevokeHandler) revokeOfflineGrant(token, grantID string) error {
 	return nil
 }
 
-func (h *RevokeHandler) revokeAccessGrant(token string) error {
+func (h *RevokeHandler) revokeAccessGrant(ctx context.Context, token string) error {
 	tokenHash := oauth.HashToken(token)
-	accessGrant, err := h.AccessGrants.GetAccessGrant(tokenHash)
+	accessGrant, err := h.AccessGrants.GetAccessGrant(ctx, tokenHash)
 	if errors.Is(err, oauth.ErrGrantNotFound) {
 		return nil
 	} else if err != nil {
 		return err
 	}
 
-	err = h.AccessGrants.DeleteAccessGrant(accessGrant)
+	err = h.AccessGrants.DeleteAccessGrant(ctx, accessGrant)
 	if err != nil {
 		return err
 	}

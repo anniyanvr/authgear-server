@@ -1,0 +1,471 @@
+name: Signup flow
+steps:
+  - action: "create"
+    input: |
+      {
+        "type": "signup",
+        "name": "default"
+      }
+    output:
+      error: |
+        {
+          "reason": "AuthenticationFlowNoPublicSignup"
+        }
+---
+name: First time login
+before:
+  - type: user_import
+    user_import: users.json
+steps:
+  - action: "create"
+    input: |
+      {
+        "type": "login",
+        "name": "default"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "identification": "username",
+        "login_id": "e2e_recipe_1_first_time"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "authenticate"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "authentication": "primary_password",
+        "password": "auyeung1234"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "authenticate"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "authentication": "primary_oob_otp_sms",
+        "index": 0
+      }
+
+  - action: input
+    input: |
+      {
+        "code": "000000"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "change_password"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "new_password": "Auyeung1234auyeung1234!"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "finished"
+          }
+        }
+---
+name: Login
+before:
+  - type: user_import
+    user_import: users.json
+steps:
+  - action: "create"
+    input: |
+      {
+        "type": "login",
+        "name": "default"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "identification": "username",
+        "login_id": "e2e_recipe_1_employee_id"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "authenticate"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "authentication": "primary_password",
+        "password": "Wakanda4ever@Wakanda4ever"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "authenticate"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "authentication": "primary_oob_otp_sms",
+        "index": 0
+      }
+
+  - action: input
+    input: |
+      {
+        "code": "111111"
+      }
+    output:
+      error: |
+        {
+          "reason": "InvalidCredentials"
+        }
+
+  - action: input
+    input: |
+      {
+        "code": "000000"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "finished"
+          }
+        }
+---
+name: ADFS
+before:
+  - type: user_import
+    user_import: users.json
+  - type: custom_sql
+    custom_sql:
+      path: adfs_user.sql
+steps:
+  - action: "create"
+    input: |
+      {
+        "type": "login",
+        "name": "default"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "identification": "oauth",
+        "alias": "adfs",
+        "redirect_uri": "http://mock"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify",
+            "data": {
+              "oauth_authorization_url": "[[string]]"
+            }
+          }
+        }
+
+  - action: oauth_redirect
+    to: "{{ .prev.result.action.data.oauth_authorization_url }}"
+    redirect_uri: http://mock
+    output:
+      result: |
+        {
+          "query": "[[string]]"
+        }
+
+  - action: input
+    input: |
+      {
+        "query": "{{ .prev.result.query }}"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "finished"
+          }
+        }
+---
+name: Recovery - Email
+before:
+  - type: user_import
+    user_import: users.json
+steps:
+  - action: "create"
+    input: |
+      {
+          "type": "account_recovery",
+          "name": "default"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "identification": "email",
+        "login_id": "e2e_recipe_1_recovery_email@example.com"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "select_destination"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "index": 0
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "verify_account_recovery_code"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "account_recovery_code": "{{ linkOTPCode "email" "e2e_recipe_1_recovery_email@example.com" }}"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "reset_password"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "new_password": "Abcd1234Abcd1234!"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "finished"
+          }
+        }
+---
+name: Recovery - SMS
+before:
+  - type: user_import
+    user_import: users.json
+steps:
+  - action: "create"
+    input: |
+      {
+          "type": "account_recovery",
+          "name": "default"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "identification": "phone",
+        "login_id": "+85295000004"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "select_destination"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "index": 0
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "verify_account_recovery_code"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "account_recovery_code": "000000"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "reset_password"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "new_password": "Abcd1234Abcd1234!"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "finished"
+          }
+        }
+---
+name: Password expiry
+before:
+  - type: user_import
+    user_import: users.json
+  - type: custom_sql
+    custom_sql:
+      path: expire_user.sql
+steps:
+  - action: "create"
+    input: |
+      {
+        "type": "login",
+        "name": "default"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "identify"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "identification": "username",
+        "login_id": "e2e_recipe_1_employee_id"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "authenticate"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "authentication": "primary_password",
+        "password": "Wakanda4ever@Wakanda4ever"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "authenticate"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "authentication": "primary_oob_otp_sms",
+        "index": 0
+      }
+
+  - action: input
+    input: |
+      {
+        "code": "111111"
+      }
+    output:
+      error: |
+        {
+          "reason": "InvalidCredentials"
+        }
+
+  - action: input
+    input: |
+      {
+        "code": "000000"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "change_password"
+          }
+        }
+
+  - action: input
+    input: |
+      {
+        "new_password": "Auyeung1234auyeung1234!"
+      }
+    output:
+      result: |
+        {
+          "action": {
+            "type": "finished"
+          }
+        }

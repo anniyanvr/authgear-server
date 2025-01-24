@@ -2,15 +2,23 @@ package webapp
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
+	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/successpage"
 	"github.com/authgear/authgear-server/pkg/util/httputil"
 )
 
+type SuccessPageMiddlewareEndpointsProvider interface {
+	ErrorEndpointURL() *url.URL
+}
+
 type SuccessPageMiddleware struct {
-	Cookies     CookieManager
-	ErrorCookie *ErrorCookie
+	Endpoints    SuccessPageMiddlewareEndpointsProvider
+	UIConfig     *config.UIConfig
+	Cookies      CookieManager
+	ErrorService *ErrorService
 }
 
 func (m *SuccessPageMiddleware) Pop(r *http.Request, rw http.ResponseWriter) string {
@@ -30,21 +38,26 @@ func (m *SuccessPageMiddleware) Pop(r *http.Request, rw http.ResponseWriter) str
 // the cookie should be set right before redirecting to the success page
 func (m *SuccessPageMiddleware) Handle(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		currentPath := r.URL.Path
-		pathInCookie := m.Pop(r, w)
-
-		if currentPath != pathInCookie {
-			// Show invalid session error when the path cookie doesn't match
-			// the current path
-			apierror := apierrors.AsAPIError(ErrInvalidSession)
-			errorCookie, err := m.ErrorCookie.SetRecoverableError(r, apierror)
-			if err != nil {
-				panic(err)
+		ctx := r.Context()
+		// We want to allow POST in success page.
+		// For example, POST in delete account success page to finish settings action.
+		if r.Method == "GET" {
+			currentPath := r.URL.Path
+			pathInCookie := m.Pop(r, w)
+			if currentPath != pathInCookie {
+				// Show invalid session error when the path cookie doesn't match
+				// the current path
+				apierror := apierrors.AsAPIError(ErrInvalidSession)
+				errorCookie, err := m.ErrorService.SetRecoverableError(ctx, r, apierror)
+				if err != nil {
+					panic(err)
+				}
+				httputil.UpdateCookie(w, errorCookie)
+				http.Redirect(w, r, m.Endpoints.ErrorEndpointURL().Path, http.StatusFound)
+				return
 			}
-			httputil.UpdateCookie(w, errorCookie)
-			http.Redirect(w, r, "/errors/error", http.StatusFound)
-		} else {
-			next.ServeHTTP(w, r)
 		}
+
+		next.ServeHTTP(w, r)
 	})
 }

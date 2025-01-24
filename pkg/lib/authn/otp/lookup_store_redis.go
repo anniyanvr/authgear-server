@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	goredis "github.com/go-redis/redis/v8"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/appredis"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 )
@@ -19,11 +20,12 @@ type LookupStoreRedis struct {
 	Clock clock.Clock
 }
 
-func (s *LookupStoreRedis) Create(purpose Purpose, code string, target string, expireAt time.Time) error {
-	ctx := context.Background()
+var _ LookupStore = &LookupStoreRedis{}
+
+func (s *LookupStoreRedis) Create(ctx context.Context, purpose Purpose, code string, target string, expireAt time.Time) error {
 	key := redisLookupKey(s.AppID, purpose, code)
 
-	return s.Redis.WithConn(func(conn *goredis.Conn) error {
+	return s.Redis.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
 		ttl := expireAt.Sub(s.Clock.NowUTC())
 
 		_, err := conn.SetNX(ctx, key, target, ttl).Result()
@@ -37,11 +39,10 @@ func (s *LookupStoreRedis) Create(purpose Purpose, code string, target string, e
 	})
 }
 
-func (s *LookupStoreRedis) Get(purpose Purpose, code string) (target string, err error) {
-	ctx := context.Background()
+func (s *LookupStoreRedis) Get(ctx context.Context, purpose Purpose, code string) (target string, err error) {
 	key := redisLookupKey(s.AppID, purpose, code)
 
-	err = s.Redis.WithConn(func(conn *goredis.Conn) error {
+	err = s.Redis.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
 		target, err = conn.Get(ctx, key).Result()
 		if errors.Is(err, goredis.Nil) {
 			return ErrCodeNotFound
@@ -54,11 +55,10 @@ func (s *LookupStoreRedis) Get(purpose Purpose, code string) (target string, err
 	return
 }
 
-func (s *LookupStoreRedis) Delete(purpose Purpose, code string) error {
-	ctx := context.Background()
+func (s *LookupStoreRedis) Delete(ctx context.Context, purpose Purpose, code string) error {
 	key := redisLookupKey(s.AppID, purpose, code)
 
-	return s.Redis.WithConn(func(conn *goredis.Conn) error {
+	return s.Redis.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
 		_, err := conn.Del(ctx, key).Result()
 		if err != nil {
 			return err

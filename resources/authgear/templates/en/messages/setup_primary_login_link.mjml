@@ -1,4 +1,4 @@
-<mjml>
+<mjml lang="en" dir="ltr">
 <mj-head>
   <mj-attributes>
     <mj-text align="left" font-family="Segoe UI,Helvetica,Arial,sans-serif,Apple Color Emoji,Segoe UI Emoji" />
@@ -8,7 +8,7 @@
 <mj-body background-color="#ffffff">
   <mj-section padding-top="10px">
     <mj-column>
-      <mj-text font-weight="bold" font-size="24px">Setup Two-Step Verification on {{ template "app.name" }}</mj-text>
+      <mj-text font-weight="bold" font-size="24px">Verify your email on {{ template "app.name" }}</mj-text>
       <mj-text font-size="16px" padding-top="10px" line-height="24px">
         Please visit the link below to complete your sign up process.
       </mj-text>

@@ -17,30 +17,43 @@ func init() {
 }
 
 type IntentSignupFlowStepFillInUserProfile struct {
-	JSONPointer jsonpointer.T `json:"json_pointer,omitempty"`
-	StepName    string        `json:"step_name,omitempty"`
-	UserID      string        `json:"user_id,omitempty"`
+	JSONPointer            jsonpointer.T `json:"json_pointer,omitempty"`
+	StepName               string        `json:"step_name,omitempty"`
+	UserID                 string        `json:"user_id,omitempty"`
+	IsUpdatingExistingUser bool          `json:"skip_update,omitempty"`
 }
 
 var _ authflow.Intent = &IntentSignupFlowStepFillInUserProfile{}
+var _ authflow.Milestone = &IntentSignupFlowStepFillInUserProfile{}
+var _ MilestoneSwitchToExistingUser = &IntentSignupFlowStepFillInUserProfile{}
 
 func (*IntentSignupFlowStepFillInUserProfile) Kind() string {
 	return "IntentSignupFlowStepFillInUserProfile"
 }
 
+func (*IntentSignupFlowStepFillInUserProfile) Milestone() {}
+func (i *IntentSignupFlowStepFillInUserProfile) MilestoneSwitchToExistingUser(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error {
+	i.UserID = newUserID
+	i.IsUpdatingExistingUser = true
+	return nil
+}
+
 func (i *IntentSignupFlowStepFillInUserProfile) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
-	if len(flows.Nearest.Nodes) == 0 {
-		current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	if !i.IsUpdatingExistingUser && len(flows.Nearest.Nodes) == 0 {
+		flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+		if err != nil {
+			return nil, err
+		}
+
+		current, err := authflow.FlowObject(flowRootObject, i.JSONPointer)
 		if err != nil {
 			return nil, err
 		}
 
 		step := i.step(current)
-		if err != nil {
-			return nil, err
-		}
 		return &InputSchemaFillInUserProfile{
 			JSONPointer:      i.JSONPointer,
+			FlowRootObject:   flowRootObject,
 			Attributes:       step.UserProfile,
 			CustomAttributes: deps.Config.UserProfile.CustomAttributes.Attributes,
 		}, nil
@@ -50,16 +63,17 @@ func (i *IntentSignupFlowStepFillInUserProfile) CanReactTo(ctx context.Context, 
 
 func (i *IntentSignupFlowStepFillInUserProfile) ReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, input authflow.Input) (*authflow.Node, error) {
 	var inputFillInUserProfile inputFillInUserProfile
-	if authflow.AsInput(input, &inputFillInUserProfile) {
-		current, err := authflow.FlowObject(authflow.GetFlowRootObject(ctx), i.JSONPointer)
+	if !i.IsUpdatingExistingUser && authflow.AsInput(input, &inputFillInUserProfile) {
+		rootObject, err := findFlowRootObjectInFlow(deps, flows)
+		if err != nil {
+			return nil, err
+		}
+		current, err := authflow.FlowObject(rootObject, i.JSONPointer)
 		if err != nil {
 			return nil, err
 		}
 
 		step := i.step(current)
-		if err != nil {
-			return nil, err
-		}
 
 		attributes := inputFillInUserProfile.GetAttributes()
 		allAbsent, err := i.validate(step, attributes)

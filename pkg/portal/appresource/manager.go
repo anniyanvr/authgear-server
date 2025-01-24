@@ -14,10 +14,14 @@ import (
 	"github.com/spf13/afero"
 
 	"github.com/authgear/authgear-server/pkg/api/apierrors"
+	apimodel "github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
 	"github.com/authgear/authgear-server/pkg/lib/hook"
+	"github.com/authgear/authgear-server/pkg/lib/saml"
+	"github.com/authgear/authgear-server/pkg/util/checksum"
 	"github.com/authgear/authgear-server/pkg/util/clock"
+	"github.com/authgear/authgear-server/pkg/util/log"
 	"github.com/authgear/authgear-server/pkg/util/resource"
 )
 
@@ -30,17 +34,24 @@ type DenoClient interface {
 }
 
 type TutorialService interface {
-	OnUpdateResource(ctx context.Context, appID string, resourcesInAllFss []resource.ResourceFile, resourceInTargetFs *resource.ResourceFile, data []byte) (err error)
+	OnUpdateResource0(ctx context.Context, appID string, resourcesInAllFss []resource.ResourceFile, resourceInTargetFs *resource.ResourceFile, data []byte) (err error)
+}
+
+type DomainService interface {
+	ListDomains(ctx context.Context, appID string) ([]*apimodel.Domain, error)
 }
 
 type Manager struct {
-	Context            context.Context
-	AppResourceManager *resource.Manager
-	AppFS              resource.Fs
-	AppFeatureConfig   *config.FeatureConfig
-	Tutorials          TutorialService
-	DenoClient         DenoClient
-	Clock              clock.Clock
+	Logger                *log.Logger
+	AppResourceManager    *resource.Manager
+	AppFS                 resource.Fs
+	AppFeatureConfig      *config.FeatureConfig
+	AppHostSuffixes       *config.AppHostSuffixes
+	DomainService         DomainService
+	Tutorials             TutorialService
+	DenoClient            DenoClient
+	Clock                 clock.Clock
+	SAMLEnvironmentConfig config.SAMLEnvironmentConfig
 }
 
 func (m *Manager) List() ([]string, error) {
@@ -110,18 +121,10 @@ func (m *Manager) ReadAppFile(desc resource.Descriptor, view resource.AppFileVie
 	return m.AppResourceManager.Read(desc, view)
 }
 
-func (m *Manager) ApplyUpdates(appID string, updates []Update) ([]*resource.ResourceFile, error) {
-	// Validate file size.
-	for _, f := range updates {
-		if len(f.Data) > ConfigFileMaxSize {
-			message := fmt.Sprintf("invalid resource '%s': too large (%v > %v)", f.Path, len(f.Data), ConfigFileMaxSize)
-			err := ResouceTooLarge.NewWithInfo(message, apierrors.Details{"size": len(f.Data), "max_size": ConfigFileMaxSize, "path": f.Path})
-			return nil, err
-		}
-	}
-
+// ApplyUpdates0 assume acquired connection.
+func (m *Manager) ApplyUpdates0(ctx context.Context, appID string, updates []Update) ([]*resource.ResourceFile, error) {
 	// Construct new resource manager.
-	newManager, files, err := m.applyUpdates(appID, m.AppFS, updates)
+	newManager, files, err := m.applyUpdates(ctx, appID, m.AppFS, updates)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +279,7 @@ func (m *Manager) getFromAllFss(desc resource.Descriptor) ([]resource.ResourceFi
 	return files, nil
 }
 
-func (m *Manager) applyUpdates(appID string, appFs resource.Fs, updates []Update) (*resource.Manager, []*resource.ResourceFile, error) {
+func (m *Manager) applyUpdates(ctx context.Context, appID string, appFs resource.Fs, updates []Update) (*resource.Manager, []*resource.ResourceFile, error) {
 	manager := m.AppResourceManager
 
 	newFs, err := cloneFS(appFs)
@@ -299,9 +302,25 @@ func (m *Manager) applyUpdates(appID string, appFs resource.Fs, updates []Update
 			return nil, nil, err
 		}
 
+		if u.Checksum != "" && checksum.CRC32IEEEInHex(resrc.Data) != u.Checksum {
+			msg := fmt.Sprintf("resource update conflict: %v", u.Path)
+			return nil, nil, ResourceUpdateConflict.NewWithInfo(msg, apierrors.Details{"path": u.Path})
+		}
+
 		desc, ok := manager.Resolve(u.Path)
 		if !ok {
 			err = fmt.Errorf("invalid resource '%s': unknown resource path", resrc.Location.Path)
+			return nil, nil, err
+		}
+
+		// Validate file size
+		sizeLimit := ConfigFileMaxSize
+		if sizeLimitDescriptor, ok := desc.(resource.SizeLimitDescriptor); ok {
+			sizeLimit = sizeLimitDescriptor.GetSizeLimit()
+		}
+		if len(u.Data) > sizeLimit {
+			message := fmt.Sprintf("invalid resource '%s': too large (%v > %v)", u.Path, len(u.Data), sizeLimit)
+			err := ResouceTooLarge.NewWithInfo(message, apierrors.Details{"size": len(u.Data), "max_size": sizeLimit, "path": u.Path})
 			return nil, nil, err
 		}
 
@@ -311,12 +330,14 @@ func (m *Manager) applyUpdates(appID string, appFs resource.Fs, updates []Update
 			return nil, nil, err
 		}
 
-		ctx := m.Context
 		ctx = context.WithValue(ctx, configsource.ContextKeyFeatureConfig, m.AppFeatureConfig)
 		ctx = context.WithValue(ctx, configsource.ContextKeyClock, m.Clock)
+		ctx = context.WithValue(ctx, configsource.ContextKeyAppHostSuffixes, m.AppHostSuffixes)
+		ctx = context.WithValue(ctx, configsource.ContextKeyDomainService, m.DomainService)
+		ctx = context.WithValue(ctx, configsource.ContextKeySAMLEntityID, m.renderSAMLEntityID(appID))
 		ctx = context.WithValue(ctx, hook.ContextKeyDenoClient, m.DenoClient)
 
-		err = m.Tutorials.OnUpdateResource(ctx, appID, all, resrc, u.Data)
+		err = m.Tutorials.OnUpdateResource0(ctx, appID, all, resrc, u.Data)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -345,4 +366,8 @@ func (m *Manager) applyUpdates(appID string, appFs resource.Fs, updates []Update
 		}
 	}
 	return resource.NewManager(manager.Registry, newResFs), files, nil
+}
+
+func (m *Manager) renderSAMLEntityID(appID string) string {
+	return saml.RenderSAMLEntityID(m.SAMLEnvironmentConfig, appID)
 }

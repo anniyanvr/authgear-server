@@ -32,7 +32,8 @@ type GraphQLHandler struct {
 func (h *GraphQLHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		graphiql := &graphqlutil.GraphiQL{
-			Title: "GraphiQL: Admin API - Authgear",
+			Title:    "GraphiQL: Admin API - Authgear",
+			IsPortal: r.Header.Get("X-Authgear-Portal-Is-Proxied") == "true",
 		}
 		graphiql.ServeHTTP(rw, r)
 		return
@@ -44,7 +45,8 @@ func (h *GraphQLHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		r.URL.RawQuery = q.Encode()
 	}
 
-	err := h.AppDatabase.WithTx(func() error {
+	ctx := r.Context()
+	err := h.AppDatabase.WithTx(ctx, func(ctx context.Context) error {
 		doRollback := false
 		graphqlHandler := handler.New(&handler.Config{
 			Schema:     graphql.Schema,
@@ -58,7 +60,7 @@ func (h *GraphQLHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			},
 		})
 
-		ctx := graphql.WithContext(r.Context(), h.GraphQLContext)
+		ctx = graphql.WithContext(ctx, h.GraphQLContext)
 		graphqlHandler.ContextHandler(ctx, rw, r)
 
 		if doRollback {

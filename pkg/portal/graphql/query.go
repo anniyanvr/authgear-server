@@ -6,11 +6,9 @@ import (
 
 	"github.com/graphql-go/graphql"
 
-	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/portal/service"
 	"github.com/authgear/authgear-server/pkg/portal/session"
 	"github.com/authgear/authgear-server/pkg/util/graphqlutil"
-	"github.com/authgear/authgear-server/pkg/util/web3"
 )
 
 var checkCollaboratorInvitationPayload = graphql.NewObject(graphql.ObjectConfig{
@@ -30,14 +28,15 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 			Description: "The current viewer",
 			Type:        nodeViewer,
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
+				ctx := p.Context
+				gqlCtx := GQLContext(ctx)
 
-				sessionInfo := session.GetValidSessionInfo(p.Context)
+				sessionInfo := session.GetValidSessionInfo(ctx)
 				if sessionInfo == nil {
 					return nil, nil
 				}
 
-				return ctx.Users.Load(sessionInfo.UserID).Value, nil
+				return viewerSubresolver(ctx, gqlCtx, sessionInfo.UserID)
 			},
 		},
 		"appList": &graphql.Field{
@@ -50,15 +49,16 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 				},
 			}))),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
+				ctx := p.Context
+				gqlCtx := GQLContext(ctx)
 
-				sessionInfo := session.GetValidSessionInfo(p.Context)
+				sessionInfo := session.GetValidSessionInfo(ctx)
 				if sessionInfo == nil {
 					return nil, nil
 				}
 
 				// Access control is not needed here cause List returns accessible apps.
-				apps, err := ctx.AppService.GetAppList(sessionInfo.UserID)
+				apps, err := gqlCtx.AppService.GetAppList(ctx, sessionInfo.UserID)
 				if err != nil {
 					return nil, err
 				}
@@ -71,11 +71,12 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 			Type:        checkCollaboratorInvitationPayload,
 			Args:        graphql.FieldConfigArgument{"code": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)}},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
+				ctx := p.Context
+				gqlCtx := GQLContext(ctx)
 
 				code := p.Args["code"].(string)
 
-				invitation, err := ctx.CollaboratorService.GetInvitationWithCode(code)
+				invitation, err := gqlCtx.CollaboratorService.GetInvitationWithCode(ctx, code)
 				if err != nil {
 					if errors.Is(err, service.ErrCollaboratorInvitationInvalidCode) {
 						return nil, nil
@@ -83,7 +84,7 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 					return nil, err
 				}
 
-				sessionInfo := session.GetValidSessionInfo(p.Context)
+				sessionInfo := session.GetValidSessionInfo(ctx)
 				if sessionInfo == nil {
 					return graphqlutil.NewLazyValue(map[string]interface{}{
 						"isInvitee": false,
@@ -92,7 +93,7 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 				}
 				actorID := sessionInfo.UserID
 
-				err = ctx.CollaboratorService.CheckInviteeEmail(invitation, actorID)
+				err = gqlCtx.CollaboratorService.CheckInviteeEmail(ctx, invitation, actorID)
 				if err != nil {
 					if errors.Is(err, service.ErrCollaboratorInvitationInvalidEmail) {
 						return graphqlutil.NewLazyValue(map[string]interface{}{
@@ -118,7 +119,9 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 				},
 			}),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
+				ctx := p.Context
+
+				gqlCtx := GQLContext(ctx)
 				periodical := p.Args["periodical"].(string)
 				appID, rangeFrom, rangeTo, err := getAnalyticArgs(p.Args)
 				if err != nil {
@@ -126,7 +129,7 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 				}
 
 				// Access Control: collaborator.
-				_, err = ctx.AuthzService.CheckAccessOfViewer(appID)
+				_, err = gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 				if err != nil {
 					return nil, nil
 				}
@@ -136,7 +139,8 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 					return nil, err
 				}
 
-				chart, err := ctx.AnalyticChartService.GetActiveUserChart(
+				chart, err := gqlCtx.AnalyticChartService.GetActiveUserChart(
+					ctx,
 					appID,
 					periodical,
 					*rangeFrom,
@@ -153,14 +157,16 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 			Type:        totalUserCountChart,
 			Args:        newAnalyticArgs(graphql.FieldConfigArgument{}),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
+				ctx := p.Context
+
+				gqlCtx := GQLContext(ctx)
 				appID, rangeFrom, rangeTo, err := getAnalyticArgs(p.Args)
 				if err != nil {
 					return nil, err
 				}
 
 				// Access Control: collaborator.
-				_, err = ctx.AuthzService.CheckAccessOfViewer(appID)
+				_, err = gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 				if err != nil {
 					return nil, nil
 				}
@@ -170,7 +176,8 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 					return nil, err
 				}
 
-				chart, err := ctx.AnalyticChartService.GetTotalUserCountChart(
+				chart, err := gqlCtx.AnalyticChartService.GetTotalUserCountChart(
+					ctx,
 					appID,
 					*rangeFrom,
 					*rangeTo,
@@ -186,14 +193,15 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 			Type:        signupConversionRate,
 			Args:        newAnalyticArgs(graphql.FieldConfigArgument{}),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
+				ctx := p.Context
+				gqlCtx := GQLContext(ctx)
 				appID, rangeFrom, rangeTo, err := getAnalyticArgs(p.Args)
 				if err != nil {
 					return nil, err
 				}
 
 				// Access Control: collaborator.
-				_, err = ctx.AuthzService.CheckAccessOfViewer(appID)
+				_, err = gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 				if err != nil {
 					return nil, nil
 				}
@@ -203,7 +211,8 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 					return nil, err
 				}
 
-				signupConversionRateData, err := ctx.AnalyticChartService.GetSignupConversionRate(
+				signupConversionRateData, err := gqlCtx.AnalyticChartService.GetSignupConversionRate(
+					ctx,
 					appID,
 					*rangeFrom,
 					*rangeTo,
@@ -219,14 +228,15 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 			Type:        signupByMethodsChart,
 			Args:        newAnalyticArgs(graphql.FieldConfigArgument{}),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
+				ctx := p.Context
+				gqlCtx := GQLContext(ctx)
 				appID, rangeFrom, rangeTo, err := getAnalyticArgs(p.Args)
 				if err != nil {
 					return nil, err
 				}
 
 				// Access Control: collaborator.
-				_, err = ctx.AuthzService.CheckAccessOfViewer(appID)
+				_, err = gqlCtx.AuthzService.CheckAccessOfViewer(ctx, appID)
 				if err != nil {
 					return nil, nil
 				}
@@ -236,7 +246,8 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 					return nil, err
 				}
 
-				chart, err := ctx.AnalyticChartService.GetSignupByMethodsChart(
+				chart, err := gqlCtx.AnalyticChartService.GetSignupByMethodsChart(
+					ctx,
 					appID,
 					*rangeFrom,
 					*rangeTo,
@@ -251,41 +262,13 @@ var query = graphql.NewObject(graphql.ObjectConfig{
 			Description: "Available subscription plans",
 			Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(subscriptionPlan))),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
-				plans, err := ctx.StripeService.FetchSubscriptionPlans()
+				ctx := p.Context
+				gqlCtx := GQLContext(ctx)
+				plans, err := gqlCtx.StripeService.FetchSubscriptionPlans(ctx)
 				if err != nil {
 					return nil, err
 				}
 				return plans, nil
-			},
-		},
-		"nftContractMetadata": &graphql.Field{
-			Description: "Fetch NFT Contract Metadata",
-			Type:        nftCollection,
-			Args: graphql.FieldConfigArgument{
-				"contractID": &graphql.ArgumentConfig{
-					Type: graphql.NewNonNull(graphql.String),
-				},
-			},
-			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				ctx := GQLContext(p.Context)
-				contractURL := p.Args["contractID"].(string)
-
-				contractID, err := web3.ParseContractID(contractURL)
-				if err != nil {
-					return nil, err
-				}
-
-				metadata, err := ctx.NFTService.GetContractMetadata([]web3.ContractID{*contractID})
-				if err != nil {
-					return nil, err
-				}
-
-				if len(metadata) == 0 {
-					return nil, apierrors.NewInternalError("failed to fetch contract metadata")
-				}
-
-				return metadata[0], nil
 			},
 		},
 	},

@@ -4,13 +4,13 @@ import { gql } from '@apollo/client';
 import * as Apollo from '@apollo/client';
 const defaultOptions = {} as const;
 export type UpdateAppTemplatesMutationMutationVariables = Types.Exact<{
-  appID: Types.Scalars['ID'];
+  appID: Types.Scalars['ID']['input'];
   updates: Array<Types.AppResourceUpdate> | Types.AppResourceUpdate;
-  paths: Array<Types.Scalars['String']> | Types.Scalars['String'];
+  paths: Array<Types.Scalars['String']['input']> | Types.Scalars['String']['input'];
 }>;
 
 
-export type UpdateAppTemplatesMutationMutation = { __typename?: 'Mutation', updateApp: { __typename?: 'UpdateAppPayload', app: { __typename?: 'App', id: string, resources: Array<{ __typename?: 'AppResource', path: string, languageTag?: string | null, data?: string | null, effectiveData?: string | null }>, resourceLocales: Array<{ __typename?: 'AppResource', path: string, languageTag?: string | null }> } } };
+export type UpdateAppTemplatesMutationMutation = { __typename?: 'Mutation', updateApp: { __typename?: 'UpdateAppPayload', app: { __typename?: 'App', id: string, resources: Array<{ __typename?: 'AppResource', path: string, languageTag?: string | null, data?: string | null, effectiveData?: string | null, checksum?: string | null }> } } };
 
 
 export const UpdateAppTemplatesMutationDocument = gql`
@@ -23,10 +23,7 @@ export const UpdateAppTemplatesMutationDocument = gql`
         languageTag
         data
         effectiveData
-      }
-      resourceLocales: resources {
-        path
-        languageTag
+        checksum
       }
     }
   }

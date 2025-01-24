@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FormattedMessage } from "@oursky/react-messageformat";
 import { DefaultEffects, Text } from "@fluentui/react";
@@ -12,6 +12,7 @@ import { useAppListQuery } from "./query/appListQuery";
 import { useViewerQuery } from "./query/viewerQuery";
 import { AppListItem, Viewer } from "./globalTypes.generated";
 import styles from "./AppsScreen.module.css";
+import { useCapture } from "../../gtm_v2";
 import { toTypedID } from "../../util/graphql";
 
 interface AppCardData {
@@ -22,12 +23,25 @@ interface AppCardData {
 
 const AppCard: React.VFC<AppCardData> = function AppCard(props: AppCardData) {
   const { appName, appID, url } = props;
+  const capture = useCapture();
+  const onClick = useCallback(() => {
+    capture(
+      "enteredProject",
+      {
+        projectID: appID,
+      },
+      {
+        project_id: appID,
+      }
+    );
+  }, [appID, capture]);
 
   return (
     <Link
       to={url}
       style={{ boxShadow: DefaultEffects.elevation4 }}
       className={styles.card}
+      onClick={onClick}
     >
       <Text className={styles.cardAppID}>{appID}</Text>
       <Text className={styles.cardAppName}>{appName}</Text>
@@ -70,13 +84,22 @@ function ProjectQuotaMessageBar(
 
 interface AppListProps {
   apps: AppListItem[] | null;
-  viewer: Viewer | null;
+  viewer: Viewer;
 }
 
 const AppList: React.VFC<AppListProps> = function AppList(props: AppListProps) {
   const { apps, viewer } = props;
   const projectQuotaReached = isProjectQuotaReached(viewer);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (
+      (apps === null || apps.length === 0) &&
+      !viewer.isOnboardingSurveyCompleted
+    ) {
+      navigate("/onboarding-survey");
+    }
+  }, [apps, viewer, navigate]);
 
   const onCreateClick = useCallback(
     (e) => {
@@ -144,7 +167,8 @@ const AppsScreen: React.VFC = function AppsScreen() {
     refetch: refetchAppList,
   } = useAppListQuery();
 
-  if (loadingViewer || loadingAppList) {
+  // If viewer is null, <Authenticated> will redirect to login screen.
+  if (loadingViewer || loadingAppList || viewer == null) {
     return <ShowLoading />;
   }
 
@@ -156,7 +180,7 @@ const AppsScreen: React.VFC = function AppsScreen() {
     return <ShowError error={errorAppList} onRetry={refetchAppList} />;
   }
 
-  return <AppList apps={apps ?? null} viewer={viewer ?? null} />;
+  return <AppList apps={apps ?? null} viewer={viewer} />;
 };
 
 export default AppsScreen;

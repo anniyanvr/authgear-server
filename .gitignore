@@ -6,9 +6,14 @@
 /var/authgear.features.yaml
 /var/deno
 /var/templates
+/var/static
 /tls-cert.pem
 /tls-key.pem
 .parcel-cache/
+
+# direnv
+.envrc
+.direnv/
 
 # docker
 docker-compose.override.yaml
@@ -16,11 +21,16 @@ docker-compose.override.yaml
 # vs code
 .vscode
 
+# .editorconfig
+.editorconfig
+
 # node
 node_modules/
+.eslintcache
+.stylelintcache
 
 # compiled static files
-resources/authgear/templates/en/web/__generated_asset.html
+resources/authgear/templates/en/web/**/__generated_asset.html
 resources/authgear/generated/*
 !resources/authgear/generated/.gitkeep
 resources/portal/static/
@@ -32,3 +42,10 @@ pkg/lib/webparcel/parcel_gen.go
 
 # OSX
 .DS_Store
+
+# custom build of k6
+/k6/k6
+
+# Ignore generated credentials from google-github-actions/auth
+# See https://github.com/google-github-actions/auth?tab=readme-ov-file#prerequisites
+gha-creds-*.json

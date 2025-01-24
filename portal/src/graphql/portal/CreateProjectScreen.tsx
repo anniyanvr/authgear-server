@@ -1,5 +1,5 @@
-import React, { useCallback, useContext, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useCallback, useContext, useEffect, useMemo } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { FormattedMessage, Context } from "@oursky/react-messageformat";
 import WizardScreenLayout from "../../WizardScreenLayout";
 import WizardContentLayout, { WizardTitle } from "../../WizardContentLayout";
@@ -13,14 +13,10 @@ import { useCreateAppMutation } from "./mutations/createAppMutation";
 import { useAppListQuery } from "./query/appListQuery";
 import { ErrorParseRule, makeReasonErrorParseRule } from "../../error/parse";
 import { useSimpleForm } from "../../hook/useSimpleForm";
-import { randomProjectName } from "../../util/projectname";
-import { extractRawID } from "../../util/graphql";
 import {
-  AuthgearGTMEvent,
-  AuthgearGTMEventType,
-  useAuthgearGTMEventBase,
-  useGTMDispatch,
-} from "../../GTMProvider";
+  randomProjectName,
+  projectNameWithCompanyName,
+} from "../../util/projectname";
 import PrimaryButton from "../../PrimaryButton";
 
 interface FormState {
@@ -62,12 +58,29 @@ interface CreateProjectScreenContentProps {
   numberOfApps: number;
 }
 
+interface LocationState {
+  company_name: string;
+}
+
+function processCompanyName(companyName: string): string {
+  return companyName
+    .trim()
+    .split("")
+    .filter((char) => /[a-zA-Z\s]/.exec(char))
+    .join("")
+    .split(" ")
+    .filter((word) => word !== "")
+    .join("-")
+    .toLowerCase();
+}
+
 function CreateProjectScreenContent(props: CreateProjectScreenContentProps) {
   const { numberOfApps } = props;
   const navigate = useNavigate();
   const { appHostSuffix } = useSystemConfig();
   const { createApp } = useCreateAppMutation();
   const { renderToString } = useContext(Context);
+  const { state } = useLocation();
 
   const submit = useCallback(
     async (state: FormState) => {
@@ -76,10 +89,21 @@ function CreateProjectScreenContent(props: CreateProjectScreenContentProps) {
     [createApp]
   );
 
+  const defaultState = useMemo(() => {
+    const typedState: LocationState | null = state as LocationState | null;
+    const defaultState = makeDefaultState();
+    if (typedState) {
+      const intermediateName = processCompanyName(typedState.company_name);
+      if (intermediateName !== "")
+        defaultState.appID = projectNameWithCompanyName(intermediateName);
+    }
+    return defaultState;
+  }, [state]);
+
   const form = useSimpleForm({
     stateMode:
       "ConstantInitialStateAndResetCurrentStatetoInitialStateAfterSave",
-    defaultState: makeDefaultState(),
+    defaultState: defaultState,
     submit,
   });
 
@@ -109,24 +133,13 @@ function CreateProjectScreenContent(props: CreateProjectScreenContentProps) {
     [save]
   );
 
-  const sendDataToGTM = useGTMDispatch();
-  const gtmEventBase = useAuthgearGTMEventBase();
   useEffect(() => {
     if (form.submissionResult) {
       const appID = form.submissionResult;
-      const rawAppID = extractRawID(appID);
       // assign app id to the event after creating the app
-      const event: AuthgearGTMEvent = {
-        ...gtmEventBase,
-        event: AuthgearGTMEventType.CreatedProject,
-        event_data: {
-          app_id: rawAppID,
-        },
-      };
-      sendDataToGTM(event);
       navigate(`/project/${encodeURIComponent(appID)}/wizard`);
     }
-  }, [form, navigate, sendDataToGTM, gtmEventBase]);
+  }, [form, navigate]);
 
   return (
     <FormProvider loading={isUpdating} error={updateError}>

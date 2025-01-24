@@ -1,6 +1,8 @@
 package viewmodels
 
 import (
+	"context"
+
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
@@ -10,6 +12,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/accesscontrol"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/labelutil"
+	"github.com/authgear/authgear-server/pkg/util/setutil"
 	"github.com/authgear/authgear-server/pkg/util/territoryutil"
 	"github.com/authgear/authgear-server/pkg/util/tzutil"
 )
@@ -72,14 +75,18 @@ type SettingsProfileViewModel struct {
 	AddressCountry       string
 
 	CustomAttributes []CustomAttribute
+
+	EmailIdentityIDs    []string
+	UsernameIdentityIDs []string
+	PhoneIdentityIDs    []string
 }
 
 type SettingsProfileUserService interface {
-	Get(userID string, role accesscontrol.Role) (*model.User, error)
+	Get(ctx context.Context, userID string, role accesscontrol.Role) (*model.User, error)
 }
 
 type SettingsProfileIdentityService interface {
-	ListByUser(userID string) ([]*identity.Info, error)
+	ListByUser(ctx context.Context, userID string) ([]*identity.Info, error)
 }
 
 type SettingsProfileViewModeler struct {
@@ -90,11 +97,16 @@ type SettingsProfileViewModeler struct {
 	Clock             clock.Clock
 }
 
-func (m *SettingsProfileViewModeler) ViewModel(userID string) (*SettingsProfileViewModel, error) {
-	var emails []string
-	var phoneNumbers []string
-	var preferredUsernames []string
-	identities, err := m.Identities.ListByUser(userID)
+// nolint: gocognit
+func (m *SettingsProfileViewModeler) ViewModel(ctx context.Context, userID string) (*SettingsProfileViewModel, error) {
+	var emailIdentityIDs []string = []string{}
+	var usernameIdentityIDs []string = []string{}
+	var phoneIdentityIDs []string = []string{}
+
+	var emails setutil.Set[string]
+	var phoneNumbers setutil.Set[string]
+	var preferredUsernames setutil.Set[string]
+	identities, err := m.Identities.ListByUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,17 +114,28 @@ func (m *SettingsProfileViewModeler) ViewModel(userID string) (*SettingsProfileV
 	for _, iden := range identities {
 		standardClaims := iden.IdentityAwareStandardClaims()
 		if email, ok := standardClaims[model.ClaimEmail]; ok && email != "" {
-			emails = append(emails, email)
+			emails.Add(email)
 		}
 		if phoneNumber, ok := standardClaims[model.ClaimPhoneNumber]; ok && phoneNumber != "" {
-			phoneNumbers = append(phoneNumbers, phoneNumber)
+			phoneNumbers.Add(phoneNumber)
 		}
 		if preferredUsername, ok := standardClaims[model.ClaimPreferredUsername]; ok && preferredUsername != "" {
-			preferredUsernames = append(preferredUsernames, preferredUsername)
+			preferredUsernames.Add(preferredUsername)
+		}
+
+		if iden.Type == model.IdentityTypeLoginID {
+			switch iden.LoginID.LoginIDType {
+			case model.LoginIDKeyTypeEmail:
+				emailIdentityIDs = append(emailIdentityIDs, iden.ID)
+			case model.LoginIDKeyTypePhone:
+				phoneIdentityIDs = append(phoneIdentityIDs, iden.ID)
+			case model.LoginIDKeyTypeUsername:
+				usernameIdentityIDs = append(usernameIdentityIDs, iden.ID)
+			}
 		}
 	}
 
-	user, err := m.Users.Get(userID, config.RoleEndUser)
+	user, err := m.Users.Get(ctx, userID, config.RoleEndUser)
 	if err != nil {
 		return nil, err
 	}
@@ -228,16 +251,16 @@ func (m *SettingsProfileViewModeler) ViewModel(userID string) (*SettingsProfileV
 
 	viewModel := &SettingsProfileViewModel{
 		FormattedName:    stdattrs.T(stdAttrs).FormattedName(),
-		EndUserAccountID: user.EndUserAccountID(),
+		EndUserAccountID: user.EndUserAccountID,
 		FormattedNames:   stdattrs.T(stdAttrs).FormattedNames(),
 		Today:            now.Format("2006-01-02"),
 
 		Timezones:          timezones,
 		Alpha2:             territoryutil.Alpha2,
 		Languages:          m.Localization.SupportedLanguages,
-		Emails:             emails,
-		PhoneNumbers:       phoneNumbers,
-		PreferredUsernames: preferredUsernames,
+		Emails:             emails.Keys(),
+		PhoneNumbers:       phoneNumbers.Keys(),
+		PreferredUsernames: preferredUsernames.Keys(),
 
 		IsReadable:                    isReadable,
 		IsEditable:                    isEditable,
@@ -267,6 +290,10 @@ func (m *SettingsProfileViewModeler) ViewModel(userID string) (*SettingsProfileV
 		AddressCountry:       addressStr(stdattrs.Country),
 
 		CustomAttributes: customAttrs,
+
+		EmailIdentityIDs:    emailIdentityIDs,
+		UsernameIdentityIDs: usernameIdentityIDs,
+		PhoneIdentityIDs:    phoneIdentityIDs,
 	}
 
 	return viewModel, nil

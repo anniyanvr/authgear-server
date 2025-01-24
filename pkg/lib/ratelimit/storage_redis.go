@@ -2,24 +2,35 @@ package ratelimit
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	goredis "github.com/go-redis/redis/v8"
-
-	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/appredis"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis/globalredis"
 )
 
 type StorageRedis struct {
-	AppID config.AppID
-	Redis *appredis.Handle
+	Redis *redis.Handle
 }
 
-func (s StorageRedis) Update(spec BucketSpec, delta int) (ok bool, timeToAct time.Time, err error) {
-	err = s.Redis.WithConn(func(conn *goredis.Conn) error {
-		result, err := gcra(context.Background(), conn,
-			redisBucketKey(s.AppID, spec), spec.Period, spec.Burst, delta,
+func NewAppStorageRedis(redis *appredis.Handle) *StorageRedis {
+	if redis == nil {
+		return nil
+	}
+	return &StorageRedis{Redis: redis.Handle}
+}
+
+func NewGlobalStorageRedis(redis *globalredis.Handle) *StorageRedis {
+	if redis == nil {
+		return nil
+	}
+	return &StorageRedis{Redis: redis.Handle}
+}
+
+func (s *StorageRedis) Update(ctx context.Context, key string, period time.Duration, burst int, delta int) (ok bool, timeToAct time.Time, err error) {
+	err = s.Redis.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
+		result, err := gcra(ctx, conn,
+			key, period, burst, delta,
 		)
 		if err != nil {
 			return err
@@ -29,11 +40,4 @@ func (s StorageRedis) Update(spec BucketSpec, delta int) (ok bool, timeToAct tim
 		return nil
 	})
 	return
-}
-
-func redisBucketKey(appID config.AppID, spec BucketSpec) string {
-	if spec.IsGlobal {
-		return fmt.Sprintf("rate-limit:%s", spec.Key())
-	}
-	return fmt.Sprintf("app:%s:rate-limit:%s", appID, spec.Key())
 }

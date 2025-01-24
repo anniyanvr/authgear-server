@@ -1,0 +1,91 @@
+{{ template "authflowv2/__page_frame.html" . }}
+{{ define "page-content" }}
+
+  {{ $err_map := (resolveError $.RawError (dict 
+    "codeInput" (dict
+      "by_reason"                    (list "ValidationFailed")
+    )
+  )) }}
+
+  {{ $input_err := index $err_map "codeInput" }}
+  {{ $unknown_err := index $err_map "unknown" }}
+  {{ $has_input_err := not (isNil $input_err) }}
+  {{ $has_unknown_err := not (isNil $unknown_err )}}
+
+  {{ $input_error_message := "" }}
+  {{ if $has_input_err }}
+    {{ $input_error_message = include "authflowv2/__error.html" (merge (dict "Error" $input_err) $) }}
+  {{ end }}
+
+  {{ $unknown_error_message := "" }}
+  {{ if $has_unknown_err }}
+    {{ $unknown_error_message = (include "authflowv2/__error.html" (merge (dict "Error" $unknown_err) $)) }}
+  {{ end }}
+
+  <div class="flex flex-col gap-y-8 flex-1-0-auto">
+    <div class="screen-title-description">
+      <h1 class="screen-title">
+        {{ include "v2.page.enter-recovery-code.default.title" nil }}
+      </h1>
+
+      <h2 class="screen-description">
+        {{ if eq $.FlowType "reauth" }}
+          {{ include "v2.page.enter-recovery-code.reauth.description" nil }}
+        {{ else }}
+          {{ include "v2.page.enter-recovery-code.default.description" nil }}
+        {{ end }}
+      </h2>
+
+      {{ template "authflowv2/__alert_message.html"
+        (dict
+          "Type" "error"
+          "Classname" "mt-4"
+          "Message" $unknown_error_message
+        )
+      }}
+    </div>
+
+    <form
+      id="main-form"
+      method="post"
+      novalidate
+      data-controller="turbo-form"
+      data-action="submit->turbo-form#submitForm"
+    >
+      {{ $.CSRFField }}
+
+      <input
+        form="main-form"
+        {{ if $.ShouldFocusInput }}autofocus{{ end }}
+        class="input w-full {{ if $.Error }}input--error{{end}}"
+        type="text"
+        autocomplete="one-time-code"
+        autocapitalize="characters"
+        name="x_recovery_code"
+        placeholder="{{ include "v2.page.enter-recovery-code.default.enter-recovery-code-placeholder" nil }}"
+      >
+
+      {{ if $has_input_err }}
+      <p class="input__error-message mt-2">
+        {{ $input_error_message }}
+      </p>
+      {{ end }}
+
+      {{- if $.DeviceTokenEnabled }}
+        {{ template "authflowv2/__device_token_checkbox.html" (dict "Form" "main-form" "Classname" "mt-4") }}
+      {{- end }}
+
+      <button
+        class="mt-4 primary-btn w-full"
+        type="submit"
+        name="x_action"
+        value=""
+        data-authgear-event="authgear.button.enter_recovery_code"
+      >
+        {{ include "v2.component.button.default.label-continue" nil }}
+      </button>
+    </form>
+
+  {{ template "authflowv2/__authflow_branch.html" . }}
+  </div>
+{{ end }}

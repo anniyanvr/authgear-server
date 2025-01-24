@@ -1,0 +1,78 @@
+{{ template "authflowv2/__page_frame.html" . }}
+{{ define "page-content" }}
+
+  {{ $err_map := (resolveError $.RawError (dict 
+    "otpInput" (dict
+      "by_reason"                    (list "InvalidCredentials")
+    )
+  )) }}
+
+  {{ $otp_err := index $err_map "otpInput" }}
+  {{ $unknown_err := index $err_map "unknown" }}
+  {{ $has_otp_err := not (isNil $otp_err) }}
+  {{ $has_unknown_err := not (isNil $unknown_err )}}
+
+  {{ $otp_error_message := "" }}
+  {{ if $has_otp_err }}
+    {{ $otp_error_message = include "authflowv2/__error.html" (merge (dict "Error" $otp_err) $) }}
+  {{ end }}
+
+  {{ $unknown_error_message := "" }}
+  {{ if $has_unknown_err }}
+    {{ $unknown_error_message = (include "authflowv2/__error.html" (merge (dict "Error" $unknown_err) $)) }}
+  {{ end }}
+
+  <div class="flex flex-col gap-y-8 flex-1-0-auto">
+    <div class="screen-title-description">
+      <h1 class="screen-title">
+        {{ include "v2.page.enter-totp.default.title" nil }}
+      </h1>
+      <h2 class="screen-description">
+        {{ if eq $.FlowType "reauth" }}
+          {{ include "v2.page.enter-totp.reauth.description" . }}
+        {{ else }}
+          {{ include "v2.page.enter-totp.default.description" . }}
+        {{ end }}
+      </h2>
+
+      {{ template "authflowv2/__alert_message.html"
+        (dict
+          "Type" "error"
+          "Classname" "mt-4"
+          "Message" $unknown_error_message
+        )
+      }}
+    </div>
+    <div>
+      <form
+        id="main-form"
+        method="post"
+        novalidate
+        data-restore-form="false"
+        data-controller="turbo-form"
+        data-action="submit->turbo-form#submitForm"
+      >
+        {{ $.CSRFField }}
+      </form>
+
+      {{ template "authflowv2/__otp_input.html"
+        (dict
+          "CSRFField" $.CSRFField
+          "FormName" "main-form"
+          "CodeLength" 6
+          "AutoFocus" $.ShouldFocusInput
+          "Disabled" $.FailedAttemptRateLimitExceeded
+          "SubmitEvent" "authgear.button.enter_totp"
+          "ErrorMessage" $otp_error_message
+          "ResendButtonHidden" true
+        )
+      }}
+
+      {{ if $.DeviceTokenEnabled }}
+        {{ template "authflowv2/__device_token_checkbox.html" (dict "Form" "main-form" "Classname" "mt-4") }}
+      {{ end }}
+    </div>
+
+    {{ template "authflowv2/__authflow_branch.html" $ }}
+  </div>
+{{ end }}

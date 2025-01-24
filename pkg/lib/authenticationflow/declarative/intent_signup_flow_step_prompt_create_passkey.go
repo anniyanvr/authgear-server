@@ -22,9 +22,31 @@ type IntentSignupFlowStepPromptCreatePasskey struct {
 }
 
 var _ authflow.Intent = &IntentSignupFlowStepPromptCreatePasskey{}
+var _ authflow.Milestone = &IntentSignupFlowStepPromptCreatePasskey{}
+var _ MilestoneSwitchToExistingUser = &IntentSignupFlowStepPromptCreatePasskey{}
 
 func (*IntentSignupFlowStepPromptCreatePasskey) Kind() string {
 	return "IntentSignupFlowStepPromptCreatePasskey"
+}
+
+func (i *IntentSignupFlowStepPromptCreatePasskey) Milestone() {}
+func (i *IntentSignupFlowStepPromptCreatePasskey) MilestoneSwitchToExistingUser(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows, newUserID string) error {
+	i.UserID = newUserID
+
+	milestoneDoCreateIdentity, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateIdentity](flows)
+	if ok {
+		iden := milestoneDoCreateIdentity.MilestoneDoCreateIdentity()
+		milestoneDoCreateIdentity.MilestoneDoCreateIdentityUpdate(iden.UpdateUserID(newUserID))
+	}
+
+	milestoneDoCreateAuthenticator, _, ok := authflow.FindMilestoneInCurrentFlow[MilestoneDoCreateAuthenticator](flows)
+	if ok {
+		authn := milestoneDoCreateAuthenticator.MilestoneDoCreateAuthenticator()
+		milestoneDoCreateAuthenticator.MilestoneDoCreateAuthenticatorUpdate(authn.UpdateUserID(newUserID))
+
+	}
+
+	return nil
 }
 
 func (i *IntentSignupFlowStepPromptCreatePasskey) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
@@ -55,7 +77,7 @@ func (i *IntentSignupFlowStepPromptCreatePasskey) ReactTo(ctx context.Context, d
 		return authflow.NewNodeSimple(&NodeSentinel{}), nil
 	}
 
-	ais, err := deps.Authenticators.List(
+	ais, err := deps.Authenticators.List(ctx,
 		i.UserID,
 		authenticator.KeepKind(authenticator.KindPrimary),
 		authenticator.KeepType(model.AuthenticatorTypePasskey),
@@ -70,7 +92,7 @@ func (i *IntentSignupFlowStepPromptCreatePasskey) ReactTo(ctx context.Context, d
 	}
 
 	// Otherwise it is OK to prompt.
-	n, err := NewNodePromptCreatePasskey(deps, &NodePromptCreatePasskey{
+	n, err := NewNodePromptCreatePasskey(ctx, deps, &NodePromptCreatePasskey{
 		JSONPointer: i.JSONPointer,
 		UserID:      i.UserID,
 	})

@@ -1,0 +1,31 @@
+{{ define "authflowv2/__settings_page_frame.html" }}
+{{ template "authflowv2/__base_page_frame.html" . }}
+{{ end }}
+
+{{ define "page-frame-content" }}
+
+<div
+  class="flex flex-col flex-1-0-auto"
+>
+  {{ template "web/authflowv2/settings_layout.html" . }}
+</div>
+{{ end }}
+
+{{ define "widget" }}
+  <div class="widget widget--settings">
+    <div class="widget-content widget-content--settings">
+      <div class="widget-content__item--settings">
+        {{ block "page-navbar" . }}{{ end }}
+      </div>
+      {{ template "authflowv2/__alert_message.html"
+        (dict
+          "Type" "error"
+          "Message" (include "authflowv2/__error.html" .)
+          "Classname" "widget-content__alert--settings"
+        )
+      }}
+      {{ template "page-content" . }}
+      {{ template "authflowv2/__lockout.html" . }}
+    </div>
+  </div>
+{{ end }}

@@ -1,0 +1,125 @@
+{{ template "authflowv2/__settings_page_frame.html" . }}
+
+{{ define "page-navbar" }}
+  {{ $title := "" }}
+  {{ if eq $.PhoneOTPMode "whatsapp" }}
+    {{ $title = translate "v2.page.settings-oob-otp-sms.default.title--whatsapp" nil }}
+  {{ else if eq $.PhoneOTPMode "sms" }}
+    {{ $title = translate "v2.page.settings-oob-otp-sms.default.title--sms" nil }}
+  {{ else }}
+    {{ $title = translate "v2.page.settings-oob-otp-sms.default.title--whatsapp-or-sms" nil }}
+  {{ end }}
+  {{ if eq $.OOBOTPType "oob_otp_email" }}
+    {{ $title = (translate "v2.page.settings-oob-otp-email.default.title" nil) }}
+  {{ end }}
+  {{ template "authflowv2/__navbar.html"
+     (dict
+        "BackTitle" (translate "v2.component.navbar.default.item-back-button-label" nil)
+        "BackHref" (call $.MakeURL "/settings/mfa")
+        "Title" $title
+     )
+  }}
+{{ end }}
+
+{{ define "page-content" }}
+<div>
+  {{ if $.OOBOTPAuthenticators }}
+    <ul>
+      {{ $ctx := .}}
+      {{ range $.OOBOTPAuthenticators }}
+        <li>
+          {{ $label := .Phone }}
+          {{ if eq $.OOBOTPType "oob_otp_email" }}
+            {{ $label = .Email }}
+          {{ end }}
+          {{ template "authflowv2/__settings_item.html"
+            (dict
+              "Label" $label
+              "WithArrow" false
+              "ActionButton" (include "__settings_oob_otp_item_delete_button.html" (dict "DialogID" .ID))
+              "SupplementaryNote" (include "__settings_oob_otp_item_added_at.html" .)
+            )
+          }}
+
+          {{ $remove_dialog_title := (translate "v2.page.settings-oob-otp-sms.default.remove-oob-otp-dialog-title" nil) }}
+          {{ $remove_dialog_description := (translate "v2.page.settings-oob-otp-sms.default.remove-oob-otp-dialog-description" nil) }}
+          {{ if eq $.OOBOTPType "oob_otp_email" }}
+            {{ $remove_dialog_title = (translate "v2.page.settings-oob-otp-email.default.remove-oob-otp-dialog-title" nil) }}
+            {{ $remove_dialog_description = (translate "v2.page.settings-oob-otp-email.default.remove-oob-otp-dialog-description" nil) }}
+          {{ end }}
+
+          {{ template "authflowv2/__settings_dialog.html"
+            (dict
+              "Ctx" $ctx
+              "DialogID" .ID
+              "Title" $remove_dialog_title
+              "Description" $remove_dialog_description
+              "FormContent" (include "__settings_oob_otp_dialog_remove_input.html" (dict "AuthenticatorID" .ID "CSRFField" $.CSRFField))
+              "Buttons"
+                (list
+                  (dict
+                    "Type" "Destructive"
+                    "Label" (include "v2.component.button.default.label-remove" nil)
+                    "Value" "remove"
+                    "Event" "authgear.button.mfa_oob_otp"
+                  )
+                  (dict
+                    "Type" "Cancel"
+                    "Label" (include "v2.component.button.default.label-cancel" nil)
+                  )
+                )
+          )}}
+        </li>
+      {{ end }}
+    </ul>
+  {{ end }}
+
+  {{ $href := (call $.MakeURL (printf "/settings/mfa/create_oob_otp_%s" $.OOBOTPChannel)) }}
+  <a
+    class="settings-link-btn mt-6 block"
+    href="{{ $href }}"
+  >
+    {{ $label := "" }}
+    {{ if eq $.PhoneOTPMode "whatsapp" }}
+      {{ $label = translate "v2.page.settings-oob-otp.default.oob-otp-sms-button-label--whatsapp" nil }}
+    {{ else if eq $.PhoneOTPMode "sms" }}
+      {{ $label = translate "v2.page.settings-oob-otp.default.oob-otp-sms-button-label--sms" nil }}
+    {{ else }}
+      {{ $label = translate "v2.page.settings-oob-otp.default.oob-otp-sms-button-label--whatsapp-or-sms" nil }}
+    {{ end }}
+    {{ if eq $.OOBOTPType "email" }}
+      {{ $label = (translate "v2.page.settings-oob-otp.default.oob-otp-email-button-label" nil) }}
+    {{ end }}
+    {{ $label }}
+  </a>
+</div>
+{{ end }}
+
+
+{{ define "__settings_oob_otp_item_added_at.html" }}
+<span>
+  {{
+    translate "v2.page.settings-oob-otp.default.added-at-label"
+      (dict
+        "time" .CreatedAt
+        "rfc3339" (rfc3339 .CreatedAt)
+      )
+  }}
+</span>
+{{ end }}
+
+{{ define "__settings_oob_otp_item_delete_button.html" }}
+<button
+  type="button"
+  data-controller="dialog"
+  data-action="click->dialog#open"
+  id="{{ .DialogID }}"
+>
+  <i class="material-icons text-[1.5rem] text-[var(--color-neutral-200)]">close</i>
+</button>
+{{ end }}
+
+{{ define "__settings_oob_otp_dialog_remove_input.html" }}
+  {{ $.CSRFField }}
+  <input type="hidden" name="x_authenticator_id" value="{{ $.AuthenticatorID }}">
+{{ end }}

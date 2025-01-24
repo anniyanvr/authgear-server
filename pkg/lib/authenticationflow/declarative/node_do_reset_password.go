@@ -25,10 +25,10 @@ func (*NodeDoResetPassword) Kind() string {
 func (n *NodeDoResetPassword) GetEffects(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) ([]authflow.Effect, error) {
 	return []authflow.Effect{
 		authflow.OnCommitEffect(func(ctx context.Context, deps *authflow.Dependencies) error {
-			milestone, ok := authflow.FindMilestone[MilestoneDoUseAccountRecoveryDestination](flows.Root)
+			milestone, ok := n.findDestination(flows)
 			if ok {
 				dest := milestone.MilestoneDoUseAccountRecoveryDestination()
-				return deps.ResetPassword.ResetPasswordWithTarget(
+				return deps.ResetPassword.ResetPasswordWithTarget(ctx,
 					dest.TargetLoginID,
 					n.Code,
 					n.NewPassword,
@@ -37,8 +37,17 @@ func (n *NodeDoResetPassword) GetEffects(ctx context.Context, deps *authflow.Dep
 				)
 			} else {
 				// MilestoneDoUseAccountRecoveryDestination might not exist if the flow is restored
-				return deps.ResetPassword.ResetPassword(n.Code, n.NewPassword)
+				return deps.ResetPassword.ResetPasswordByEndUser(ctx, n.Code, n.NewPassword)
 			}
 		}),
 	}, nil
+}
+
+func (n *NodeDoResetPassword) findDestination(flows authflow.Flows) (MilestoneDoUseAccountRecoveryDestination, bool) {
+	ms := authflow.FindAllMilestones[MilestoneDoUseAccountRecoveryDestination](flows.Root)
+	if len(ms) == 0 {
+		return nil, false
+	}
+	// Otherwise use the first one we find.
+	return ms[0], true
 }

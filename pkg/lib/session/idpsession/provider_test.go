@@ -1,6 +1,7 @@
 package idpsession
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 	"time"
@@ -16,18 +17,13 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/clock"
 )
 
-type mockAccessEventProvider struct{}
-
-func (*mockAccessEventProvider) InitStream(sessionID string, event *access.Event) error {
-	return nil
-}
-
 func TestProvider(t *testing.T) {
 	Convey("Provider", t, func() {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 
 		store := NewMockStore(ctrl)
+		accessEvents := NewMockAccessEventProvider(ctrl)
 
 		clock := clock.NewMockClockAt("2020-01-01T00:00:00Z")
 		initialTime := clock.Time
@@ -39,7 +35,7 @@ func TestProvider(t *testing.T) {
 		disabled := false
 		provider := &Provider{
 			Store:        store,
-			AccessEvents: &mockAccessEventProvider{},
+			AccessEvents: accessEvents,
 			TrustProxy:   true,
 			Config: &config.SessionConfig{
 				IdleTimeoutEnabled: &disabled,
@@ -50,12 +46,14 @@ func TestProvider(t *testing.T) {
 
 		Convey("creating session", func() {
 			Convey("should be successful", func() {
-				store.EXPECT().Create(gomock.Any(), initialTime).Return(nil)
+				store.EXPECT().Create(gomock.Any(), gomock.Any(), initialTime).Return(nil)
+				accessEvents.EXPECT().InitStream(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				s, token := provider.MakeSession(&session.Attrs{
 					UserID: "user-id",
 				})
-				err := provider.Create(s)
+				ctx := context.Background()
+				err := provider.Create(ctx, s)
 
 				So(err, ShouldBeNil)
 				So(token, ShouldNotBeEmpty)
@@ -68,9 +66,10 @@ func TestProvider(t *testing.T) {
 						InitialAccess: accessEvent,
 						LastAccess:    accessEvent,
 					},
-					CreatedAt:       initialTime,
-					AuthenticatedAt: initialTime,
-					TokenHash:       s.TokenHash,
+					CreatedAt:                  initialTime,
+					AuthenticatedAt:            initialTime,
+					TokenHash:                  s.TokenHash,
+					ExpireAtForResolvedSession: initialTime,
 				})
 			})
 		})
@@ -85,7 +84,7 @@ func TestProvider(t *testing.T) {
 				AuthenticatedAt: initialTime,
 				TokenHash:       "15be5b9c05673532b445d3295a86afd6b2615775e0233e9798cbe3c846a08d05",
 			}
-			store.EXPECT().Get(gomock.Any()).DoAndReturn(func(id string) (*IDPSession, error) {
+			store.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, id string) (*IDPSession, error) {
 				if id == fixtureSession.ID {
 					return &fixtureSession, nil
 				}
@@ -93,29 +92,33 @@ func TestProvider(t *testing.T) {
 			})
 
 			Convey("should be successful using session token", func() {
-				session, err := provider.GetByToken("session-id.token")
+				ctx := context.Background()
+				session, err := provider.GetByToken(ctx, "session-id.token")
 				So(err, ShouldBeNil)
 				So(session, ShouldResemble, &fixtureSession)
 			})
 
 			Convey("should reject non-existent session", func() {
-				session, err := provider.GetByToken("session-id-unknown.token")
+				ctx := context.Background()
+				session, err := provider.GetByToken(ctx, "session-id-unknown.token")
 				So(err, ShouldBeError, ErrSessionNotFound)
 				So(session, ShouldBeNil)
 			})
 
 			Convey("should reject incorrect token", func() {
-				session, err := provider.GetByToken("session-id.incorrect-token")
+				ctx := context.Background()
+				session, err := provider.GetByToken(ctx, "session-id.incorrect-token")
 				So(err, ShouldBeError, ErrSessionNotFound)
 				So(session, ShouldBeNil)
 
-				session, err = provider.GetByToken("invalid-token")
+				session, err = provider.GetByToken(ctx, "invalid-token")
 				So(err, ShouldBeError, ErrSessionNotFound)
 				So(session, ShouldBeNil)
 			})
 			Convey("should reject if session is expired", func() {
 				clock.AdvanceSeconds(1000000)
-				session, err := provider.GetByToken("session-id.token")
+				ctx := context.Background()
+				session, err := provider.GetByToken(ctx, "session-id.token")
 				So(err, ShouldBeError, ErrSessionNotFound)
 				So(session, ShouldBeNil)
 			})
@@ -143,7 +146,11 @@ func TestProvider(t *testing.T) {
 				Config: cfg,
 				Clock:  clock,
 			}
-			return !provider.CheckSessionExpired(session)
+			expireAtForResolvedSession_before := session.ExpireAtForResolvedSession
+			actual := !provider.CheckSessionExpired(session)
+			expireAtForResolvedSession_after := session.ExpireAtForResolvedSession
+			So(expireAtForResolvedSession_before.Equal(expireAtForResolvedSession_after), ShouldBeTrue)
+			return actual
 		}
 
 		Convey("check session lifetime", func() {

@@ -10,12 +10,14 @@ import (
 	"net/url"
 	"time"
 
-	relay "github.com/authgear/graphql-go-relay"
-	goredis "github.com/go-redis/redis/v8"
 	"github.com/stripe/stripe-go/v72"
 	"github.com/stripe/stripe-go/v72/client"
 	"github.com/stripe/stripe-go/v72/webhook"
 
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
+
+	"github.com/authgear/authgear-server/pkg/lib/config/plan"
+	"github.com/authgear/authgear-server/pkg/lib/infra/redis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/globalredis"
 	portalconfig "github.com/authgear/authgear-server/pkg/portal/config"
 	"github.com/authgear/authgear-server/pkg/portal/model"
@@ -44,7 +46,7 @@ func NewClientAPI(stripeConfig *portalconfig.StripeConfig, logger Logger) *clien
 }
 
 type PlanService interface {
-	ListPlans() ([]*model.Plan, error)
+	ListPlans(ctx context.Context) ([]*plan.Plan, error)
 }
 
 type Cache interface {
@@ -59,7 +61,6 @@ type EndpointsProvider interface {
 type Service struct {
 	ClientAPI         *client.API
 	Logger            Logger
-	Context           context.Context
 	Plans             PlanService
 	GlobalRedisHandle *globalredis.Handle
 	Cache             Cache
@@ -68,15 +69,15 @@ type Service struct {
 	Endpoints         EndpointsProvider
 }
 
-func (s *Service) FetchSubscriptionPlans() (subscriptionPlans []*model.SubscriptionPlan, err error) {
+func (s *Service) FetchSubscriptionPlans(ctx context.Context) (subscriptionPlans []*model.SubscriptionPlan, err error) {
 	item := redisutil.Item{
 		Key:        RedisCacheKeySubscriptionPlans,
 		Expiration: duration.PerHour,
 		Do:         s.fetchSubscriptionPlans,
 	}
 
-	err = s.GlobalRedisHandle.WithConn(func(conn *goredis.Conn) error {
-		bytes, err := s.Cache.Get(s.Context, conn, item)
+	err = s.GlobalRedisHandle.WithConnContext(ctx, func(ctx context.Context, conn redis.Redis_6_0_Cmdable) error {
+		bytes, err := s.Cache.Get(ctx, conn, item)
 		if err != nil {
 			return err
 		}
@@ -93,7 +94,7 @@ func (s *Service) FetchSubscriptionPlans() (subscriptionPlans []*model.Subscript
 	return
 }
 
-func (s *Service) CreateCheckoutSession(appID string, customerEmail string, subscriptionPlan *model.SubscriptionPlan) (*CheckoutSession, error) {
+func (s *Service) CreateCheckoutSession(ctx context.Context, appID string, customerEmail string, subscriptionPlan *model.SubscriptionPlan) (*CheckoutSession, error) {
 	relayGlobalAppID := relay.ToGlobalID("App", appID)
 	billingPageURL := s.Endpoints.BillingEndpointURL(relayGlobalAppID).String()
 	billingRedirectPageURL := s.Endpoints.BillingRedirectEndpointURL(relayGlobalAppID).String()
@@ -102,7 +103,7 @@ func (s *Service) CreateCheckoutSession(appID string, customerEmail string, subs
 
 	params := &stripe.CheckoutSessionParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 			Metadata: map[string]string{
 				MetadataKeyAppID:    appID,
 				MetadataKeyPlanName: subscriptionPlan.Name,
@@ -129,18 +130,18 @@ func (s *Service) CreateCheckoutSession(appID string, customerEmail string, subs
 	return NewCheckoutSession(checkoutSession), nil
 }
 
-func (s *Service) GetSubscriptionPlan(planName string) (*model.SubscriptionPlan, error) {
-	subscriptionPlans, err := s.FetchSubscriptionPlans()
+func (s *Service) GetSubscriptionPlan(ctx context.Context, planName string) (*model.SubscriptionPlan, error) {
+	subscriptionPlans, err := s.FetchSubscriptionPlans(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return s.getSubscriptionPlan(planName, subscriptionPlans)
 }
 
-func (s *Service) FetchCheckoutSession(checkoutSessionID string) (*CheckoutSession, error) {
+func (s *Service) FetchCheckoutSession(ctx context.Context, checkoutSessionID string) (*CheckoutSession, error) {
 	checkoutSession, err := s.ClientAPI.CheckoutSessions.Get(checkoutSessionID, &stripe.CheckoutSessionParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 		},
 	})
 	if err != nil {
@@ -169,13 +170,13 @@ func (s *Service) ConstructEvent(r *http.Request) (Event, error) {
 	return event, err
 }
 
-func (s *Service) CreateSubscriptionIfNotExists(checkoutSessionID string, subscriptionPlans []*model.SubscriptionPlan) error {
+func (s *Service) CreateSubscriptionIfNotExists(ctx context.Context, checkoutSessionID string, subscriptionPlans []*model.SubscriptionPlan) error {
 	// Fetch the checkout session
 	expandSetupIntentPaymentMethod := "setup_intent.payment_method"
 	expandCustomerSubscriptions := "customer.subscriptions"
 	checkoutSession, err := s.ClientAPI.CheckoutSessions.Get(checkoutSessionID, &stripe.CheckoutSessionParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 			Expand:  []*string{&expandSetupIntentPaymentMethod, &expandCustomerSubscriptions},
 		},
 	})
@@ -197,7 +198,7 @@ func (s *Service) CreateSubscriptionIfNotExists(checkoutSessionID string, subscr
 	pm := checkoutSession.SetupIntent.PaymentMethod
 	customerParams := &stripe.CustomerParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 		},
 		InvoiceSettings: &stripe.CustomerInvoiceSettingsParams{
 			DefaultPaymentMethod: stripe.String(pm.ID),
@@ -221,7 +222,7 @@ func (s *Service) CreateSubscriptionIfNotExists(checkoutSessionID string, subscr
 	hasSubscription := false
 	iter := s.ClientAPI.Subscriptions.Search(&stripe.SubscriptionSearchParams{
 		SearchParams: stripe.SearchParams{
-			Context: s.Context,
+			Context: ctx,
 			Query:   fmt.Sprintf("status:'active' AND metadata['app_id']: '%s'", appID),
 		},
 	})
@@ -250,7 +251,7 @@ func (s *Service) CreateSubscriptionIfNotExists(checkoutSessionID string, subscr
 	billingCycleAnchorUnix := billingCycleAnchor.Unix()
 	_, err = s.ClientAPI.Subscriptions.New(&stripe.SubscriptionParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 			Metadata: map[string]string{
 				MetadataKeyAppID:    appID,
 				MetadataKeyPlanName: planName,
@@ -281,19 +282,19 @@ func (s *Service) SetSubscriptionCancelAtPeriodEnd(stripeSubscriptionID string, 
 	return &periodEnd, nil
 }
 
-func (s *Service) fetchSubscriptionPlans() ([]byte, error) {
-	plans, err := s.Plans.ListPlans()
+func (s *Service) fetchSubscriptionPlans(ctx context.Context) ([]byte, error) {
+	plans, err := s.Plans.ListPlans(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	products, err := s.fetchProducts()
+	products, err := s.fetchProducts(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	knownPlanNames := s.intersectPlanNames(plans, products)
-	subscriptionPlans, err := s.convertToSubscriptionPlans(knownPlanNames, products)
+	knownPlansWithVersion := s.intersectPlanNames(plans, products)
+	subscriptionPlans, err := s.convertToSubscriptionPlans(knownPlansWithVersion, products)
 	if err != nil {
 		return nil, err
 	}
@@ -306,14 +307,14 @@ func (s *Service) fetchSubscriptionPlans() ([]byte, error) {
 	return bytes, nil
 }
 
-func (s *Service) fetchProducts() ([]*stripe.Product, error) {
+func (s *Service) fetchProducts(ctx context.Context) ([]*stripe.Product, error) {
 	var products []*stripe.Product
 
 	expandDefaultPrice := "data.default_price"
 	expandTiers := "data.default_price.tiers"
 	listProductParams := &stripe.ProductListParams{
 		ListParams: stripe.ListParams{
-			Context: s.Context,
+			Context: ctx,
 			Expand:  []*string{&expandDefaultPrice, &expandTiers},
 		},
 		Active: stripe.Bool(true),
@@ -330,7 +331,7 @@ func (s *Service) fetchProducts() ([]*stripe.Product, error) {
 	return products, nil
 }
 
-func (s *Service) intersectPlanNames(plans []*model.Plan, products []*stripe.Product) map[string]struct{} {
+func (s *Service) intersectPlanNames(plans []*plan.Plan, products []*stripe.Product) []planWithVersion {
 	// plans can contain free plan that is not a paid plan.
 	// products do not contain non-paid plan.
 	// Therefore, we perform an intersection between the two.
@@ -339,30 +340,46 @@ func (s *Service) intersectPlanNames(plans []*model.Plan, products []*stripe.Pro
 		setA[plan.Name] = struct{}{}
 	}
 
-	setB := make(map[string]struct{})
+	productPlanSet := make(map[string]planWithVersion)
 	for _, product := range products {
-		planName, ok := product.Metadata[MetadataKeyPlanName]
-		if ok && planName != "" {
-			setB[planName] = struct{}{}
+		planName, planNameOk := product.Metadata[MetadataKeyPlanName]
+		version := product.Metadata[MetadataKeyVersion]
+		if planNameOk && planName != "" {
+			planWithVersion := planWithVersion{
+				PlanName: planName,
+				Version:  version,
+			}
+			productPlanSet[planName] = planWithVersion
 		}
 	}
 
-	intersection := make(map[string]struct{})
+	intersection := setutil.Set[string]{}
 
 	for a := range setA {
-		_, ok := setB[a]
+		_, ok := productPlanSet[a]
 		if ok {
 			intersection[a] = struct{}{}
 		}
 	}
 
-	return intersection
+	intersactedProductPlanWithVersions := []planWithVersion{}
+	for _, planName := range intersection.Keys() {
+		planWithVersion, ok := productPlanSet[planName]
+		if !ok {
+			panic(fmt.Errorf("unexpected: product of plan %v does not exist", planName))
+		}
+		intersactedProductPlanWithVersions = append(intersactedProductPlanWithVersions,
+			planWithVersion,
+		)
+	}
+
+	return intersactedProductPlanWithVersions
 }
 
-func (s *Service) convertToSubscriptionPlans(knownPlanNames map[string]struct{}, products []*stripe.Product) ([]*model.SubscriptionPlan, error) {
+func (s *Service) convertToSubscriptionPlans(knownPlansWithVersion []planWithVersion, products []*stripe.Product) ([]*model.SubscriptionPlan, error) {
 	m := make(map[string]*model.SubscriptionPlan)
-	for planName := range knownPlanNames {
-		m[planName] = model.NewSubscriptionPlan(planName)
+	for _, it := range knownPlansWithVersion {
+		m[it.PlanName] = model.NewSubscriptionPlan(it.PlanName, it.Version)
 	}
 
 	for _, product := range products {
@@ -373,8 +390,9 @@ func (s *Service) convertToSubscriptionPlans(knownPlanNames map[string]struct{},
 		}
 
 		// If Product has plan name, then the product only applies to that plan.
-		// Otherwise the product applies to every plan.
+		// Otherwise the product applies to every plan in the same version.
 		planName := product.Metadata[MetadataKeyPlanName]
+		version := product.Metadata[MetadataKeyVersion]
 		if planName != "" {
 			subscriptionPlan, ok := m[planName]
 			// Tolerate product with unknown plan names.
@@ -383,6 +401,9 @@ func (s *Service) convertToSubscriptionPlans(knownPlanNames map[string]struct{},
 			}
 		} else {
 			for _, subscriptionPlan := range m {
+				if subscriptionPlan.Version != version {
+					continue
+				}
 				subscriptionPlan.Prices = append(subscriptionPlan.Prices, price)
 			}
 		}
@@ -518,10 +539,10 @@ func (s *Service) GenerateCustomerPortalSession(appID string, customerID string)
 	return s.ClientAPI.BillingPortalSessions.New(params)
 }
 
-func (s *Service) UpdateSubscription(stripeSubscriptionID string, subscriptionPlan *model.SubscriptionPlan) (err error) {
+func (s *Service) UpdateSubscription(ctx context.Context, stripeSubscriptionID string, subscriptionPlan *model.SubscriptionPlan) (err error) {
 	getParams := &stripe.SubscriptionParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 			Expand:  []*string{stripe.String("items.data.price.product")},
 		},
 	}
@@ -540,7 +561,7 @@ func (s *Service) UpdateSubscription(stripeSubscriptionID string, subscriptionPl
 
 	updateParams := &stripe.SubscriptionParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 			// Update metadata
 			Metadata: sub.Metadata,
 		},
@@ -555,10 +576,10 @@ func (s *Service) UpdateSubscription(stripeSubscriptionID string, subscriptionPl
 	return
 }
 
-func (s *Service) PreviewUpdateSubscription(stripeSubscriptionID string, subscriptionPlan *model.SubscriptionPlan) (preview *model.SubscriptionUpdatePreview, err error) {
+func (s *Service) PreviewUpdateSubscription(ctx context.Context, stripeSubscriptionID string, subscriptionPlan *model.SubscriptionPlan) (preview *model.SubscriptionUpdatePreview, err error) {
 	getParams := &stripe.SubscriptionParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 			Expand:  []*string{stripe.String("items.data.price.product")},
 		},
 	}
@@ -574,7 +595,7 @@ func (s *Service) PreviewUpdateSubscription(stripeSubscriptionID string, subscri
 
 	invoiceParams := &stripe.InvoiceParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 		},
 		Customer:          stripe.String(sub.Customer.ID),
 		Subscription:      stripe.String(sub.ID),
@@ -637,10 +658,10 @@ func (s *Service) deriveSubscriptionItemsParams(sub *stripe.Subscription, subscr
 	return
 }
 
-func (s *Service) GetSubscription(stripeCustomerID string) (*stripe.Subscription, error) {
+func (s *Service) GetSubscription(ctx context.Context, stripeCustomerID string) (*stripe.Subscription, error) {
 	subscriptionListParams := &stripe.SubscriptionListParams{
 		ListParams: stripe.ListParams{
-			Context: s.Context,
+			Context: ctx,
 			Expand: []*string{
 				stripe.String("data.latest_invoice"),
 				stripe.String("data.latest_invoice.payment_intent"),
@@ -662,8 +683,8 @@ func (s *Service) GetSubscription(stripeCustomerID string) (*stripe.Subscription
 	return nil, ErrNoSubscription
 }
 
-func (s *Service) GetLastPaymentError(stripeCustomerID string) (*stripe.Error, error) {
-	sub, err := s.GetSubscription(stripeCustomerID)
+func (s *Service) GetLastPaymentError(ctx context.Context, stripeCustomerID string) (*stripe.Error, error) {
+	sub, err := s.GetSubscription(ctx, stripeCustomerID)
 	if err != nil {
 		if errors.Is(err, ErrNoSubscription) {
 			// customer can have no subscription
@@ -690,7 +711,7 @@ func (s *Service) GetLastPaymentError(stripeCustomerID string) (*stripe.Error, e
 // CancelSubscriptionImmediately removes the subscription immediately
 // It should be used only for failed subscriptions
 // To cancel normal subscription, SetSubscriptionCancelAtPeriodEnd should be used
-func (s *Service) CancelSubscriptionImmediately(subscriptionID string) error {
+func (s *Service) CancelSubscriptionImmediately(ctx context.Context, subscriptionID string) error {
 	// By default, upon subscription cancellation, Stripe will stop automatic
 	// collection of all finalized invoices for the customer. This is intended to
 	// prevent unexpected payment attempts after the customer has canceled a subscription.
@@ -698,7 +719,7 @@ func (s *Service) CancelSubscriptionImmediately(subscriptionID string) error {
 	// https://stripe.com/docs/api/subscriptions/cancel
 	params := &stripe.SubscriptionCancelParams{
 		Params: stripe.Params{
-			Context: s.Context,
+			Context: ctx,
 		},
 	}
 	_, err := s.ClientAPI.Subscriptions.Cancel(subscriptionID, params)

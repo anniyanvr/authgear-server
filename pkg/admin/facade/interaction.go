@@ -1,6 +1,8 @@
 package facade
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/admin/model"
 	apimodel "github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn"
@@ -11,7 +13,7 @@ import (
 )
 
 type InteractionService interface {
-	Perform(intent interaction.Intent, input interface{}) (*interaction.Graph, error)
+	Perform(ctx context.Context, intent interaction.Intent, input interface{}) (*interaction.Graph, error)
 }
 
 // adminAPIOp represents common characteristics applicable to Admin API operations.
@@ -70,15 +72,6 @@ func (i *removeIdentityInput) GetIdentityID() string {
 	return i.identityInfo.ID
 }
 
-type addIdentityInput struct {
-	adminAPIOp
-	identityDef model.IdentityDef
-}
-
-func (i *addIdentityInput) Input() interface{} {
-	return i.identityDef
-}
-
 type updateIdentityInput struct {
 	adminAPIOp
 	identityDef model.IdentityDef
@@ -124,8 +117,11 @@ func (i *addPasswordInput) GetAuthenticationStage() authn.AuthenticationStage {
 
 type resetPasswordInput struct {
 	adminAPIOp
-	userID   string
-	password string
+	userID           string
+	password         string
+	generatePassword bool
+	sendPassword     bool
+	changeOnLogin    bool
 }
 
 var _ nodes.InputResetPassword = &resetPasswordInput{}
@@ -135,6 +131,18 @@ func (i *resetPasswordInput) GetResetPasswordUserID() string {
 }
 func (i *resetPasswordInput) GetNewPassword() string {
 	return i.password
+}
+
+func (i *resetPasswordInput) GeneratePassword() bool {
+	return i.generatePassword
+}
+
+func (i *resetPasswordInput) SendPassword() bool {
+	return i.sendPassword
+}
+
+func (i *resetPasswordInput) ChangeOnLogin() bool {
+	return i.changeOnLogin
 }
 
 type createUserInput struct {

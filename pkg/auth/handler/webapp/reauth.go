@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/authgear/authgear-server/pkg/auth/webapp"
@@ -25,7 +26,7 @@ func (h *ReauthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer ctrl.Serve()
+	defer ctrl.ServeWithDBTx(r.Context())
 
 	webSession := webapp.GetSession(r.Context())
 	userIDHint := ""
@@ -35,7 +36,7 @@ func (h *ReauthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		suppressIDPSessionCookie = webSession.SuppressIDPSessionCookie
 	}
 
-	ctrl.Get(func() error {
+	ctrl.Get(func(ctx context.Context) error {
 		opts := webapp.SessionOptions{
 			RedirectURI: ctrl.RedirectURI(),
 		}
@@ -43,7 +44,7 @@ func (h *ReauthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			UserIDHint:               userIDHint,
 			SuppressIDPSessionCookie: suppressIDPSessionCookie,
 		}
-		result, err := ctrl.EntryPointPost(opts, intent, func() (input interface{}, err error) {
+		result, err := ctrl.EntryPointPost(ctx, opts, intent, func() (input interface{}, err error) {
 			return nil, nil
 		})
 		if err != nil {

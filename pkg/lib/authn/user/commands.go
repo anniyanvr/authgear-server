@@ -1,6 +1,8 @@
 package user
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/event"
 	"github.com/authgear/authgear-server/pkg/api/event/blocking"
 	"github.com/authgear/authgear-server/pkg/api/event/nonblocking"
@@ -12,7 +14,7 @@ import (
 )
 
 type EventService interface {
-	DispatchEvent(payload event.Payload) error
+	DispatchEventOnCommit(ctx context.Context, payload event.Payload) error
 }
 
 type Commands struct {
@@ -23,36 +25,50 @@ type Commands struct {
 	UserProfileConfig  *config.UserProfileConfig
 	StandardAttributes StandardAttributesService
 	CustomAttributes   CustomAttributesService
-	Web3               Web3Service
+	RolesAndGroups     RolesAndGroupsService
 }
 
 func (c *Commands) AfterCreate(
+	ctx context.Context,
 	user *User,
 	identities []*identity.Info,
 	authenticators []*authenticator.Info,
 	isAdminAPI bool,
 ) error {
-	isVerified, err := c.Verification.IsUserVerified(identities)
+	isVerified, err := c.Verification.IsUserVerified(ctx, identities)
 	if err != nil {
 		return err
 	}
 
-	stdAttrs, err := c.StandardAttributes.DeriveStandardAttributes(accesscontrol.RoleGreatest, user.ID, user.UpdatedAt, user.StandardAttributes)
+	stdAttrs, err := c.StandardAttributes.DeriveStandardAttributes(ctx, accesscontrol.RoleGreatest, user.ID, user.UpdatedAt, user.StandardAttributes)
 	if err != nil {
 		return err
 	}
 
-	customAttrs, err := c.CustomAttributes.ReadCustomAttributesInStorageForm(accesscontrol.RoleGreatest, user.ID, user.CustomAttributes)
+	customAttrs, err := c.CustomAttributes.ReadCustomAttributesInStorageForm(ctx, accesscontrol.RoleGreatest, user.ID, user.CustomAttributes)
 	if err != nil {
 		return err
 	}
 
-	web3Info, err := c.Web3.GetWeb3Info(identities)
+	roles, err := c.RolesAndGroups.ListRolesByUserID(ctx, user.ID)
 	if err != nil {
 		return err
 	}
+	roleKeys := make([]string, len(roles))
+	for i, v := range roles {
+		roleKeys[i] = v.Key
+	}
 
-	userModel := newUserModel(user, identities, authenticators, isVerified, stdAttrs, customAttrs, web3Info)
+	groups, err := c.RolesAndGroups.ListGroupsByUserID(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+	groupKeys := make([]string, len(groups))
+	for i, v := range groups {
+		groupKeys[i] = v.Key
+	}
+
+	userModel := newUserModel(user, identities, authenticators, isVerified, stdAttrs, customAttrs, roleKeys, groupKeys)
 	var identityModels []model.Identity
 	for _, i := range identities {
 		identityModels = append(identityModels, i.ToModel())
@@ -72,7 +88,7 @@ func (c *Commands) AfterCreate(
 	}
 
 	for _, e := range events {
-		if err := c.Events.DispatchEvent(e); err != nil {
+		if err := c.Events.DispatchEventOnCommit(ctx, e); err != nil {
 			return err
 		}
 	}

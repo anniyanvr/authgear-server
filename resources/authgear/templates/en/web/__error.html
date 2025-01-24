@@ -46,18 +46,6 @@ $display_error = true }} {{ if eq .Error.reason "PasswordPolicyViolated" }}
     <li id="error-message-passkey-duplicate" class="hidden">
       {{ template "error-passkey-duplicate" }}
     </li>
-    <li id="error-message-metamask-unauthorized" class="hidden">
-      {{ template "error-metamask-unauthorized" }}
-    </li>
-    <li id="error-message-metamask-unsupported-method" class="hidden">
-      {{ template "error-metamask-unsupported-method" }}
-    </li>
-    <li id="error-message-metamask-disconnected" class="hidden">
-      {{ template "error-metamask-disconnected" }}
-    </li>
-    <li id="error-message-failed-to-connect-wallet" class="hidden">
-      {{ template "error-failed-to-connect-wallet" }}
-    </li>
 
     {{ if $display_error }} {{ $info := .Error.info }} {{ if eq .Error.reason
     "ValidationFailed" }} {{ range .Error.info.causes }} {{ if (eq .kind
@@ -117,6 +105,8 @@ $display_error = true }} {{ if eq .Error.reason "PasswordPolicyViolated" }}
     {{ else if (or (eq .details.reason "UsernameReserved") (eq .details.reason
     "UsernameExcludedKeywords")) }}
     <li>{{ template "error-username-not-allowed" }}</li>
+    {{ else if (eq .details.reason "PhoneNumberCountryCodeAllowlist") }}
+    <li>{{ template "error-phone-number-not-allowed" }}</li>
     {{ else }}
     <li>{{ .details.reason }}</li>
     {{ end }} {{ else if (eq .kind "type") }}
@@ -238,8 +228,21 @@ $display_error = true }} {{ if eq .Error.reason "PasswordPolicyViolated" }}
       {{ template "error-invalid-web3-network" (dict "chainID"
       $info.expected_chain_id) }}
     </li>
+    {{ else if eq .Error.reason "InvalidWhatsappUser" }}
+    <li>{{ template "error-invalid-whatsapp-user" }}</li>
+    {{ else if eq .Error.reason "NoAvailableWhatsappClient" }}
+    <li>{{ template "error-no-available-whatsapp-client" }}</li>
+    {{ else if eq .Error.reason "ChangePasswordFailed" }}
+      {{ $cause := .Error.info.cause }}
+        {{ if (eq $cause.kind "PasswordReused") }}
+        <span>{{ template "error-password-change-password-reused" }}</span>
+        {{ else }}
+        <span>{{ .Error.message }}</span>
+        {{ end }}
     {{ else }}
-    <li>{{ template "error-unknown" }}</li>
+    <li>
+      {{ template "error-unknown" }}{{ call $.LogUnknownError .Error }}
+    </li>
     {{ end }} {{ end }}
   </ul>
   <button

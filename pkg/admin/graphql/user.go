@@ -1,8 +1,11 @@
 package graphql
 
 import (
-	relay "github.com/authgear/graphql-go-relay"
+	"context"
+
 	"github.com/graphql-go/graphql"
+
+	relay "github.com/authgear/authgear-server/pkg/graphqlgo/relay"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
 	apimodel "github.com/authgear/authgear-server/pkg/api/model"
@@ -13,6 +16,82 @@ import (
 )
 
 const typeUser = "User"
+
+func init() {
+	// Role and user, group and user forms a initialization cycle.
+	// So we break the cycle by using AddFieldConfig.
+	nodeUser.AddFieldConfig("roles", &graphql.Field{
+		Type:        connRole.ConnectionType,
+		Description: "The list of roles this user has.",
+		Args:        relay.NewConnectionArgs(graphql.FieldConfigArgument{}),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			source := p.Source.(*model.User)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
+
+			roles, err := gqlCtx.RolesGroupsFacade.ListRolesByUserID(ctx, source.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			roleIfaces := make([]interface{}, len(roles))
+			for i, r := range roles {
+				roleIfaces[i] = r
+			}
+
+			args := relay.NewConnectionArguments(p.Args)
+			return graphqlutil.NewConnectionFromArray(roleIfaces, args), nil
+		},
+	})
+
+	nodeUser.AddFieldConfig("groups", &graphql.Field{
+		Type:        connGroup.ConnectionType,
+		Description: "The list of groups this user has.",
+		Args:        relay.NewConnectionArgs(graphql.FieldConfigArgument{}),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			source := p.Source.(*model.User)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
+
+			groups, err := gqlCtx.RolesGroupsFacade.ListGroupsByUserID(ctx, source.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			groupIfaces := make([]interface{}, len(groups))
+			for i, r := range groups {
+				groupIfaces[i] = r
+			}
+
+			args := relay.NewConnectionArguments(p.Args)
+			return graphqlutil.NewConnectionFromArray(groupIfaces, args), nil
+		},
+	})
+
+	nodeUser.AddFieldConfig("effectiveRoles", &graphql.Field{
+		Type:        connRole.ConnectionType,
+		Description: "The list of computed roles this user has.",
+		Args:        relay.NewConnectionArgs(graphql.FieldConfigArgument{}),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			source := p.Source.(*model.User)
+			ctx := p.Context
+			gqlCtx := GQLContext(ctx)
+
+			roles, err := gqlCtx.RolesGroupsFacade.ListEffectiveRolesByUserID(ctx, source.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			roleIfaces := make([]interface{}, len(roles))
+			for i, r := range roles {
+				roleIfaces[i] = r
+			}
+
+			args := relay.NewConnectionArguments(p.Args)
+			return graphqlutil.NewConnectionFromArray(roleIfaces, args), nil
+		},
+	})
+}
 
 var nodeUser = node(
 	graphql.NewObject(graphql.ObjectConfig{
@@ -60,7 +139,8 @@ var nodeUser = node(
 				}),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					source := p.Source.(*model.User)
-					gqlCtx := GQLContext(p.Context)
+					ctx := p.Context
+					gqlCtx := GQLContext(ctx)
 					identityTypeStr, _ := p.Args["identityType"].(string)
 					var identityTypePtr *model.IdentityType
 					if identityTypeStr != "" {
@@ -68,7 +148,7 @@ var nodeUser = node(
 						identityTypePtr = &identityType
 					}
 
-					refs, err := gqlCtx.IdentityFacade.List(source.ID, identityTypePtr)
+					refs, err := gqlCtx.IdentityFacade.List(ctx, source.ID, identityTypePtr)
 					if err != nil {
 						return nil, err
 					}
@@ -129,7 +209,8 @@ var nodeUser = node(
 				}),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					source := p.Source.(*model.User)
-					gqlCtx := GQLContext(p.Context)
+					ctx := p.Context
+					gqlCtx := GQLContext(ctx)
 
 					authenticatorTypeStr, _ := p.Args["authenticatorType"].(string)
 					var authenticatorTypePtr *model.AuthenticatorType
@@ -145,7 +226,7 @@ var nodeUser = node(
 						authenticatorKindPtr = &authenticatorKind
 					}
 
-					refs, err := gqlCtx.AuthenticatorFacade.List(source.ID, authenticatorTypePtr, authenticatorKindPtr)
+					refs, err := gqlCtx.AuthenticatorFacade.List(ctx, source.ID, authenticatorTypePtr, authenticatorKindPtr)
 					if err != nil {
 						return nil, err
 					}
@@ -164,8 +245,9 @@ var nodeUser = node(
 				Description: "The list of user's verified claims",
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					source := p.Source.(*model.User)
+					ctx := p.Context
 					gqlCtx := GQLContext(p.Context)
-					claims, err := gqlCtx.VerificationFacade.Get(source.ID)
+					claims, err := gqlCtx.VerificationFacade.Get(ctx, source.ID)
 					if err != nil {
 						return nil, err
 					}
@@ -179,13 +261,14 @@ var nodeUser = node(
 				Args:        relay.ConnectionArgs,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					source := p.Source.(*model.User)
-					gqlCtx := GQLContext(p.Context)
-					ss, err := gqlCtx.SessionFacade.List(source.ID)
+					ctx := p.Context
+					gqlCtx := GQLContext(ctx)
+					ss, err := gqlCtx.SessionFacade.List(ctx, source.ID)
 					if err != nil {
 						return nil, err
 					}
 
-					sessionModels, err := gqlCtx.SessionListing.FilterForDisplay(ss, nil)
+					sessionModels, err := gqlCtx.SessionListing.FilterForDisplay(ctx, ss, nil)
 					if err != nil {
 						return nil, err
 					}
@@ -204,11 +287,12 @@ var nodeUser = node(
 				Args:        relay.ConnectionArgs,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					source := p.Source.(*model.User)
-					gqlCtx := GQLContext(p.Context)
+					ctx := p.Context
+					gqlCtx := GQLContext(ctx)
 
 					// return third party client authorizations only in admin api
 					filter := oauth.NewKeepThirdPartyAuthorizationFilter(gqlCtx.OAuthConfig)
-					as, err := gqlCtx.AuthorizationFacade.List(source.ID, filter)
+					as, err := gqlCtx.AuthorizationFacade.List(ctx, source.ID, filter)
 					if err != nil {
 						return nil, err
 					}
@@ -278,18 +362,26 @@ var nodeUser = node(
 				Description: "The end user account id constructed based on user's personal data. (e.g. email, phone...etc)",
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					source := p.Source.(*model.User)
-					endUserAccountID := source.EndUserAccountID()
+					endUserAccountID := source.EndUserAccountID
 					if endUserAccountID == "" {
 						return nil, nil
 					}
 					return endUserAccountID, nil
 				},
 			},
+			"mfaGracePeriodEndAt": &graphql.Field{
+				Type:        graphql.DateTime,
+				Description: "Indicate when will user's MFA grace period will end",
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					source := p.Source.(*model.User)
+					return source.MFAGracePeriodtEndAt, nil
+				},
+			},
 		},
 	}),
 	&model.User{},
-	func(ctx *Context, id string) (interface{}, error) {
-		return ctx.Users.Load(id).Value, nil
+	func(ctx context.Context, gqlCtx *Context, id string) (interface{}, error) {
+		return gqlCtx.Users.Load(ctx, id).Value, nil
 	},
 )
 
@@ -299,7 +391,7 @@ func identitiesResolverByType(typ model.IdentityType) func(p graphql.ResolvePara
 	return func(p graphql.ResolveParams) (interface{}, error) {
 		source := p.Source.(*model.User)
 		gqlCtx := GQLContext(p.Context)
-		identities, err := gqlCtx.IdentityFacade.List(source.ID, &typ)
+		identities, err := gqlCtx.IdentityFacade.List(p.Context, source.ID, &typ)
 		if err != nil {
 			return nil, err
 		}
@@ -311,9 +403,10 @@ func identitiesResolverByType(typ model.IdentityType) func(p graphql.ResolvePara
 func authenticatorResolverByTypeAndKind(authenticatorType apimodel.AuthenticatorType, authenticatorKind authenticator.Kind) func(p graphql.ResolveParams) (interface{}, error) {
 	return func(p graphql.ResolveParams) (interface{}, error) {
 		source := p.Source.(*model.User)
-		gqlCtx := GQLContext(p.Context)
+		ctx := p.Context
+		gqlCtx := GQLContext(ctx)
 
-		authenticators, err := gqlCtx.AuthenticatorFacade.List(source.ID, &authenticatorType, &authenticatorKind)
+		authenticators, err := gqlCtx.AuthenticatorFacade.List(ctx, source.ID, &authenticatorType, &authenticatorKind)
 		if err != nil {
 			return nil, err
 		}
@@ -329,9 +422,10 @@ func authenticatorResolverByTypeAndKind(authenticatorType apimodel.Authenticator
 func authenticatorsResolverByTypeAndKind(authenticatorType apimodel.AuthenticatorType, authenticatorKind authenticator.Kind) func(p graphql.ResolveParams) (interface{}, error) {
 	return func(p graphql.ResolveParams) (interface{}, error) {
 		source := p.Source.(*model.User)
-		gqlCtx := GQLContext(p.Context)
+		ctx := p.Context
+		gqlCtx := GQLContext(ctx)
 
-		authenticators, err := gqlCtx.AuthenticatorFacade.List(source.ID, &authenticatorType, &authenticatorKind)
+		authenticators, err := gqlCtx.AuthenticatorFacade.List(ctx, source.ID, &authenticatorType, &authenticatorKind)
 		if err != nil {
 			return nil, err
 		}

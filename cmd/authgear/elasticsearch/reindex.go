@@ -7,20 +7,20 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	"github.com/elastic/go-elasticsearch/v7/esutil"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
-	identityloginid "github.com/authgear/authgear-server/pkg/lib/authn/identity/loginid"
-	identityoauth "github.com/authgear/authgear-server/pkg/lib/authn/identity/oauth"
 	"github.com/authgear/authgear-server/pkg/lib/authn/user"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	libes "github.com/authgear/authgear-server/pkg/lib/elasticsearch"
-	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
-	"github.com/authgear/authgear-server/pkg/util/graphqlutil"
+	"github.com/authgear/authgear-server/pkg/lib/search/reindex"
+	"github.com/authgear/authgear-server/pkg/util/clock"
 )
 
 type queryUserResponse struct {
@@ -35,88 +35,62 @@ type queryUserResponse struct {
 	} `json:"hits"`
 }
 
-type Item struct {
-	Value  interface{}
-	Cursor model.PageCursor
+type ReindexedTimestamp struct {
+	UserID      string
+	ReindexedAt time.Time
+}
+
+type ReindexedTimestamps struct {
+	timestamps []*ReindexedTimestamp
+	mutex      sync.Mutex
+}
+
+func NewReindexedTimestamps() *ReindexedTimestamps {
+	return &ReindexedTimestamps{
+		timestamps: []*ReindexedTimestamp{},
+		mutex:      sync.Mutex{},
+	}
+}
+
+func (r *ReindexedTimestamps) Append(userID string, timestamp time.Time) {
+	r.mutex.Lock()
+	t := &ReindexedTimestamp{
+		UserID:      userID,
+		ReindexedAt: timestamp,
+	}
+	r.timestamps = append(r.timestamps, t)
+	r.mutex.Unlock()
+}
+
+func (r *ReindexedTimestamps) Flush(
+	ctx context.Context,
+	dbHandle *appdb.Handle,
+	userStore *user.Store) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	for _, t := range r.timestamps {
+		err := dbHandle.WithTx(ctx, func(ctx context.Context) error {
+			return userStore.UpdateLastIndexedAt(ctx, []string{t.UserID}, t.ReindexedAt)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	r.timestamps = []*ReindexedTimestamp{}
+	return nil
 }
 
 type Reindexer struct {
-	Handle  *appdb.Handle
-	AppID   config.AppID
-	Users   *user.Store
-	OAuth   *identityoauth.Store
-	LoginID *identityloginid.Store
+	Clock               clock.Clock
+	Handle              *appdb.Handle
+	AppID               config.AppID
+	Users               *user.Store
+	ReindexedTimestamps *ReindexedTimestamps
+
+	SourceProvider *reindex.SourceProvider
 }
 
-func (q *Reindexer) QueryPage(after model.PageCursor, first uint64) ([]Item, error) {
-	users, offset, err := q.Users.QueryPage(user.SortOption{}, graphqlutil.PageArgs{
-		First: &first,
-		After: graphqlutil.Cursor(after),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	models := make([]Item, len(users))
-	for i, u := range users {
-		pageKey := db.PageKey{Offset: offset + uint64(i)}
-		cursor, err := pageKey.ToPageCursor()
-		if err != nil {
-			return nil, err
-		}
-		oauthIdentities, err := q.OAuth.List(u.ID)
-		if err != nil {
-			return nil, err
-		}
-		loginIDIdentities, err := q.LoginID.List(u.ID)
-		if err != nil {
-			return nil, err
-		}
-		// rawStandardAttributes is used in the re-index command
-		// Since the fields that we use for search won't need processing
-		// The re-index command should have greatest permission to access all fields.
-		// To access standard attributes publicly, it should go through
-		// DeriveStandardAttributes func.
-		rawStandardAttributes := u.StandardAttributes
-		raw := &model.ElasticsearchUserRaw{
-			ID:                 u.ID,
-			AppID:              string(q.AppID),
-			CreatedAt:          u.CreatedAt,
-			UpdatedAt:          u.UpdatedAt,
-			LastLoginAt:        u.MostRecentLoginAt,
-			IsDisabled:         u.IsDisabled,
-			StandardAttributes: rawStandardAttributes,
-		}
-
-		var arrClaims []map[string]interface{}
-		for _, oauthI := range oauthIdentities {
-			arrClaims = append(arrClaims, oauthI.Claims)
-			raw.OAuthSubjectID = append(raw.OAuthSubjectID, oauthI.ProviderSubjectID)
-		}
-		for _, loginIDI := range loginIDIdentities {
-			arrClaims = append(arrClaims, loginIDI.Claims)
-		}
-
-		for _, claims := range arrClaims {
-			if email, ok := claims["email"].(string); ok {
-				raw.Email = append(raw.Email, email)
-			}
-			if phoneNumber, ok := claims["phone_number"].(string); ok {
-				raw.PhoneNumber = append(raw.PhoneNumber, phoneNumber)
-			}
-			if preferredUsername, ok := claims["preferred_username"].(string); ok {
-				raw.PreferredUsername = append(raw.PreferredUsername, preferredUsername)
-			}
-		}
-
-		models[i] = Item{Value: raw, Cursor: cursor}
-	}
-
-	return models, nil
-}
-
-func (q *Reindexer) Reindex(es *elasticsearch.Client) (err error) {
-	ctx := context.Background()
+func (q *Reindexer) Reindex(ctx context.Context, es *elasticsearch.Client) (err error) {
 	bulkIndexer, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
 		Client:     es,
 		Index:      libes.IndexNameUser,
@@ -141,6 +115,12 @@ func (q *Reindexer) Reindex(es *elasticsearch.Client) (err error) {
 		return err
 	}
 
+	// Flush timestamps once after closed bulkindexer to ensure all rows are updated
+	err = q.ReindexedTimestamps.Flush(ctx, q.Handle, q.Users)
+	if err != nil {
+		return
+	}
+
 	stats := bulkIndexer.Stats()
 	log.Printf("App (%v): %v indexed; %v deleted; %v failed\n", q.AppID, stats.NumIndexed, stats.NumDeleted, stats.NumFailed)
 	return nil
@@ -151,11 +131,13 @@ func (q *Reindexer) reindex(ctx context.Context, bulkIndexer esutil.BulkIndexer)
 
 	var first uint64 = 50
 	var after model.PageCursor = ""
-	var items []Item
+	var items []reindex.ReindexItem
+	var count = 0
+	startAt := q.Clock.NowUTC()
 
 	for {
-		err = q.Handle.WithTx(func() (err error) {
-			items, err = q.QueryPage(after, first)
+		err = q.Handle.WithTx(ctx, func(ctx context.Context) (err error) {
+			items, err = q.SourceProvider.QueryPage(ctx, after, first)
 			if err != nil {
 				return
 			}
@@ -175,15 +157,17 @@ func (q *Reindexer) reindex(ctx context.Context, bulkIndexer esutil.BulkIndexer)
 
 		// Process the items
 		for _, item := range items {
-			user := item.Value.(*model.ElasticsearchUserRaw)
-			source := libes.RawToSource(user)
-			allUserIDs[user.ID] = struct{}{}
+			source := item.Value
+			allUserIDs[source.ID] = struct{}{}
 
 			var bodyBytes []byte
 			bodyBytes, err = json.Marshal(source)
 			if err != nil {
 				return
 			}
+
+			count += 1
+			log.Printf("App (%v): processing user %v;\n", q.AppID, count)
 
 			err = bulkIndexer.Add(
 				ctx,
@@ -203,11 +187,22 @@ func (q *Reindexer) reindex(ctx context.Context, bulkIndexer esutil.BulkIndexer)
 							fmt.Fprintf(os.Stderr, "%v: %v\n", res.Error.Type, res.Error.Reason)
 						}
 					},
+					OnSuccess: func(
+						ctx context.Context,
+						item esutil.BulkIndexerItem,
+						res esutil.BulkIndexerResponseItem) {
+						q.ReindexedTimestamps.Append(source.ID, startAt)
+					},
 				},
 			)
 			if err != nil {
 				return
 			}
+		}
+
+		err = q.ReindexedTimestamps.Flush(ctx, q.Handle, q.Users)
+		if err != nil {
+			return
 		}
 	}
 

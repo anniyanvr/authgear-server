@@ -1,19 +1,20 @@
 package oob
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
+	"github.com/authgear/authgear-server/pkg/api/internalinterface"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
-	"github.com/authgear/authgear-server/pkg/lib/authn/identity/loginid"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/uuid"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
 
 type LoginIDNormalizerFactory interface {
-	NormalizerWithLoginIDType(loginIDKeyType model.LoginIDKeyType) loginid.Normalizer
+	NormalizerWithLoginIDType(loginIDKeyType model.LoginIDKeyType) internalinterface.LoginIDNormalizer
 }
 
 type Provider struct {
@@ -22,20 +23,20 @@ type Provider struct {
 	Clock                    clock.Clock
 }
 
-func (p *Provider) Get(userID string, id string) (*authenticator.OOBOTP, error) {
-	return p.Store.Get(userID, id)
+func (p *Provider) Get(ctx context.Context, userID string, id string) (*authenticator.OOBOTP, error) {
+	return p.Store.Get(ctx, userID, id)
 }
 
-func (p *Provider) GetMany(ids []string) ([]*authenticator.OOBOTP, error) {
-	return p.Store.GetMany(ids)
+func (p *Provider) GetMany(ctx context.Context, ids []string) ([]*authenticator.OOBOTP, error) {
+	return p.Store.GetMany(ctx, ids)
 }
 
-func (p *Provider) Delete(a *authenticator.OOBOTP) error {
-	return p.Store.Delete(a.ID)
+func (p *Provider) Delete(ctx context.Context, a *authenticator.OOBOTP) error {
+	return p.Store.Delete(ctx, a.ID)
 }
 
-func (p *Provider) List(userID string) ([]*authenticator.OOBOTP, error) {
-	authenticators, err := p.Store.List(userID)
+func (p *Provider) List(ctx context.Context, userID string) ([]*authenticator.OOBOTP, error) {
+	authenticators, err := p.Store.List(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -99,40 +100,44 @@ func (p *Provider) New(id string, userID string, oobAuthenticatorType model.Auth
 	return a, nil
 }
 
-// WithSpec return new authenticator pointer if target is changed
+type UpdateTargetOption struct {
+	NewTarget string
+}
+
+// UpdateTarget return new authenticator pointer if target is changed
 // Otherwise original authenticator will be returned
-func (p *Provider) WithSpec(a *authenticator.OOBOTP, spec *authenticator.OOBOTPSpec) (*authenticator.OOBOTP, error) {
+func (p *Provider) UpdateTarget(a *authenticator.OOBOTP, option UpdateTargetOption) (*authenticator.OOBOTP, bool) {
 	switch a.OOBAuthenticatorType {
 	case model.AuthenticatorTypeOOBEmail:
-		if spec.Email == a.ToTarget() {
-			return a, nil
+		if a.ToTarget() == option.NewTarget {
+			return a, false
 		}
 		newAuth := *a
-		newAuth.Email = spec.Email
-		return &newAuth, nil
+		newAuth.Email = option.NewTarget
+		return &newAuth, true
 	case model.AuthenticatorTypeOOBSMS:
-		if spec.Phone == a.ToTarget() {
-			return a, nil
+		if a.ToTarget() == option.NewTarget {
+			return a, false
 		}
 		newAuth := *a
-		newAuth.Phone = spec.Phone
-		return &newAuth, nil
+		newAuth.Phone = option.NewTarget
+		return &newAuth, true
 	default:
 		panic("oob: incompatible authenticator type:" + a.OOBAuthenticatorType)
 	}
 }
 
-func (p *Provider) Create(a *authenticator.OOBOTP) error {
+func (p *Provider) Create(ctx context.Context, a *authenticator.OOBOTP) error {
 	now := p.Clock.NowUTC()
 	a.CreatedAt = now
 	a.UpdatedAt = now
-	return p.Store.Create(a)
+	return p.Store.Create(ctx, a)
 }
 
-func (p *Provider) Update(a *authenticator.OOBOTP) error {
+func (p *Provider) Update(ctx context.Context, a *authenticator.OOBOTP) error {
 	now := p.Clock.NowUTC()
 	a.UpdatedAt = now
-	return p.Store.Update(a)
+	return p.Store.Update(ctx, a)
 }
 
 func sortAuthenticators(as []*authenticator.OOBOTP) {

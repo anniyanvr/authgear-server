@@ -1,7 +1,17 @@
 import React, { useMemo, useCallback, useContext, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import cn from "classnames";
-import { Dialog, DialogFooter, Icon, List, Text } from "@fluentui/react";
+import {
+  Dialog,
+  DialogFooter,
+  IContextualMenuItem,
+  IContextualMenuProps,
+  Icon,
+  List,
+  MessageBar,
+  MessageBarType,
+  Text,
+} from "@fluentui/react";
 import { FormattedMessage, Context } from "@oursky/react-messageformat";
 
 import { useDeleteAuthenticatorMutation } from "./mutations/deleteAuthenticatorMutation";
@@ -21,10 +31,30 @@ import {
 import { useProvideError } from "../../hook/error";
 import styles from "./UserDetailsAccountSecurity.module.css";
 import { useSystemConfig } from "../../context/SystemConfigContext";
+import { PortalAPIAppConfig, SecondaryAuthenticatorType } from "../../types";
+import Toggle from "../../Toggle";
+import { DateTime } from "luxon";
+import { parseDuration } from "../../util/duration";
+import { SetPasswordExpiredConfirmationDialog } from "../../components/users/SetPasswordExpiredConfirmationDialog";
+import { useConfirmationDialog } from "../../hook/useConfirmationDialog";
+import { useSetPasswordExpiredMutation } from "./mutations/setPasswordExpiredMutation";
+import LinkButton from "../../LinkButton";
+import { useUserQuery } from "./query/userQuery";
+import { parseDate } from "../../util/date";
+import {
+  MFAGracePeriodAction,
+  SetMFAGracePeriodConfirmationDialog,
+} from "../../components/users/SetMFAGracePeriodConfirmationDialog";
+import { useSetMFAGracePeriodMutation } from "./mutations/setMFAGracePeriodMutation";
+import { useRemoveMFAGracePeriodMutation } from "./mutations/removeMFAGracePeriodMutation";
+import { CancelMFAGracePeriodConfirmationDialog } from "../../components/users/CancelMFAGracePeriodConfirmationDialog";
 
 type OOBOTPVerificationMethod = "email" | "phone" | "unknown";
 
 interface UserDetailsAccountSecurityProps {
+  userID: string;
+  authenticationConfig: PortalAPIAppConfig["authentication"];
+  authenticatorConfig: PortalAPIAppConfig["authenticator"];
   identities: Identity[];
   authenticators: Authenticator[];
 }
@@ -39,6 +69,8 @@ interface PasswordAuthenticatorData {
   id: string;
   kind: AuthenticatorKind;
   lastUpdated: string;
+  lastUpdatedInDays: number;
+  manualChangeOnLogin: boolean;
 }
 
 interface TOTPAuthenticatorData {
@@ -58,18 +90,24 @@ interface OOBOTPAuthenticatorData {
 }
 
 interface PasskeyIdentityCellProps extends PasskeyIdentityData {
+  withTopSpacing: boolean;
   showConfirmationDialog: (options: RemoveConfirmationDialogData) => void;
 }
 
 interface PasswordAuthenticatorCellProps extends PasswordAuthenticatorData {
-  showConfirmationDialog: (options: RemoveConfirmationDialogData) => void;
+  withTopSpacing: boolean;
+  forceChangeDaysSinceLastUpdate: number | null;
+  showRemoveConfirmationDialog: (options: RemoveConfirmationDialogData) => void;
+  showMarkAsExpiredConfirmationDialog: () => void;
 }
 
 interface TOTPAuthenticatorCellProps extends TOTPAuthenticatorData {
+  withTopSpacing: boolean;
   showConfirmationDialog: (options: RemoveConfirmationDialogData) => void;
 }
 
 interface OOBOTPAuthenticatorCellProps extends OOBOTPAuthenticatorData {
+  withTopSpacing: boolean;
   showConfirmationDialog: (options: RemoveConfirmationDialogData) => void;
 }
 
@@ -85,6 +123,10 @@ interface RemoveConfirmationDialogProps
   onDismiss: () => void;
   remove?: (id: string) => void;
   loading?: boolean;
+}
+
+interface Add2FAMenuItem extends IContextualMenuItem {
+  key: SecondaryAuthenticatorType;
 }
 
 const LABEL_PLACEHOLDER = "---";
@@ -140,11 +182,19 @@ function constructPasswordAuthenticatorData(
   locale: string
 ): PasswordAuthenticatorData {
   const lastUpdated = formatDatetime(locale, authenticator.updatedAt) ?? "";
+  const manualChangeOnLogin = authenticator.expireAfter
+    ? DateTime.fromISO(authenticator.expireAfter) <= DateTime.utc()
+    : false;
+  const lastUpdatedInDays = Math.round(
+    DateTime.now().diff(DateTime.fromISO(authenticator.updatedAt), "days").days
+  );
 
   return {
     id: authenticator.id,
     kind: authenticator.kind,
     lastUpdated,
+    lastUpdatedInDays,
+    manualChangeOnLogin,
   };
 }
 
@@ -229,6 +279,7 @@ function constructOobOtpAuthenticatorData(
 }
 
 function constructSecondaryAuthenticatorList(
+  config: PortalAPIAppConfig["authentication"],
   authenticators: Authenticator[],
   locale: string
 ) {
@@ -236,6 +287,14 @@ function constructSecondaryAuthenticatorList(
   const oobOtpEmailAuthenticatorList: OOBOTPAuthenticatorData[] = [];
   const oobOtpSMSAuthenticatorList: OOBOTPAuthenticatorData[] = [];
   const totpAuthenticatorList: TOTPAuthenticatorData[] = [];
+  const isAnySecondaryAuthenticatorEnabled =
+    (config?.secondary_authenticators?.length ?? 0) >= 1;
+  const isSecondaryPasswordEnabled =
+    config?.secondary_authenticators?.includes("password") ?? false;
+  const isSecondaryOOBOTPEmailEnabled =
+    config?.secondary_authenticators?.includes("oob_otp_email") ?? false;
+  const isSecondaryOOBOTPSMSEnabled =
+    config?.secondary_authenticators?.includes("oob_otp_sms") ?? false;
 
   const filteredAuthenticators = authenticators.filter(
     (a) => a.kind === AuthenticatorKind.Secondary
@@ -279,6 +338,10 @@ function constructSecondaryAuthenticatorList(
       oobOtpSMSAuthenticatorList,
       totpAuthenticatorList,
     ].some((list) => list.length > 0),
+    isAnySecondaryAuthenticatorEnabled,
+    isSecondaryOOBOTPEmailEnabled,
+    isSecondaryOOBOTPSMSEnabled,
+    isSecondaryPasswordEnabled,
   };
 }
 
@@ -411,7 +474,8 @@ const RemoveConfirmationDialog: React.VFC<RemoveConfirmationDialogProps> =
 
 const PasskeyIdentityCell: React.VFC<PasskeyIdentityCellProps> =
   function PasskeyIdentityCell(props: PasskeyIdentityCellProps) {
-    const { id, displayName, addedOn, showConfirmationDialog } = props;
+    const { id, displayName, addedOn, showConfirmationDialog, withTopSpacing } =
+      props;
     const { themes } = useSystemConfig();
     const onRemoveClicked = useCallback(() => {
       showConfirmationDialog({
@@ -421,7 +485,13 @@ const PasskeyIdentityCell: React.VFC<PasskeyIdentityCellProps> =
       });
     }, [id, displayName, showConfirmationDialog]);
     return (
-      <ListCellLayout className={cn(styles.cell, styles.passkeyCell)}>
+      <ListCellLayout
+        className={cn(
+          styles.cell,
+          styles.passkeyCell,
+          withTopSpacing ? styles["cell--not-first"] : ""
+        )}
+      >
         <i
           className={cn(
             styles.passkeyCellIcon,
@@ -449,7 +519,17 @@ const PasskeyIdentityCell: React.VFC<PasskeyIdentityCellProps> =
 
 const PasswordAuthenticatorCell: React.VFC<PasswordAuthenticatorCellProps> =
   function PasswordAuthenticatorCell(props: PasswordAuthenticatorCellProps) {
-    const { id, kind, lastUpdated, showConfirmationDialog } = props;
+    const {
+      id,
+      kind,
+      lastUpdated,
+      lastUpdatedInDays,
+      manualChangeOnLogin,
+      forceChangeDaysSinceLastUpdate,
+      showRemoveConfirmationDialog,
+      showMarkAsExpiredConfirmationDialog,
+      withTopSpacing,
+    } = props;
     const navigate = useNavigate();
     const { renderToString } = useContext(Context);
     const { themes } = useSystemConfig();
@@ -459,20 +539,39 @@ const PasswordAuthenticatorCell: React.VFC<PasswordAuthenticatorCellProps> =
       kind
     );
 
+    const passwordExpired =
+      forceChangeDaysSinceLastUpdate != null &&
+      lastUpdatedInDays > forceChangeDaysSinceLastUpdate;
+    const changeOnLogin = manualChangeOnLogin || passwordExpired;
+
+    const expiredInDays = useMemo(() => {
+      if (!forceChangeDaysSinceLastUpdate) {
+        return 0;
+      }
+
+      return lastUpdatedInDays - forceChangeDaysSinceLastUpdate;
+    }, [forceChangeDaysSinceLastUpdate, lastUpdatedInDays]);
+
     const onResetPasswordClicked = useCallback(() => {
-      navigate("./reset-password");
+      navigate("./change-password");
     }, [navigate]);
 
     const onRemoveClicked = useCallback(() => {
-      showConfirmationDialog({
+      showRemoveConfirmationDialog({
         id,
         displayName: renderToString(labelId!),
         type: "authenticator",
       });
-    }, [labelId, id, renderToString, showConfirmationDialog]);
+    }, [labelId, id, renderToString, showRemoveConfirmationDialog]);
 
     return (
-      <ListCellLayout className={cn(styles.cell, styles.passwordCell)}>
+      <ListCellLayout
+        className={cn(
+          styles.cell,
+          styles.passwordCell,
+          withTopSpacing ? styles["cell--not-first"] : ""
+        )}
+      >
         <Text className={cn(styles.cellLabel, styles.passwordCellLabel)}>
           <FormattedMessage id={labelId!} />
         </Text>
@@ -483,11 +582,39 @@ const PasswordAuthenticatorCell: React.VFC<PasswordAuthenticatorCellProps> =
           />
         </Text>
         {kind === "PRIMARY" ? (
+          <Toggle
+            className={styles.passwordCellChangeOnLogin}
+            label={renderToString(
+              "UserDetails.account-security.change-on-login.label"
+            )}
+            checked={changeOnLogin}
+            disabled={passwordExpired}
+            onChange={showMarkAsExpiredConfirmationDialog}
+          />
+        ) : null}
+        {passwordExpired ? (
+          <MessageBar
+            className={styles.passwordCellExpired}
+            messageBarType={MessageBarType.warning}
+          >
+            <FormattedMessage
+              id="UserDetails.account-security.expired"
+              values={{
+                prefixClassName: styles.passwordCellExpiredPrefix,
+                expiredInDays,
+              }}
+              components={{
+                Text,
+              }}
+            />
+          </MessageBar>
+        ) : null}
+        {kind === "PRIMARY" ? (
           <PrimaryButton
-            className={cn(styles.button, styles.resetPasswordButton)}
+            className={cn(styles.button, styles.changePasswordButton)}
             onClick={onResetPasswordClicked}
             text={
-              <FormattedMessage id="UserDetails.account-security.reset-password" />
+              <FormattedMessage id="UserDetails.account-security.change-password" />
             }
           />
         ) : null}
@@ -505,7 +632,8 @@ const PasswordAuthenticatorCell: React.VFC<PasswordAuthenticatorCellProps> =
 
 const TOTPAuthenticatorCell: React.VFC<TOTPAuthenticatorCellProps> =
   function TOTPAuthenticatorCell(props: TOTPAuthenticatorCellProps) {
-    const { id, kind, label, addedOn, showConfirmationDialog } = props;
+    const { id, kind, label, addedOn, showConfirmationDialog, withTopSpacing } =
+      props;
     const { themes } = useSystemConfig();
 
     const onRemoveClicked = useCallback(() => {
@@ -517,7 +645,13 @@ const TOTPAuthenticatorCell: React.VFC<TOTPAuthenticatorCellProps> =
     }, [id, label, showConfirmationDialog]);
 
     return (
-      <ListCellLayout className={cn(styles.cell, styles.totpCell)}>
+      <ListCellLayout
+        className={cn(
+          styles.cell,
+          styles.totpCell,
+          withTopSpacing ? styles["cell--not-first"] : ""
+        )}
+      >
         <Text className={cn(styles.cellLabel, styles.totpCellLabel)}>
           {label}
         </Text>
@@ -541,8 +675,15 @@ const TOTPAuthenticatorCell: React.VFC<TOTPAuthenticatorCellProps> =
 
 const OOBOTPAuthenticatorCell: React.VFC<OOBOTPAuthenticatorCellProps> =
   function (props: OOBOTPAuthenticatorCellProps) {
-    const { id, label, iconName, kind, addedOn, showConfirmationDialog } =
-      props;
+    const {
+      id,
+      label,
+      iconName,
+      kind,
+      addedOn,
+      showConfirmationDialog,
+      withTopSpacing,
+    } = props;
     const { themes } = useSystemConfig();
 
     const onRemoveClicked = useCallback(() => {
@@ -554,7 +695,13 @@ const OOBOTPAuthenticatorCell: React.VFC<OOBOTPAuthenticatorCellProps> =
     }, [id, label, showConfirmationDialog]);
 
     return (
-      <ListCellLayout className={cn(styles.cell, styles.oobOtpCell)}>
+      <ListCellLayout
+        className={cn(
+          styles.cell,
+          styles.oobOtpCell,
+          withTopSpacing ? styles["cell--not-first"] : ""
+        )}
+      >
         <Icon className={styles.oobOtpCellIcon} iconName={iconName} />
         <Text className={cn(styles.cellLabel, styles.oobOtpCellLabel)}>
           {label}
@@ -579,10 +726,36 @@ const OOBOTPAuthenticatorCell: React.VFC<OOBOTPAuthenticatorCellProps> =
   };
 
 const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
-  // eslint-disable-next-line complexity
   function UserDetailsAccountSecurity(props: UserDetailsAccountSecurityProps) {
-    const { identities, authenticators } = props;
-    const { locale } = useContext(Context);
+    const {
+      userID,
+      authenticationConfig,
+      authenticatorConfig,
+      identities,
+      authenticators,
+    } = props;
+    const { locale, renderToString } = useContext(Context);
+    const navigate = useNavigate();
+
+    const { user } = useUserQuery(userID);
+
+    const passwordForceChangeDaysSinceLastUpdate = useMemo(() => {
+      const expiryForceChangeConfig =
+        authenticatorConfig?.password?.expiry?.force_change;
+      if (expiryForceChangeConfig?.enabled !== true) {
+        return null;
+      }
+
+      const durationString = expiryForceChangeConfig.duration_since_last_update;
+      if (durationString == null) {
+        return null;
+      }
+
+      const secondsPerDay = 24 * 60 * 60;
+      return Math.round(
+        durationString ? parseDuration(durationString) / secondsPerDay : 1
+      );
+    }, [authenticatorConfig]);
 
     const {
       deleteAuthenticator,
@@ -612,8 +785,72 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
     }, [locale, identities, authenticators]);
 
     const secondaryAuthenticatorLists = useMemo(() => {
-      return constructSecondaryAuthenticatorList(authenticators, locale);
-    }, [locale, authenticators]);
+      return constructSecondaryAuthenticatorList(
+        authenticationConfig,
+        authenticators,
+        locale
+      );
+    }, [authenticationConfig, authenticators, locale]);
+
+    const secondaryAuthicatorIsRequired =
+      authenticationConfig?.secondary_authentication_mode === "required";
+
+    const isWithinPerUserMFAGracePeriod = useMemo(() => {
+      if (user?.mfaGracePeriodEndAt == null) {
+        return false;
+      }
+
+      return parseDate(user.mfaGracePeriodEndAt) >= new Date();
+    }, [user]);
+
+    const isWithinGlobalMFAGracePeriod = useMemo(() => {
+      if (
+        authenticationConfig?.secondary_authentication_grace_period?.enabled !==
+        true
+      ) {
+        return false;
+      }
+
+      const gracePeriodEndAtString =
+        authenticationConfig.secondary_authentication_grace_period.endAt;
+      if (gracePeriodEndAtString == null) {
+        return true;
+      }
+
+      const gracePeriod = parseDate(gracePeriodEndAtString);
+      return gracePeriod >= new Date();
+    }, [authenticationConfig]);
+
+    const isWithinMFAGracePeriod = useMemo(() => {
+      return isWithinPerUserMFAGracePeriod || isWithinGlobalMFAGracePeriod;
+    }, [isWithinPerUserMFAGracePeriod, isWithinGlobalMFAGracePeriod]);
+
+    const canExtendMFAGracePeriod = useMemo(() => {
+      if (isWithinGlobalMFAGracePeriod) {
+        return false;
+      }
+
+      if (user?.mfaGracePeriodEndAt == null) {
+        return false;
+      }
+
+      if (
+        authenticationConfig?.secondary_authentication_grace_period?.endAt !=
+        null
+      ) {
+        const gracePeriod = parseDate(
+          authenticationConfig.secondary_authentication_grace_period.endAt
+        );
+        const userGracePeriod = parseDate(user.mfaGracePeriodEndAt);
+        return userGracePeriod <= gracePeriod;
+      }
+
+      return true;
+    }, [
+      authenticationConfig?.secondary_authentication_grace_period?.endAt,
+      isWithinGlobalMFAGracePeriod,
+      user?.mfaGracePeriodEndAt,
+    ]);
 
     const showConfirmationDialog = useCallback(
       (options: RemoveConfirmationDialogData) => {
@@ -627,14 +864,89 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
       setIsConfirmationDialogVisible(false);
     }, []);
 
+    const setPasswordExpiredConfirmDialog = useConfirmationDialog();
+
+    const { setPasswordExpired, error: setPasswordExpiredError } =
+      useSetPasswordExpiredMutation();
+    useProvideError(setPasswordExpiredError);
+
+    const isExpired = useMemo(
+      () =>
+        primaryAuthenticatorLists.password.some(
+          (authenticator) => authenticator.manualChangeOnLogin
+        ),
+      [primaryAuthenticatorLists.password]
+    );
+
+    const onConfirmSetPasswordExpired = useCallback(async () => {
+      await setPasswordExpired(userID, !isExpired);
+      setPasswordExpiredConfirmDialog.dismiss();
+    }, [
+      setPasswordExpired,
+      userID,
+      isExpired,
+      setPasswordExpiredConfirmDialog,
+    ]);
+
+    const setMFAGracePeriodConfirmationDialog = useConfirmationDialog();
+    const cancelMFAGracePeriodConfirmationDialog = useConfirmationDialog();
+
+    const { setMFAGracePeriod, error: setMFAGracePeriodError } =
+      useSetMFAGracePeriodMutation();
+    useProvideError(setMFAGracePeriodError);
+
+    const { removeMFAGracePeriod, error: removeMFAGracePeriodError } =
+      useRemoveMFAGracePeriodMutation();
+    useProvideError(removeMFAGracePeriodError);
+
+    const mfaGracePeriodAction = useMemo(() => {
+      if (!isWithinPerUserMFAGracePeriod) {
+        return MFAGracePeriodAction.Grant;
+      }
+
+      return MFAGracePeriodAction.Extend;
+    }, [isWithinPerUserMFAGracePeriod]);
+
+    const onConfirmSetMFAGracePeriod = useCallback(async () => {
+      switch (mfaGracePeriodAction) {
+        case MFAGracePeriodAction.Grant: {
+          const newGracePeriod = DateTime.now().plus({ days: 10 }).toJSDate();
+          await setMFAGracePeriod(userID, newGracePeriod);
+          break;
+        }
+        case MFAGracePeriodAction.Extend: {
+          const fromDate = DateTime.max(
+            DateTime.now(),
+            DateTime.fromISO(user?.mfaGracePeriodEndAt)
+          );
+          const newGracePeriod = fromDate.plus({ days: 10 }).toJSDate();
+          await setMFAGracePeriod(userID, newGracePeriod);
+          break;
+        }
+      }
+      setMFAGracePeriodConfirmationDialog.dismiss();
+    }, [
+      mfaGracePeriodAction,
+      setMFAGracePeriodConfirmationDialog,
+      setMFAGracePeriod,
+      userID,
+      user?.mfaGracePeriodEndAt,
+    ]);
+
+    const onConfirmRemoveMFAGracePeriod = useCallback(async () => {
+      await removeMFAGracePeriod(userID);
+      cancelMFAGracePeriodConfirmationDialog.dismiss();
+    }, [removeMFAGracePeriod, userID, cancelMFAGracePeriodConfirmationDialog]);
+
     const onRenderPasskeyIdentityDetailCell = useCallback(
-      (item?: PasskeyIdentityData, _index?: number): React.ReactNode => {
+      (item?: PasskeyIdentityData, index?: number): React.ReactNode => {
         if (item == null) {
           return null;
         }
         return (
           <PasskeyIdentityCell
             {...item}
+            withTopSpacing={index !== 0}
             showConfirmationDialog={showConfirmationDialog}
           />
         );
@@ -643,28 +955,40 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
     );
 
     const onRenderPasswordAuthenticatorDetailCell = useCallback(
-      (item?: PasswordAuthenticatorData, _index?: number): React.ReactNode => {
+      (item?: PasswordAuthenticatorData, index?: number): React.ReactNode => {
         if (item == null) {
           return null;
         }
         return (
           <PasswordAuthenticatorCell
             {...item}
-            showConfirmationDialog={showConfirmationDialog}
+            withTopSpacing={index !== 0}
+            forceChangeDaysSinceLastUpdate={
+              passwordForceChangeDaysSinceLastUpdate
+            }
+            showRemoveConfirmationDialog={showConfirmationDialog}
+            showMarkAsExpiredConfirmationDialog={
+              setPasswordExpiredConfirmDialog.show
+            }
           />
         );
       },
-      [showConfirmationDialog]
+      [
+        passwordForceChangeDaysSinceLastUpdate,
+        showConfirmationDialog,
+        setPasswordExpiredConfirmDialog.show,
+      ]
     );
 
     const onRenderOobOtpAuthenticatorDetailCell = useCallback(
-      (item?: OOBOTPAuthenticatorData, _index?: number): React.ReactNode => {
+      (item?: OOBOTPAuthenticatorData, index?: number): React.ReactNode => {
         if (item == null) {
           return null;
         }
         return (
           <OOBOTPAuthenticatorCell
             {...item}
+            withTopSpacing={index !== 0}
             showConfirmationDialog={showConfirmationDialog}
           />
         );
@@ -673,13 +997,14 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
     );
 
     const onRenderTotpAuthenticatorDetailCell = useCallback(
-      (item?: TOTPAuthenticatorData, _index?: number): React.ReactNode => {
+      (item?: TOTPAuthenticatorData, index?: number): React.ReactNode => {
         if (item == null) {
           return null;
         }
         return (
           <TOTPAuthenticatorCell
             {...item}
+            withTopSpacing={index !== 0}
             showConfirmationDialog={showConfirmationDialog}
           />
         );
@@ -708,6 +1033,86 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
       },
       [deleteIdentity, dismissConfirmationDialog]
     );
+
+    const add2FAMenuProps: IContextualMenuProps = useMemo(() => {
+      const availableMenuItem: Add2FAMenuItem[] = [
+        {
+          key: "password",
+          text: renderToString("AuthenticatorType.secondary.password"),
+          iconProps: { iconName: "Accounts" },
+          onClick: () => navigate("./add-2fa-password"),
+        },
+        {
+          key: "oob_otp_email",
+          text: renderToString("AuthenticatorType.secondary.oob-otp-email"),
+          iconProps: { iconName: "Mail" },
+          onClick: () => navigate("./add-2fa-email"),
+        },
+        {
+          key: "oob_otp_sms",
+          text: renderToString("AuthenticatorType.secondary.oob-otp-phone"),
+          iconProps: { iconName: "CellPhone" },
+          onClick: () => navigate("./add-2fa-phone"),
+        },
+      ];
+      const enabledItems = availableMenuItem.filter((item) => {
+        if (
+          !authenticationConfig?.secondary_authenticators?.includes(item.key)
+        ) {
+          return false;
+        }
+
+        if (item.key === "password") {
+          // Multiple additinal password is not allowed
+          if (
+            authenticators.findIndex(
+              (authn) =>
+                authn.kind === AuthenticatorKind.Secondary &&
+                authn.type === AuthenticatorType.Password
+            ) !== -1
+          ) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+      return {
+        items: enabledItems,
+        directionalHintFixed: true,
+      };
+    }, [
+      renderToString,
+      navigate,
+      authenticationConfig?.secondary_authenticators,
+      authenticators,
+    ]);
+
+    const onRenderExtendedMFAGracePeriod = useCallback(() => {
+      return (
+        <LinkButton
+          className={styles.authenticatorGrantGracePeriod}
+          onClick={setMFAGracePeriodConfirmationDialog.show}
+        >
+          <FormattedMessage
+            id={"UserDetails.account-security.secondary.extend-grace-period"}
+          />
+        </LinkButton>
+      );
+    }, [setMFAGracePeriodConfirmationDialog.show]);
+
+    const onRenderCancelMFAGracePeriod = useCallback(() => {
+      return (
+        <LinkButton
+          className={styles.authenticatorGrantGracePeriod}
+          onClick={cancelMFAGracePeriodConfirmationDialog.show}
+        >
+          <FormattedMessage
+            id={"UserDetails.account-security.secondary.cancel-grace-period"}
+          />
+        </LinkButton>
+      );
+    }, [cancelMFAGracePeriodConfirmationDialog.show]);
 
     return (
       <div className={styles.root}>
@@ -742,12 +1147,16 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
             </Text>
             {primaryAuthenticatorLists.password.length > 0 ? (
               <List
+                className={cn(
+                  styles.authenticatorTypeSection,
+                  styles["authenticatorTypeSection--password"]
+                )}
                 items={primaryAuthenticatorLists.password}
                 onRenderCell={onRenderPasswordAuthenticatorDetailCell}
               />
             ) : null}
             {primaryAuthenticatorLists.passkey.length > 0 ? (
-              <div>
+              <div className={styles.authenticatorTypeSection}>
                 <Text
                   as="h3"
                   className={cn(styles.header, styles.authenticatorTypeHeader)}
@@ -761,7 +1170,7 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
               </div>
             ) : null}
             {primaryAuthenticatorLists.oobOtpEmail.length > 0 ? (
-              <div>
+              <div className={styles.authenticatorTypeSection}>
                 <Text
                   as="h3"
                   className={cn(styles.header, styles.authenticatorTypeHeader)}
@@ -775,7 +1184,7 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
               </div>
             ) : null}
             {primaryAuthenticatorLists.oobOtpSMS.length > 0 ? (
-              <div>
+              <div className={styles.authenticatorTypeSection}>
                 <Text
                   as="h3"
                   className={cn(styles.header, styles.authenticatorTypeHeader)}
@@ -783,7 +1192,6 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
                   <FormattedMessage id="AuthenticatorType.primary.oob-otp-phone" />
                 </Text>
                 <List
-                  className={cn(styles.list, styles.oobOtpList)}
                   items={primaryAuthenticatorLists.oobOtpSMS}
                   onRenderCell={onRenderOobOtpAuthenticatorDetailCell}
                 />
@@ -791,16 +1199,76 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
             ) : null}
           </div>
         ) : null}
-        {secondaryAuthenticatorLists.hasVisibleList ? (
+        {secondaryAuthenticatorLists.hasVisibleList ||
+        secondaryAuthenticatorLists.isAnySecondaryAuthenticatorEnabled ? (
           <div className={styles.authenticatorContainer}>
-            <Text
-              as="h2"
-              className={cn(styles.header, styles.authenticatorKindHeader)}
+            <div
+              className={cn(
+                "flex justify-between",
+                styles.authenticatorKindHeader
+              )}
             >
-              <FormattedMessage id="UserDetails.account-security.secondary" />
-            </Text>
+              <Text as="h2" className={cn(styles.header)}>
+                <FormattedMessage id="UserDetails.account-security.secondary" />
+              </Text>
+              <PrimaryButton
+                disabled={add2FAMenuProps.items.length === 0}
+                iconProps={{ iconName: "CirclePlus" }}
+                menuProps={add2FAMenuProps}
+                styles={{
+                  menuIcon: { paddingLeft: "3px" },
+                  icon: { paddingRight: "3px" },
+                }}
+                text={
+                  <FormattedMessage id="UserDetails.account-security.secondary.add" />
+                }
+              />
+            </div>
+            {!secondaryAuthenticatorLists.hasVisibleList ? (
+              <>
+                <Text as="h3" className={cn(styles.authenticatorEmpty)}>
+                  {!secondaryAuthicatorIsRequired ? (
+                    <FormattedMessage id="UserDetails.account-security.secondary.empty" />
+                  ) : isWithinMFAGracePeriod ? (
+                    <FormattedMessage
+                      id="UserDetails.account-security.secondary.empty-but-within-grace-period"
+                      values={{
+                        gracePeriodEndAt:
+                          formatDatetime(locale, user?.mfaGracePeriodEndAt) ??
+                          "",
+                      }}
+                    />
+                  ) : (
+                    <FormattedMessage id="UserDetails.account-security.secondary.empty-but-required" />
+                  )}
+                </Text>
+                {!isWithinMFAGracePeriod ? (
+                  <LinkButton
+                    className={styles.authenticatorGrantGracePeriod}
+                    onClick={setMFAGracePeriodConfirmationDialog.show}
+                  >
+                    <FormattedMessage
+                      id={
+                        "UserDetails.account-security.secondary.grant-grace-period"
+                      }
+                    />
+                  </LinkButton>
+                ) : null}
+                {canExtendMFAGracePeriod ? (
+                  <div className={styles.updateMFAGracePeriodContainer}>
+                    <FormattedMessage
+                      id="UserDetails.account-security.secondary.update-existing-grace-period"
+                      components={{
+                        Extend: onRenderExtendedMFAGracePeriod,
+                        Cancel: onRenderCancelMFAGracePeriod,
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </>
+            ) : null}
             {secondaryAuthenticatorLists.totp.length > 0 ? (
-              <div>
+              <div className={styles.authenticatorTypeSection}>
                 <Text
                   as="h3"
                   className={cn(styles.header, styles.authenticatorTypeHeader)}
@@ -814,7 +1282,7 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
               </div>
             ) : null}
             {secondaryAuthenticatorLists.oobOtpEmail.length > 0 ? (
-              <div>
+              <div className={styles.authenticatorTypeSection}>
                 <Text
                   as="h3"
                   className={cn(styles.header, styles.authenticatorTypeHeader)}
@@ -828,7 +1296,7 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
               </div>
             ) : null}
             {secondaryAuthenticatorLists.oobOtpSMS.length > 0 ? (
-              <div>
+              <div className={styles.authenticatorTypeSection}>
                 <Text
                   as="h3"
                   className={cn(styles.header, styles.authenticatorTypeHeader)}
@@ -836,7 +1304,6 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
                   <FormattedMessage id="AuthenticatorType.secondary.oob-otp-phone" />
                 </Text>
                 <List
-                  className={cn(styles.list, styles.oobOtpList)}
                   items={secondaryAuthenticatorLists.oobOtpSMS}
                   onRenderCell={onRenderOobOtpAuthenticatorDetailCell}
                 />
@@ -844,13 +1311,30 @@ const UserDetailsAccountSecurity: React.VFC<UserDetailsAccountSecurityProps> =
             ) : null}
             {secondaryAuthenticatorLists.password.length > 0 ? (
               <List
-                className={cn(styles.list, styles.passwordList)}
+                className={cn(
+                  styles.authenticatorTypeSection,
+                  styles["authenticatorTypeSection--password"]
+                )}
                 items={secondaryAuthenticatorLists.password}
                 onRenderCell={onRenderPasswordAuthenticatorDetailCell}
               />
             ) : null}
           </div>
         ) : null}
+        <SetPasswordExpiredConfirmationDialog
+          store={setPasswordExpiredConfirmDialog}
+          isExpired={isExpired}
+          onConfirm={onConfirmSetPasswordExpired}
+        />
+        <SetMFAGracePeriodConfirmationDialog
+          store={setMFAGracePeriodConfirmationDialog}
+          action={mfaGracePeriodAction}
+          onConfirm={onConfirmSetMFAGracePeriod}
+        />
+        <CancelMFAGracePeriodConfirmationDialog
+          store={cancelMFAGracePeriodConfirmationDialog}
+          onConfirm={onConfirmRemoveMFAGracePeriod}
+        />
       </div>
     );
   };

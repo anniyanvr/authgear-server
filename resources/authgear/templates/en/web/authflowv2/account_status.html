@@ -1,0 +1,44 @@
+{{ template "authflowv2/__page_frame.html" . }}
+{{ define "page-content" }}
+
+  <div class="screen-icon-layout flex-1-0-auto">
+    <i class="material-icons screen-icon">account_circle_off</i>
+    <header class="screen-title-description">
+      <h1 class="screen-title">
+        {{ include "v2.error.disabled-user-title" nil }}
+      </h1>
+      {{- if $.Error }}
+        <h2 class="screen-description">
+          {{- if eq .Error.reason "DisabledUser" }}
+            {{- if $.Error.info.reason }}
+              {{ include "v2.error.disabled-user-subtitle" nil }}
+              <br>
+              {{ include "v2.error.disabled-user-reason" (dict "reason" $.Error.info.reason) }}
+            {{- else }}
+              {{ include "v2.error.disabled-user-subtitle" nil }}
+            {{- end }}
+          {{- end }}
+
+          {{- if eq $.Error.reason "DeactivatedUser" }}
+            {{ include "v2.error.deactivated-user" nil }}
+          {{- end }}
+
+          {{- if eq $.Error.reason "ScheduledDeletionByAdmin" }}
+            {{ include "v2.error.scheduled-deletion-by-admin" (dict "date" (ensureTime $.Error.info.delete_at) "rfc3339" (rfc3339 (ensureTime $.Error.info.delete_at))) }}
+          {{- end }}
+
+          {{- if eq $.Error.reason "ScheduledDeletionByEndUser" }}
+            {{ include "v2.error.scheduled-deletion-by-end-user" (dict "date" (ensureTime $.Error.info.delete_at) "rfc3339" (rfc3339 (ensureTime $.Error.info.delete_at))) }}
+          {{- end }}
+        </h2>
+      {{- end }}
+    </header>
+  <div></div>
+
+  <footer>
+    <a class="primary-btn w-full" href="/login" data-turbo="false">
+      {{ include "v2.page.account-status.default.return-button-label" nil }}
+    </a>
+  </footer>
+  </div>
+{{ end }}

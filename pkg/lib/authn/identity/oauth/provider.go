@@ -1,7 +1,10 @@
 package oauth
 
 import (
+	"context"
 	"sort"
+
+	"github.com/authgear/oauthrelyingparty/pkg/api/oauthrelyingparty"
 
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
 	"github.com/authgear/authgear-server/pkg/lib/config"
@@ -15,8 +18,8 @@ type Provider struct {
 	IdentityConfig *config.IdentityConfig
 }
 
-func (p *Provider) List(userID string) ([]*identity.OAuth, error) {
-	is, err := p.Store.List(userID)
+func (p *Provider) List(ctx context.Context, userID string) ([]*identity.OAuth, error) {
+	is, err := p.Store.List(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -25,8 +28,8 @@ func (p *Provider) List(userID string) ([]*identity.OAuth, error) {
 	return is, nil
 }
 
-func (p *Provider) ListByClaim(name string, value string) ([]*identity.OAuth, error) {
-	is, err := p.Store.ListByClaim(name, value)
+func (p *Provider) ListByClaim(ctx context.Context, name string, value string) ([]*identity.OAuth, error) {
+	is, err := p.Store.ListByClaim(ctx, name, value)
 	if err != nil {
 		return nil, err
 	}
@@ -35,25 +38,25 @@ func (p *Provider) ListByClaim(name string, value string) ([]*identity.OAuth, er
 	return is, nil
 }
 
-func (p *Provider) Get(userID, id string) (*identity.OAuth, error) {
-	return p.Store.Get(userID, id)
+func (p *Provider) Get(ctx context.Context, userID, id string) (*identity.OAuth, error) {
+	return p.Store.Get(ctx, userID, id)
 }
 
-func (p *Provider) GetByProviderSubject(provider config.ProviderID, subjectID string) (*identity.OAuth, error) {
-	return p.Store.GetByProviderSubject(provider, subjectID)
+func (p *Provider) GetByProviderSubject(ctx context.Context, providerID oauthrelyingparty.ProviderID, subjectID string) (*identity.OAuth, error) {
+	return p.Store.GetByProviderSubject(ctx, providerID, subjectID)
 }
 
-func (p *Provider) GetByUserProvider(userID string, provider config.ProviderID) (*identity.OAuth, error) {
-	return p.Store.GetByUserProvider(userID, provider)
+func (p *Provider) GetByUserProvider(ctx context.Context, userID string, providerID oauthrelyingparty.ProviderID) (*identity.OAuth, error) {
+	return p.Store.GetByUserProvider(ctx, userID, providerID)
 }
 
-func (p *Provider) GetMany(ids []string) ([]*identity.OAuth, error) {
-	return p.Store.GetMany(ids)
+func (p *Provider) GetMany(ctx context.Context, ids []string) ([]*identity.OAuth, error) {
+	return p.Store.GetMany(ctx, ids)
 }
 
 func (p *Provider) New(
 	userID string,
-	provider config.ProviderID,
+	providerID oauthrelyingparty.ProviderID,
 	subjectID string,
 	profile map[string]interface{},
 	claims map[string]interface{},
@@ -61,7 +64,7 @@ func (p *Provider) New(
 	i := &identity.OAuth{
 		ID:                uuid.New(),
 		UserID:            userID,
-		ProviderID:        provider,
+		ProviderID:        providerID,
 		ProviderSubjectID: subjectID,
 		UserProfile:       profile,
 		Claims:            claims,
@@ -69,9 +72,9 @@ func (p *Provider) New(
 
 	alias := ""
 	for _, providerConfig := range p.IdentityConfig.OAuth.Providers {
-		providerID := providerConfig.ProviderID()
-		if providerID.Equal(&i.ProviderID) {
-			alias = providerConfig.Alias
+		providerID := providerConfig.AsProviderConfig().ProviderID()
+		if providerID.Equal(i.ProviderID) {
+			alias = providerConfig.Alias()
 		}
 	}
 	if alias != "" {
@@ -93,21 +96,21 @@ func (p *Provider) WithUpdate(
 	return &newIden
 }
 
-func (p *Provider) Create(i *identity.OAuth) error {
+func (p *Provider) Create(ctx context.Context, i *identity.OAuth) error {
 	now := p.Clock.NowUTC()
 	i.CreatedAt = now
 	i.UpdatedAt = now
-	return p.Store.Create(i)
+	return p.Store.Create(ctx, i)
 }
 
-func (p *Provider) Update(i *identity.OAuth) error {
+func (p *Provider) Update(ctx context.Context, i *identity.OAuth) error {
 	now := p.Clock.NowUTC()
 	i.UpdatedAt = now
-	return p.Store.Update(i)
+	return p.Store.Update(ctx, i)
 }
 
-func (p *Provider) Delete(i *identity.OAuth) error {
-	return p.Store.Delete(i)
+func (p *Provider) Delete(ctx context.Context, i *identity.OAuth) error {
+	return p.Store.Delete(ctx, i)
 }
 
 func sortIdentities(is []*identity.OAuth) {

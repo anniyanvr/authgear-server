@@ -9,9 +9,9 @@ const (
 )
 
 type WhatsappSentEventPayload struct {
-	Recipient           string      `json:"recipient"`
-	Type                MessageType `json:"type"`
-	IsNotCountedInUsage bool        `json:"is_not_counted_in_usage"`
+	Recipient           string `json:"recipient"`
+	Type                string `json:"type"`
+	IsNotCountedInUsage bool   `json:"is_not_counted_in_usage"`
 }
 
 func (e *WhatsappSentEventPayload) NonBlockingEventType() event.Type {
@@ -37,12 +37,12 @@ func (e *WhatsappSentEventPayload) ForAudit() bool {
 	return true
 }
 
-func (e *WhatsappSentEventPayload) ReindexUserNeeded() bool {
-	return false
+func (e *WhatsappSentEventPayload) RequireReindexUserIDs() []string {
+	return nil
 }
 
-func (e *WhatsappSentEventPayload) IsUserDeleted() bool {
-	return false
+func (e *WhatsappSentEventPayload) DeletedUserIDs() []string {
+	return nil
 }
 
 var _ event.NonBlockingPayload = &WhatsappSentEventPayload{}

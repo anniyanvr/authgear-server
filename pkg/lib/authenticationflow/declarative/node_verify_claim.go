@@ -3,7 +3,6 @@ package declarative
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/iawaknahc/jsonschema/pkg/jsonpointer"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/authgear/authgear-server/pkg/lib/authn"
 	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
 	"github.com/authgear/authgear-server/pkg/lib/feature/verification"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
 	"github.com/authgear/authgear-server/pkg/util/errorutil"
 )
 
@@ -21,26 +21,11 @@ func init() {
 	authflow.RegisterNode(&NodeVerifyClaim{})
 }
 
-type NodeVerifyClaimData struct {
-	Channel                        model.AuthenticatorOOBChannel `json:"channel,omitempty"`
-	OTPForm                        otp.Form                      `json:"otp_form,omitempty"`
-	WebsocketURL                   string                        `json:"websocket_url,omitempty"`
-	MaskedClaimValue               string                        `json:"masked_claim_value,omitempty"`
-	CodeLength                     int                           `json:"code_length,omitempty"`
-	CanResendAt                    time.Time                     `json:"can_resend_at,omitempty"`
-	CanCheck                       bool                          `json:"can_check"`
-	FailedAttemptRateLimitExceeded bool                          `json:"failed_attempt_rate_limit_exceeded"`
-}
-
-var _ authflow.Data = &NodeVerifyClaimData{}
-
-func (m NodeVerifyClaimData) Data() {}
-
 type NodeVerifyClaim struct {
 	JSONPointer          jsonpointer.T                 `json:"json_pointer,omitempty"`
 	UserID               string                        `json:"user_id,omitempty"`
 	Purpose              otp.Purpose                   `json:"purpose,omitempty"`
-	MessageType          otp.MessageType               `json:"message_type,omitempty"`
+	MessageType          translation.MessageType       `json:"message_type,omitempty"`
 	Form                 otp.Form                      `json:"form,omitempty"`
 	ClaimName            model.ClaimName               `json:"claim_name,omitempty"`
 	ClaimValue           string                        `json:"claim_value,omitempty"`
@@ -62,9 +47,15 @@ func (n *NodeVerifyClaim) Kind() string {
 }
 
 func (n *NodeVerifyClaim) CanReactTo(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.InputSchema, error) {
+	flowRootObject, err := findFlowRootObjectInFlow(deps, flows)
+	if err != nil {
+		return nil, err
+	}
+
 	return &InputSchemaNodeVerifyClaim{
-		JSONPointer: n.JSONPointer,
-		OTPForm:     n.Form,
+		JSONPointer:    n.JSONPointer,
+		FlowRootObject: flowRootObject,
+		OTPForm:        n.Form,
 	}, nil
 }
 
@@ -78,7 +69,7 @@ func (n *NodeVerifyClaim) ReactTo(ctx context.Context, deps *authflow.Dependenci
 	case inputNodeVerifyClaim.IsCode():
 		code := inputNodeVerifyClaim.GetCode()
 
-		err := deps.OTPCodes.VerifyOTP(
+		err := deps.OTPCodes.VerifyOTP(ctx,
 			n.otpKind(deps),
 			n.ClaimValue,
 			code,
@@ -91,7 +82,7 @@ func (n *NodeVerifyClaim) ReactTo(ctx context.Context, deps *authflow.Dependenci
 			return nil, err
 		}
 
-		verifiedClaim := deps.Verification.NewVerifiedClaim(
+		verifiedClaim := deps.Verification.NewVerifiedClaim(ctx,
 			n.UserID,
 			string(n.ClaimName),
 			n.ClaimValue,
@@ -102,7 +93,7 @@ func (n *NodeVerifyClaim) ReactTo(ctx context.Context, deps *authflow.Dependenci
 	case inputNodeVerifyClaim.IsCheck():
 		emptyCode := ""
 
-		err := deps.OTPCodes.VerifyOTP(
+		err := deps.OTPCodes.VerifyOTP(ctx,
 			n.otpKind(deps),
 			n.ClaimValue,
 			emptyCode,
@@ -118,7 +109,7 @@ func (n *NodeVerifyClaim) ReactTo(ctx context.Context, deps *authflow.Dependenci
 			return nil, err
 		}
 
-		verifiedClaim := deps.Verification.NewVerifiedClaim(
+		verifiedClaim := deps.Verification.NewVerifiedClaim(ctx,
 			n.UserID,
 			string(n.ClaimName),
 			n.ClaimValue,
@@ -138,7 +129,7 @@ func (n *NodeVerifyClaim) ReactTo(ctx context.Context, deps *authflow.Dependenci
 }
 
 func (n *NodeVerifyClaim) OutputData(ctx context.Context, deps *authflow.Dependencies, flows authflow.Flows) (authflow.Data, error) {
-	state, err := deps.OTPCodes.InspectState(n.otpKind(deps), n.ClaimValue)
+	state, err := deps.OTPCodes.InspectState(ctx, n.otpKind(deps), n.ClaimValue)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +143,7 @@ func (n *NodeVerifyClaim) OutputData(ctx context.Context, deps *authflow.Depende
 		}
 	}
 
-	return NodeVerifyClaimData{
+	return NewVerifyOOBOTPData(VerifyOOBOTPData{
 		Channel:                        n.Channel,
 		OTPForm:                        n.Form,
 		WebsocketURL:                   websocketURL,
@@ -161,7 +152,7 @@ func (n *NodeVerifyClaim) OutputData(ctx context.Context, deps *authflow.Depende
 		CanResendAt:                    state.CanResendAt,
 		CanCheck:                       state.SubmittedCode != "",
 		FailedAttemptRateLimitExceeded: state.TooManyAttempts,
-	}, nil
+	}), nil
 }
 
 func (n *NodeVerifyClaim) otpKind(deps *authflow.Dependencies) otp.Kind {
@@ -169,7 +160,7 @@ func (n *NodeVerifyClaim) otpKind(deps *authflow.Dependencies) otp.Kind {
 	case otp.PurposeVerification:
 		return otp.KindVerification(deps.Config, n.Channel)
 	case otp.PurposeOOBOTP:
-		return otp.KindOOBOTP(deps.Config, n.Channel)
+		return otp.KindOOBOTPWithForm(deps.Config, n.Channel, n.Form)
 	default:
 		panic(fmt.Errorf("unexpected otp purpose: %v", n.Purpose))
 	}
@@ -209,21 +200,10 @@ func (n *NodeVerifyClaim) SendCode(ctx context.Context, deps *authflow.Dependenc
 	// See https://developers.facebook.com/docs/whatsapp/business-management-api/authentication-templates/
 	typ := n.MessageType
 	if n.Channel == model.AuthenticatorOOBChannelWhatsapp {
-		typ = otp.MessageTypeWhatsappCode
+		typ = translation.MessageTypeWhatsappCode
 	}
 
-	msg, err := deps.OTPSender.Prepare(
-		n.Channel,
-		n.ClaimValue,
-		n.Form,
-		typ,
-	)
-	if err != nil {
-		return err
-	}
-	defer msg.Close()
-
-	code, err := deps.OTPCodes.GenerateOTP(
+	code, err := deps.OTPCodes.GenerateOTP(ctx,
 		n.otpKind(deps),
 		n.ClaimValue,
 		n.Form,
@@ -236,7 +216,16 @@ func (n *NodeVerifyClaim) SendCode(ctx context.Context, deps *authflow.Dependenc
 		return err
 	}
 
-	err = deps.OTPSender.Send(msg, otp.SendOptions{OTP: code})
+	err = deps.OTPSender.Send(
+		ctx,
+		otp.SendOptions{
+			Channel: n.Channel,
+			Target:  n.ClaimValue,
+			Form:    n.Form,
+			Type:    typ,
+			OTP:     code,
+		},
+	)
 	if err != nil {
 		return err
 	}

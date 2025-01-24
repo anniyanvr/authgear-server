@@ -10,25 +10,27 @@ import (
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
 
+	apimodel "github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	configtest "github.com/authgear/authgear-server/pkg/lib/config/test"
+	"github.com/authgear/authgear-server/pkg/lib/web"
 	"github.com/authgear/authgear-server/pkg/portal/appresource"
 	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/resource"
 )
 
 func TestManager(t *testing.T) {
-	Convey("ApplyUpdates", t, func() {
+	Convey("ApplyUpdates0", t, func() {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 
 		appID := "app-id"
+		// This config is supposed to be not effective because it is a fixture
 		cfg := &config.Config{
 			AppConfig:     configtest.FixtureAppConfig("app-id"),
 			SecretConfig:  configtest.FixtureSecretConfig(0),
 			FeatureConfig: configtest.FixtureFeatureConfig(configtest.FixtureLimitedPlanName),
 		}
-		config.PopulateDefaultValues(cfg.AppConfig)
 
 		baseFs := afero.NewMemMapFs()
 		appFs := afero.NewMemMapFs()
@@ -39,22 +41,27 @@ func TestManager(t *testing.T) {
 			appResourceFs,
 		})
 		tutorialService := NewMockTutorialService(ctrl)
-		tutorialService.EXPECT().OnUpdateResource(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+		tutorialService.EXPECT().OnUpdateResource0(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
 		denoClient := NewMockDenoClient(ctrl)
 		denoClient.EXPECT().Check(gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+		domainService := NewMockDomainService(ctrl)
+		domainService.EXPECT().ListDomains(gomock.Any(), gomock.Any()).AnyTimes().Return([]*apimodel.Domain{
+			{ID: "domain-id", AppID: "app-id", Domain: "test"},
+		}, nil)
 
 		portalResMgr := &appresource.Manager{
-			Context:            context.Background(),
 			AppResourceManager: resMgr,
 			AppFS:              appResourceFs,
 			AppFeatureConfig:   cfg.FeatureConfig,
+			AppHostSuffixes:    &config.AppHostSuffixes{},
 			Tutorials:          tutorialService,
+			DomainService:      domainService,
 			DenoClient:         denoClient,
 			Clock:              clock.NewMockClock(),
 		}
 
-		applyUpdates := func(updates []appresource.Update) ([]*resource.ResourceFile, error) {
-			return portalResMgr.ApplyUpdates(appID, updates)
+		applyUpdates := func(ctx context.Context, updates []appresource.Update) ([]*resource.ResourceFile, error) {
+			return portalResMgr.ApplyUpdates0(ctx, appID, updates)
 		}
 
 		func() {
@@ -62,24 +69,43 @@ func TestManager(t *testing.T) {
 			secretConfigYAML, _ := yaml.Marshal(cfg.SecretConfig)
 			_ = afero.WriteFile(appFs, "authgear.yaml", appConfigYAML, 0666)
 			_ = afero.WriteFile(appFs, "authgear.secrets.yaml", secretConfigYAML, 0666)
+
+			resource.RegisterResource(web.LocaleAwareImageDescriptor{
+				Name:      "myimage",
+				SizeLimit: 100 * 1024,
+			})
 		}()
 
 		Convey("validate new config without crash", func() {
 			// We do not use updates to create new config.
-			_, err := applyUpdates(nil)
+			ctx := context.Background()
+			_, err := applyUpdates(ctx, nil)
 			So(err, ShouldBeNil)
 		})
 
 		Convey("validate file size", func() {
-			_, err := applyUpdates([]appresource.Update{{
-				Path: "authgear.yaml",
-				Data: []byte("id: " + string(make([]byte, 1024*1024))),
-			}})
-			So(err, ShouldBeError, `invalid resource 'authgear.yaml': too large (1048580 > 102400)`)
+			Convey("validate file with default size limit", func() {
+				ctx := context.Background()
+				_, err := applyUpdates(ctx, []appresource.Update{{
+					Path: "authgear.yaml",
+					Data: []byte("id: " + string(make([]byte, 1024*1024))),
+				}})
+				So(err, ShouldBeError, `invalid resource 'authgear.yaml': too large (1048580 > 102400)`)
+			})
+
+			Convey("validate file with specified size limit", func() {
+				ctx := context.Background()
+				_, err := applyUpdates(ctx, []appresource.Update{{
+					Path: "static/en/myimage.png",
+					Data: make([]byte, 500*1024),
+				}})
+				So(err, ShouldBeError, `invalid resource 'static/en/myimage.png': too large (512000 > 102400)`)
+			})
 		})
 
 		Convey("validate configuration YAML", func() {
-			_, err := applyUpdates([]appresource.Update{{
+			ctx := context.Background()
+			_, err := applyUpdates(ctx, []appresource.Update{{
 				Path: "authgear.yaml",
 				Data: []byte("{}"),
 			}})
@@ -87,7 +113,7 @@ func TestManager(t *testing.T) {
 <root>: required
   map[actual:<nil> expected:[http id] missing:[http id]]`)
 
-			_, err = applyUpdates([]appresource.Update{{
+			_, err = applyUpdates(ctx, []appresource.Update{{
 				Path: "authgear.yaml",
 				Data: []byte("id: test\nhttp:\n  public_origin: \"http://test\""),
 			}})
@@ -100,7 +126,8 @@ func TestManager(t *testing.T) {
 				fc := configtest.FixtureFeatureConfig(planName)
 				config.PopulateFeatureConfigDefaultValues(fc)
 				portalResMgr.AppFeatureConfig = fc
-				_, err := portalResMgr.ApplyUpdates(appID, updates)
+				ctx := context.Background()
+				_, err := portalResMgr.ApplyUpdates0(ctx, appID, updates)
 				return err
 			}
 
@@ -118,7 +145,8 @@ func TestManager(t *testing.T) {
 			bytes, err := json.Marshal(updateSecretConfigInstructions)
 			So(err, ShouldBeNil)
 
-			_, err = applyUpdates([]appresource.Update{{
+			ctx := context.Background()
+			_, err = applyUpdates(ctx, []appresource.Update{{
 				Path: "authgear.secrets.yaml",
 				Data: bytes,
 			}})
@@ -126,13 +154,14 @@ func TestManager(t *testing.T) {
 		})
 
 		Convey("forbid deleting configuration YAML", func() {
-			_, err := applyUpdates([]appresource.Update{{
+			ctx := context.Background()
+			_, err := applyUpdates(ctx, []appresource.Update{{
 				Path: "authgear.yaml",
 				Data: nil,
 			}})
 			So(err, ShouldBeError, "cannot delete 'authgear.yaml'")
 
-			_, err = applyUpdates([]appresource.Update{{
+			_, err = applyUpdates(ctx, []appresource.Update{{
 				Path: "authgear.secrets.yaml",
 				Data: nil,
 			}})
@@ -140,7 +169,8 @@ func TestManager(t *testing.T) {
 		})
 
 		Convey("forbid unknown resource files", func() {
-			_, err := applyUpdates([]appresource.Update{{
+			ctx := context.Background()
+			_, err := applyUpdates(ctx, []appresource.Update{{
 				Path: "unknown.txt",
 				Data: nil,
 			}})
@@ -152,7 +182,8 @@ func TestManager(t *testing.T) {
 			_ = afero.WriteFile(appFs, "deno/a.ts", []byte("a.ts"), 0666)
 			appConfigYAML, _ := yaml.Marshal(cfg.AppConfig)
 
-			files, err := applyUpdates([]appresource.Update{{
+			ctx := context.Background()
+			files, err := applyUpdates(ctx, []appresource.Update{{
 				Path: "authgear.yaml",
 				Data: appConfigYAML,
 			}})

@@ -7,6 +7,9 @@ import (
 
 	getsentry "github.com/getsentry/sentry-go"
 
+	runtimeresource "github.com/authgear/authgear-server"
+
+	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	imagesconfig "github.com/authgear/authgear-server/pkg/images/config"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
@@ -43,6 +46,7 @@ func NewRootProvider(
 
 	loggerFactory := log.NewFactory(
 		logLevel,
+		apierrors.SkipLoggingHook{},
 		log.NewDefaultMaskLogHook(),
 		sentry.NewLogHookFromHub(sentryHub),
 	)
@@ -60,17 +64,19 @@ func NewRootProvider(
 		SentryHub:         sentryHub,
 		DatabasePool:      dbPool,
 		VipsDaemon:        vipsDaemon,
-		BaseResources: resource.NewManagerWithDir(
-			resource.DefaultRegistry,
-			envConfig.BuiltinResourceDirectory,
-			envConfig.CustomResourceDirectory,
-		),
+		BaseResources: resource.NewManagerWithDir(resource.NewManagerWithDirOptions{
+			Registry:              resource.DefaultRegistry,
+			BuiltinResourceFS:     runtimeresource.EmbedFS_resources_authgear,
+			BuiltinResourceFSRoot: runtimeresource.RelativePath_resources_authgear,
+			CustomResourceDir:     envConfig.CustomResourceDirectory,
+		}),
 	}, nil
 }
 
 func (p *RootProvider) NewAppProvider(ctx context.Context, appCtx *config.AppContext) *AppProvider {
 	cfg := appCtx.Config
 	loggerFactory := p.LoggerFactory.ReplaceHooks(
+		apierrors.SkipLoggingHook{},
 		log.NewDefaultMaskLogHook(),
 		config.NewSecretMaskLogHook(cfg.SecretConfig),
 		sentry.NewLogHookFromContext(ctx),
@@ -78,7 +84,6 @@ func (p *RootProvider) NewAppProvider(ctx context.Context, appCtx *config.AppCon
 	loggerFactory.DefaultFields["app"] = cfg.AppConfig.ID
 	provider := &AppProvider{
 		RootProvider:  p,
-		Context:       ctx,
 		Config:        cfg,
 		LoggerFactory: loggerFactory,
 	}
@@ -110,7 +115,6 @@ func (p *RootProvider) Handler(f func(*RequestProvider) http.Handler) http.Handl
 
 type AppProvider struct {
 	*RootProvider
-	Context       context.Context
 	Config        *config.Config
 	LoggerFactory *log.Factory
 }

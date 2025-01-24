@@ -1,6 +1,8 @@
 package blocking
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/event"
 	"github.com/authgear/authgear-server/pkg/api/model"
 )
@@ -14,9 +16,10 @@ type OIDCJWT struct {
 }
 
 type OIDCJWTPreCreateBlockingEventPayload struct {
-	UserRef   model.UserRef `json:"-" resolve:"user"`
-	UserModel model.User    `json:"user"`
-	JWT       OIDCJWT       `json:"jwt"`
+	UserRef    model.UserRef    `json:"-" resolve:"user"`
+	UserModel  model.User       `json:"user"`
+	Identities []model.Identity `json:"identities"`
+	JWT        OIDCJWT          `json:"jwt"`
 }
 
 func (e *OIDCJWTPreCreateBlockingEventPayload) BlockingEventType() event.Type {
@@ -33,7 +36,7 @@ func (e *OIDCJWTPreCreateBlockingEventPayload) GetTriggeredBy() event.TriggeredB
 
 func (e *OIDCJWTPreCreateBlockingEventPayload) FillContext(ctx *event.Context) {}
 
-func (e *OIDCJWTPreCreateBlockingEventPayload) ApplyMutations(mutations event.Mutations) bool {
+func (e *OIDCJWTPreCreateBlockingEventPayload) ApplyMutations(ctx context.Context, mutations event.Mutations) bool {
 	if mutations.JWT.Payload != nil {
 		e.JWT.Payload = mutations.JWT.Payload
 		return true
@@ -42,7 +45,7 @@ func (e *OIDCJWTPreCreateBlockingEventPayload) ApplyMutations(mutations event.Mu
 	return false
 }
 
-func (e *OIDCJWTPreCreateBlockingEventPayload) PerformEffects(ctx event.MutationsEffectContext) error {
+func (e *OIDCJWTPreCreateBlockingEventPayload) PerformEffects(ctx context.Context, effectCtx event.MutationsEffectContext) error {
 	return nil
 }
 

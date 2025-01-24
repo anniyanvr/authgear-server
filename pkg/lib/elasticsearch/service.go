@@ -2,35 +2,48 @@ package elasticsearch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+	"github.com/sirupsen/logrus"
 
 	"github.com/authgear/authgear-server/pkg/api/model"
-	identityloginid "github.com/authgear/authgear-server/pkg/lib/authn/identity/loginid"
-	identityoauth "github.com/authgear/authgear-server/pkg/lib/authn/identity/oauth"
+	identityservice "github.com/authgear/authgear-server/pkg/lib/authn/identity/service"
+	"github.com/authgear/authgear-server/pkg/lib/authn/user"
 	libuser "github.com/authgear/authgear-server/pkg/lib/authn/user"
 	"github.com/authgear/authgear-server/pkg/lib/config"
-	"github.com/authgear/authgear-server/pkg/lib/infra/task"
-	"github.com/authgear/authgear-server/pkg/lib/tasks"
+	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
+	"github.com/authgear/authgear-server/pkg/lib/rolesgroups"
 	"github.com/authgear/authgear-server/pkg/util/accesscontrol"
+	"github.com/authgear/authgear-server/pkg/util/clock"
 	"github.com/authgear/authgear-server/pkg/util/graphqlutil"
+	"github.com/authgear/authgear-server/pkg/util/log"
 )
 
 type UserQueries interface {
-	Get(userID string, role accesscontrol.Role) (*model.User, error)
+	Get(ctx context.Context, userID string, role accesscontrol.Role) (*model.User, error)
+}
+
+type ElasticsearchServiceLogger struct{ *log.Logger }
+
+func NewElasticsearchServiceLogger(lf *log.Factory) *ElasticsearchServiceLogger {
+	return &ElasticsearchServiceLogger{lf.New("elasticsearch-service")}
 }
 
 type Service struct {
-	AppID     config.AppID
-	Client    *elasticsearch.Client
-	Users     UserQueries
-	OAuth     *identityoauth.Store
-	LoginID   *identityloginid.Store
-	TaskQueue task.Queue
+	Clock           clock.Clock
+	Database        *appdb.Handle
+	Logger          *ElasticsearchServiceLogger
+	AppID           config.AppID
+	Client          *elasticsearch.Client
+	Users           UserQueries
+	UserStore       *user.Store
+	IdentityService *identityservice.Service
+	RolesGroups     *rolesgroups.Store
 }
 
 type queryUserResponse struct {
@@ -39,82 +52,24 @@ type queryUserResponse struct {
 			Value int `json:"value"`
 		} `json:"total"`
 		Hits []struct {
-			Source model.ElasticsearchUserSource `json:"_source"`
-			Sort   interface{}                   `json:"sort"`
+			Source model.SearchUserSource `json:"_source"`
+			Sort   interface{}            `json:"sort"`
 		} `json:"hits"`
 	} `json:"hits"`
 }
 
-func (s *Service) ReindexUser(userID string, isDelete bool) (err error) {
-	if isDelete {
-		s.TaskQueue.Enqueue(&tasks.ReindexUserParam{
-			DeleteUserAppID: string(s.AppID),
-			DeleteUserID:    userID,
-		})
-		return nil
-	}
-
-	u, err := s.Users.Get(userID, accesscontrol.RoleGreatest)
-	if err != nil {
-		return
-	}
-	oauthIdentities, err := s.OAuth.List(u.ID)
-	if err != nil {
-		return
-	}
-	loginIDIdentities, err := s.LoginID.List(u.ID)
-	if err != nil {
-		return
-	}
-
-	raw := &model.ElasticsearchUserRaw{
-		ID:                 u.ID,
-		AppID:              string(s.AppID),
-		CreatedAt:          u.CreatedAt,
-		UpdatedAt:          u.UpdatedAt,
-		LastLoginAt:        u.LastLoginAt,
-		IsDisabled:         u.IsDisabled,
-		StandardAttributes: u.StandardAttributes,
-	}
-
-	var arrClaims []map[model.ClaimName]string
-	for _, oauthI := range oauthIdentities {
-		arrClaims = append(arrClaims, oauthI.ToInfo().IdentityAwareStandardClaims())
-		raw.OAuthSubjectID = append(raw.OAuthSubjectID, oauthI.ProviderSubjectID)
-	}
-	for _, loginIDI := range loginIDIdentities {
-		arrClaims = append(arrClaims, loginIDI.ToInfo().IdentityAwareStandardClaims())
-	}
-
-	for _, claims := range arrClaims {
-		if email, ok := claims[model.ClaimEmail]; ok {
-			raw.Email = append(raw.Email, email)
-		}
-		if phoneNumber, ok := claims[model.ClaimPhoneNumber]; ok {
-			raw.PhoneNumber = append(raw.PhoneNumber, phoneNumber)
-		}
-		if preferredUsername, ok := claims[model.ClaimPreferredUsername]; ok {
-			raw.PreferredUsername = append(raw.PreferredUsername, preferredUsername)
-		}
-	}
-
-	s.TaskQueue.Enqueue(&tasks.ReindexUserParam{
-		User: RawToSource(raw),
-	})
-	return nil
-}
-
 func (s *Service) QueryUser(
 	searchKeyword string,
+	filterOptions libuser.FilterOptions,
 	sortOption libuser.SortOption,
 	pageArgs graphqlutil.PageArgs,
 ) ([]model.PageItemRef, *Stats, error) {
 	if s.Client == nil {
-		return nil, &Stats{TotalCount: 0}, nil
+		return nil, nil, ErrMissingCredential
 	}
 
 	// Prepare body
-	bodyJSONValue := MakeSearchBody(s.AppID, searchKeyword, sortOption)
+	bodyJSONValue := MakeSearchBody(s.AppID, searchKeyword, filterOptions, sortOption)
 
 	// Prepare search_after
 	searchAfter, err := CursorToSearchAfter(model.PageCursor(pageArgs.After))
@@ -132,6 +87,7 @@ func (s *Service) QueryUser(
 	body := bytes.NewReader(bodyJSONBytes)
 
 	// Prepare size
+	//nolint:gosec // G115
 	size := int(*pageArgs.First)
 	if size == 0 {
 		size = 20
@@ -174,4 +130,63 @@ func (s *Service) QueryUser(
 	return items, &Stats{
 		TotalCount: r.Hits.Total.Value,
 	}, nil
+}
+
+func (s *Service) ReindexUser(user *model.SearchUserSource) error {
+
+	documentID := fmt.Sprintf("%s:%s", user.AppID, user.ID)
+	s.Logger.WithFields(logrus.Fields{
+		"app_id":  user.AppID,
+		"user_id": user.ID,
+	}).Info("reindexing user")
+
+	var res *esapi.Response
+
+	var sourceBytes []byte
+	sourceBytes, err := json.Marshal(user)
+	if err != nil {
+		return err
+	}
+
+	body := &bytes.Buffer{}
+	_, err = body.Write(sourceBytes)
+	if err != nil {
+		return err
+	}
+
+	res, err = s.Client.Index(IndexNameUser, body, func(o *esapi.IndexRequest) {
+		o.DocumentID = documentID
+	})
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		err = fmt.Errorf("%v", res)
+		return err
+	}
+	return nil
+}
+
+func (s *Service) DeleteUser(userID string) error {
+	appID := s.AppID
+	s.Logger.WithFields(logrus.Fields{
+		"app_id":  appID,
+		"user_id": userID,
+	}).Info("removing user from index")
+
+	documentID := fmt.Sprintf("%s:%s", appID, userID)
+
+	var res *esapi.Response
+
+	res, err := s.Client.Delete(IndexNameUser, documentID)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		err = fmt.Errorf("%v", res)
+		return err
+	}
+	return nil
 }

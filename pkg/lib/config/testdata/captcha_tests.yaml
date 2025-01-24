@@ -1,0 +1,5 @@
+part: CaptchaConfig
+name: legacy-provider-only
+error: null
+value:
+  provider: cloudflare

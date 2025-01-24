@@ -9,7 +9,7 @@ package images
 import (
 	"github.com/authgear/authgear-server/pkg/images/deps"
 	"github.com/authgear/authgear-server/pkg/images/handler"
-	"github.com/authgear/authgear-server/pkg/lib/cloudstorage"
+	"github.com/authgear/authgear-server/pkg/images/service"
 	deps2 "github.com/authgear/authgear-server/pkg/lib/deps"
 	"github.com/authgear/authgear-server/pkg/lib/images"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
@@ -49,12 +49,14 @@ func newCORSMiddleware(p *deps.RequestProvider) httproute.Middleware {
 	appConfig := config.AppConfig
 	httpConfig := appConfig.HTTP
 	oAuthConfig := appConfig.OAuth
+	samlConfig := appConfig.SAML
 	rootProvider := appProvider.RootProvider
 	environmentConfig := &rootProvider.EnvironmentConfig
 	corsAllowedOrigins := environmentConfig.CORSAllowedOrigins
 	corsMatcher := &middleware.CORSMatcher{
 		Config:             httpConfig,
 		OAuthConfig:        oAuthConfig,
+		SAMLConfig:         samlConfig,
 		CORSAllowedOrigins: corsAllowedOrigins,
 	}
 	factory := rootProvider.LoggerFactory
@@ -67,13 +69,15 @@ func newCORSMiddleware(p *deps.RequestProvider) httproute.Middleware {
 }
 
 func newGetHandler(p *deps.RequestProvider) http.Handler {
+	imagesCloudStorageServiceHTTPClient := service.NewImagesCloudStorageServiceHTTPClient()
 	appProvider := p.AppProvider
 	rootProvider := appProvider.RootProvider
 	objectStoreConfig := rootProvider.ObjectStoreConfig
 	clock := _wireSystemClockValue
-	storage := deps.NewCloudStorage(objectStoreConfig, clock)
-	provider := &cloudstorage.Provider{
-		Storage: storage,
+	imagesCloudStorageServiceStorage := deps.NewCloudStorage(objectStoreConfig, clock)
+	imagesCloudStorageService := &service.ImagesCloudStorageService{
+		HTTPClient: imagesCloudStorageServiceHTTPClient,
+		Storage:    imagesCloudStorageServiceStorage,
 	}
 	factory := rootProvider.LoggerFactory
 	getHandlerLogger := handler.NewGetHandlerLogger(factory)
@@ -85,7 +89,7 @@ func newGetHandler(p *deps.RequestProvider) http.Handler {
 	httpProto := deps2.ProvideHTTPProto(request, trustProxy)
 	daemon := rootProvider.VipsDaemon
 	getHandler := &handler.GetHandler{
-		DirectorMaker: provider,
+		DirectorMaker: imagesCloudStorageService,
 		Logger:        getHandlerLogger,
 		ImagesCDNHost: imagesCDNHost,
 		HTTPHost:      httpHost,
@@ -108,11 +112,13 @@ func newPostHandler(p *deps.RequestProvider) http.Handler {
 	jsonResponseWriter := &httputil.JSONResponseWriter{
 		Logger: jsonResponseWriterLogger,
 	}
+	imagesCloudStorageServiceHTTPClient := service.NewImagesCloudStorageServiceHTTPClient()
 	objectStoreConfig := rootProvider.ObjectStoreConfig
 	clockClock := _wireSystemClockValue
-	storage := deps.NewCloudStorage(objectStoreConfig, clockClock)
-	provider := cloudstorage.Provider{
-		Storage: storage,
+	imagesCloudStorageServiceStorage := deps.NewCloudStorage(objectStoreConfig, clockClock)
+	imagesCloudStorageService := &service.ImagesCloudStorageService{
+		HTTPClient: imagesCloudStorageServiceHTTPClient,
+		Storage:    imagesCloudStorageServiceStorage,
 	}
 	config := appProvider.Config
 	secretConfig := config.SecretConfig
@@ -121,32 +127,31 @@ func newPostHandler(p *deps.RequestProvider) http.Handler {
 	environmentConfig := &rootProvider.EnvironmentConfig
 	trustProxy := environmentConfig.TrustProxy
 	httpHost := deps2.ProvideHTTPHost(request, trustProxy)
-	presignProvider := &presign.Provider{
+	provider := &presign.Provider{
 		Secret: imagesKeyMaterials,
 		Clock:  clockClock,
 		Host:   httpHost,
 	}
-	context := deps2.ProvideRequestContext(request)
 	pool := rootProvider.DatabasePool
 	databaseEnvironmentConfig := environmentConfig.DatabaseConfig
 	databaseCredentials := deps2.ProvideDatabaseCredentials(secretConfig)
-	handle := appdb.NewHandle(context, pool, databaseEnvironmentConfig, databaseCredentials, factory)
+	handle := appdb.NewHandle(pool, databaseEnvironmentConfig, databaseCredentials, factory)
 	appConfig := config.AppConfig
 	appID := appConfig.ID
 	sqlBuilderApp := appdb.NewSQLBuilderApp(databaseCredentials, appID)
-	sqlExecutor := appdb.NewSQLExecutor(context, handle)
+	sqlExecutor := appdb.NewSQLExecutor(handle)
 	store := &images.Store{
 		SQLBuilder:  sqlBuilderApp,
 		SQLExecutor: sqlExecutor,
 	}
 	postHandler := &handler.PostHandler{
-		Logger:               postHandlerLogger,
-		JSON:                 jsonResponseWriter,
-		CloudStorageProvider: provider,
-		PresignProvider:      presignProvider,
-		Database:             handle,
-		ImagesStore:          store,
-		Clock:                clockClock,
+		Logger:                         postHandlerLogger,
+		JSON:                           jsonResponseWriter,
+		PostHandlerCloudStorageService: imagesCloudStorageService,
+		PresignProvider:                provider,
+		Database:                       handle,
+		ImagesStore:                    store,
+		Clock:                          clockClock,
 	}
 	return postHandler
 }

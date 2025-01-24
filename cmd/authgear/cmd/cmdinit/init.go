@@ -31,14 +31,16 @@ var cmdInit = &cobra.Command{
 			log.Fatalf("invalid input: %s", err.Error())
 			return
 		}
+		phoneOTPMode := config.ReadPhoneOTPMode()
 		skipEmailVerification := config.ReadSkipEmailVerification()
+		searchImpl := config.ReadSearchImplementation()
 		var appSecretsOpts *libconfig.GenerateSecretConfigOptions
 		if forHelmChart, err := cmd.Flags().GetBool("for-helm-chart"); err == nil && forHelmChart {
 			// Skip all the db, redis, elasticsearch credentials
 			// Those are provided via the helm chart
 			appSecretsOpts = &libconfig.GenerateSecretConfigOptions{}
 		} else {
-			appSecretsOpts = config.ReadSecretConfigOptionsFromConsole()
+			appSecretsOpts = config.ReadSecretConfigOptionsFromConsole(searchImpl)
 		}
 
 		// generate app config
@@ -57,6 +59,15 @@ var cmdInit = &cobra.Command{
 		}
 		appConfig.OAuth.Clients = append(appConfig.OAuth.Clients, *oauthClientConfig)
 
+		// assign phone otp mode to app config
+		appConfig.Authenticator = &libconfig.AuthenticatorConfig{
+			OOB: &libconfig.AuthenticatorOOBConfig{
+				SMS: &libconfig.AuthenticatorOOBSMSConfig{
+					PhoneOTPMode: phoneOTPMode,
+				},
+			},
+		}
+
 		// assign email verification enabled
 		emailVerificationEnabled := !skipEmailVerification
 		appConfig.Verification = &libconfig.VerificationConfig{
@@ -66,6 +77,11 @@ var cmdInit = &cobra.Command{
 					Required: &emailVerificationEnabled,
 				},
 			},
+		}
+
+		// Set search implementation
+		appConfig.Search = &libconfig.SearchConfig{
+			Implementation: searchImpl,
 		}
 
 		// generate secret config

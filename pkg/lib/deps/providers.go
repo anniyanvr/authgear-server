@@ -6,16 +6,18 @@ import (
 
 	getsentry "github.com/getsentry/sentry-go"
 
+	"github.com/authgear/authgear-server"
+	"github.com/authgear/authgear-server/pkg/api/apierrors"
 	"github.com/authgear/authgear-server/pkg/lib/config"
 	"github.com/authgear/authgear-server/pkg/lib/config/configsource"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/appdb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/db/auditdb"
+	"github.com/authgear/authgear-server/pkg/lib/infra/db/searchdb"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/analyticredis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/appredis"
 	"github.com/authgear/authgear-server/pkg/lib/infra/redis/globalredis"
-	"github.com/authgear/authgear-server/pkg/lib/infra/task"
 	"github.com/authgear/authgear-server/pkg/lib/web"
 	"github.com/authgear/authgear-server/pkg/util/httproute"
 	"github.com/authgear/authgear-server/pkg/util/log"
@@ -31,17 +33,15 @@ type RootProvider struct {
 	DatabasePool       *db.Pool
 	RedisPool          *redis.Pool
 	RedisHub           *redis.Hub
-	TaskQueueFactory   TaskQueueFactory
 	BaseResources      *resource.Manager
 	EmbeddedResources  *web.GlobalEmbeddedResourceManager
 }
 
 func NewRootProvider(
+	ctx context.Context,
 	cfg *config.EnvironmentConfig,
 	configSourceConfig *configsource.Config,
-	builtinResourceDirectory string,
 	customResourceDirectory string,
-	taskQueueFactory TaskQueueFactory,
 ) (*RootProvider, error) {
 	var p RootProvider
 
@@ -57,13 +57,14 @@ func NewRootProvider(
 
 	loggerFactory := log.NewFactory(
 		logLevel,
+		apierrors.SkipLoggingHook{},
 		log.NewDefaultMaskLogHook(),
 		sentry.NewLogHookFromHub(sentryHub),
 	)
 
 	dbPool := db.NewPool()
 	redisPool := redis.NewPool()
-	redisHub := redis.NewHub(redisPool, loggerFactory)
+	redisHub := redis.NewHub(ctx, redisPool, loggerFactory)
 
 	embeddedResources, err := web.NewDefaultGlobalEmbeddedResourceManager()
 	if err != nil {
@@ -78,12 +79,12 @@ func NewRootProvider(
 		DatabasePool:       dbPool,
 		RedisPool:          redisPool,
 		RedisHub:           redisHub,
-		TaskQueueFactory:   taskQueueFactory,
-		BaseResources: resource.NewManagerWithDir(
-			resource.DefaultRegistry,
-			builtinResourceDirectory,
-			customResourceDirectory,
-		),
+		BaseResources: resource.NewManagerWithDir(resource.NewManagerWithDirOptions{
+			Registry:              resource.DefaultRegistry,
+			BuiltinResourceFS:     runtimeresource.EmbedFS_resources_authgear,
+			BuiltinResourceFSRoot: runtimeresource.RelativePath_resources_authgear,
+			CustomResourceDir:     customResourceDirectory,
+		}),
 		EmbeddedResources: embeddedResources,
 	}
 	return &p, nil
@@ -92,16 +93,29 @@ func NewRootProvider(
 func (p *RootProvider) NewAppProvider(ctx context.Context, appCtx *config.AppContext) *AppProvider {
 	cfg := appCtx.Config
 	loggerFactory := p.LoggerFactory.ReplaceHooks(
+		apierrors.SkipLoggingHook{},
 		log.NewDefaultMaskLogHook(),
 		config.NewSecretMaskLogHook(cfg.SecretConfig),
-		sentry.NewLogHookFromContext(ctx),
+		// NewAppProvider is used in 2 places.
+		// 1. Process normal incoming HTTP requests. In this case, sentry middleware will inject a more detailed sentry.Hub in the context.
+		// 2. Process async tasks. In this case, there is no sentry middleware and the context is context.Background(), so we need to fallback to use p.SentryHub.
+		sentry.NewLogHookFromContextOrFallback(ctx, p.SentryHub),
 	)
 	loggerFactory.DefaultFields["app"] = cfg.AppConfig.ID
 	appDatabase := appdb.NewHandle(
-		ctx,
 		p.DatabasePool,
 		&p.EnvironmentConfig.DatabaseConfig,
 		cfg.SecretConfig.LookupData(config.DatabaseCredentialsKey).(*config.DatabaseCredentials),
+		loggerFactory,
+	)
+	var searchDatabaseCredentials *config.SearchDatabaseCredentials
+	if s := cfg.SecretConfig.LookupData(config.SearchDatabaseCredentialsKey); s != nil {
+		searchDatabaseCredentials = s.(*config.SearchDatabaseCredentials)
+	}
+	searchDatabase := searchdb.NewHandle(
+		p.DatabasePool,
+		&p.EnvironmentConfig.DatabaseConfig,
+		searchDatabaseCredentials,
 		loggerFactory,
 	)
 	var auditDatabaseCredentials *config.AuditDatabaseCredentials
@@ -109,14 +123,12 @@ func (p *RootProvider) NewAppProvider(ctx context.Context, appCtx *config.AppCon
 		auditDatabaseCredentials = a.(*config.AuditDatabaseCredentials)
 	}
 	auditReadDatabase := auditdb.NewReadHandle(
-		ctx,
 		p.DatabasePool,
 		&p.EnvironmentConfig.DatabaseConfig,
 		auditDatabaseCredentials,
 		loggerFactory,
 	)
 	auditWriteDatabase := auditdb.NewWriteHandle(
-		ctx,
 		p.DatabasePool,
 		&p.EnvironmentConfig.DatabaseConfig,
 		auditDatabaseCredentials,
@@ -149,9 +161,9 @@ func (p *RootProvider) NewAppProvider(ctx context.Context, appCtx *config.AppCon
 
 	provider := &AppProvider{
 		RootProvider:       p,
-		Context:            ctx,
 		LoggerFactory:      loggerFactory,
 		AppDatabase:        appDatabase,
+		SearchDatabase:     searchDatabase,
 		AuditReadDatabase:  auditReadDatabase,
 		AuditWriteDatabase: auditWriteDatabase,
 		Redis:              redis,
@@ -159,7 +171,6 @@ func (p *RootProvider) NewAppProvider(ctx context.Context, appCtx *config.AppCon
 		AnalyticRedis:      analyticRedis,
 		AppContext:         appCtx,
 	}
-	provider.TaskQueue = p.TaskQueueFactory(provider)
 	return provider
 }
 
@@ -193,25 +204,16 @@ func (p *RootProvider) Middleware(factory func(*RequestProvider) httproute.Middl
 	})
 }
 
-func (p *RootProvider) Task(factory func(provider *TaskProvider) task.Task) task.Task {
-	return TaskFunc(func(ctx context.Context, param task.Param) error {
-		p := getTaskProvider(ctx)
-		task := factory(p)
-		return task.Run(ctx, param)
-	})
-}
-
 type AppProvider struct {
 	*RootProvider
 
-	Context            context.Context
 	LoggerFactory      *log.Factory
 	AppDatabase        *appdb.Handle
+	SearchDatabase     *searchdb.Handle
 	AuditReadDatabase  *auditdb.ReadHandle
 	AuditWriteDatabase *auditdb.WriteHandle
 	Redis              *appredis.Handle
 	AnalyticRedis      *analyticredis.Handle
-	TaskQueue          task.Queue
 	AppContext         *config.AppContext
 	GlobalRedis        *globalredis.Handle
 }
@@ -224,24 +226,11 @@ func (p *AppProvider) NewRequestProvider(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (p *AppProvider) NewTaskProvider(ctx context.Context) *TaskProvider {
-	return &TaskProvider{
-		AppProvider: p,
-		Context:     ctx,
-	}
-}
-
 type RequestProvider struct {
 	*AppProvider
 
 	Request        *http.Request
 	ResponseWriter http.ResponseWriter
-}
-
-type TaskProvider struct {
-	*AppProvider
-
-	Context context.Context
 }
 
 type BackgroundProvider struct {
@@ -257,9 +246,9 @@ type BackgroundProvider struct {
 }
 
 func NewBackgroundProvider(
+	ctx context.Context,
 	cfg *config.EnvironmentConfig,
 	configSourceConfig *configsource.Config,
-	builtinResourceDirectory string,
 	customResourceDirectory string,
 ) (*BackgroundProvider, error) {
 	var p BackgroundProvider
@@ -276,13 +265,14 @@ func NewBackgroundProvider(
 
 	loggerFactory := log.NewFactory(
 		logLevel,
+		apierrors.SkipLoggingHook{},
 		log.NewDefaultMaskLogHook(),
 		sentry.NewLogHookFromHub(sentryHub),
 	)
 
 	dbPool := db.NewPool()
 	redisPool := redis.NewPool()
-	redisHub := redis.NewHub(redisPool, loggerFactory)
+	redisHub := redis.NewHub(ctx, redisPool, loggerFactory)
 
 	embeddedResources, err := web.NewDefaultGlobalEmbeddedResourceManager()
 	if err != nil {
@@ -297,11 +287,12 @@ func NewBackgroundProvider(
 		DatabasePool:       dbPool,
 		RedisPool:          redisPool,
 		RedisHub:           redisHub,
-		BaseResources: resource.NewManagerWithDir(
-			resource.DefaultRegistry,
-			builtinResourceDirectory,
-			customResourceDirectory,
-		),
+		BaseResources: resource.NewManagerWithDir(resource.NewManagerWithDirOptions{
+			Registry:              resource.DefaultRegistry,
+			BuiltinResourceFS:     runtimeresource.EmbedFS_resources_authgear,
+			BuiltinResourceFSRoot: runtimeresource.RelativePath_resources_authgear,
+			CustomResourceDir:     customResourceDirectory,
+		}),
 		EmbeddedResources: embeddedResources,
 	}
 

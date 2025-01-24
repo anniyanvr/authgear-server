@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useGraphqlMutation } from "../../../hook/graphql";
-import { client } from "../apollo";
+import { usePortalClient } from "../apollo";
 import { AppResourceUpdate } from "../globalTypes.generated";
 import {
   UpdateAppTemplatesMutationMutation,
@@ -16,7 +16,8 @@ import {
 } from "../../../util/resource";
 
 export type AppTemplatesUpdater = (
-  updates: ResourceUpdate[]
+  updates: ResourceUpdate[],
+  ignoreConflict?: boolean
 ) => Promise<PortalAPIApp | null>;
 
 export function useUpdateAppTemplatesMutation(appID: string): {
@@ -25,6 +26,7 @@ export function useUpdateAppTemplatesMutation(appID: string): {
   error: unknown;
   resetError: () => void;
 } {
+  const client = usePortalClient();
   const [mutationFunction, { error, loading }, resetError] = useGraphqlMutation<
     UpdateAppTemplatesMutationMutation,
     UpdateAppTemplatesMutationMutationVariables
@@ -32,7 +34,7 @@ export function useUpdateAppTemplatesMutation(appID: string): {
     client,
   });
   const updateAppTemplates = useCallback(
-    async (updates: ResourceUpdate[]) => {
+    async (updates: ResourceUpdate[], ignoreConflict: boolean = false) => {
       const paths = [];
       for (const specifier of updates.map((u) => u.specifier)) {
         paths.push(expandSpecifier(specifier));
@@ -55,6 +57,7 @@ export function useUpdateAppTemplatesMutation(appID: string): {
         return {
           path: update.path,
           data: update.value == null ? null : transform(update.value),
+          checksum: !ignoreConflict ? update.checksum : undefined,
         };
       });
 

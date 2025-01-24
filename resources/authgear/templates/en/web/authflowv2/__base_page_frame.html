@@ -1,0 +1,44 @@
+{{ define "authflowv2/__base_page_frame.html" }}
+<!DOCTYPE html>
+
+<html
+{{ if and ($.DarkThemeEnabled) (not $.LightThemeEnabled) }}
+  class="dark"
+{{ end }}
+  lang="{{ $.ResolvedLanguageTag }}"
+  dir="{{ $.HTMLDir }}"
+  data-controller="format-date inline-preview"
+  data-dark-theme-enabled="{{ $.DarkThemeEnabled }}"
+  data-light-theme-enabled="{{ $.LightThemeEnabled }}"
+  data-watermark-enabled={{ $.WatermarkEnabled }}
+  data-inline-preview="{{ $.InlinePreview }}"
+  data-inline-preview-previewable-resource-outlet="[data-previewable-resource-key-value]"
+  data-inline-preview-is-inline-preview-value="{{ $.InlinePreview }}"
+  >
+{{ template "authflowv2/__html_head.html" . }}
+
+{{ $lockedUntil := "" }}
+{{ if and (.Error) (eq .Error.reason "AccountLockout") }}
+  {{ $lockedUntil = (rfc3339 (ensureTime .Error.info.until)) }}
+{{ end }}
+
+<body
+  {{/* "loading" is assumed to be defined in document.body["data-controller"] in TurboFormController */}}
+  data-controller="prevent-double-tap lockout restore-form loading authflow-passkey-error bot-protection"
+  data-restore-form-json-value="{{ $.FormJSON }}"
+  data-action="dblclick->prevent-double-tap#action"
+  data-lockout-lock-until-value="{{ $lockedUntil }}"
+  data-lockout-action-button-selector-value="[data-action-button]">
+
+<!-- Google Tag Manager (noscript) -->
+<!-- The hash of the style attribute is sha256-ZLjZaRfcYelvFE+8S7ynGAe0XPN7SLX6dirEzdvD5Mk= -->
+{{ if $.GoogleTagManagerContainerID }}
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id={{ $.GoogleTagManagerContainerID }}"
+height="0" width="0" style="display:none;visibility:hidden;"></iframe></noscript>
+{{ end }}
+<!-- End Google Tag Manager (noscript) -->
+
+{{ template "page-frame-content" . }}
+</body>
+</html>
+{{ end }}

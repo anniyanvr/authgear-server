@@ -8,20 +8,17 @@ import (
 	"golang.org/x/text/secure/precis"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/authgear/authgear-server/pkg/api/internalinterface"
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/util/phone"
 )
-
-type Normalizer interface {
-	Normalize(loginID string) (string, error)
-	ComputeUniqueKey(normalizeLoginID string) (string, error)
-}
 
 type NormalizerFactory struct {
 	Config *config.LoginIDConfig
 }
 
-func (f *NormalizerFactory) NormalizerWithLoginIDType(loginIDKeyType model.LoginIDKeyType) Normalizer {
+func (f *NormalizerFactory) NormalizerWithLoginIDType(loginIDKeyType model.LoginIDKeyType) internalinterface.LoginIDNormalizer {
 	switch loginIDKeyType {
 	case model.LoginIDKeyTypeEmail:
 		return &EmailNormalizer{
@@ -31,6 +28,8 @@ func (f *NormalizerFactory) NormalizerWithLoginIDType(loginIDKeyType model.Login
 		return &UsernameNormalizer{
 			Config: f.Config.Types.Username,
 		}
+	case model.LoginIDKeyTypePhone:
+		return &PhoneNumberNormalizer{}
 	}
 
 	return &NullNormalizer{}
@@ -40,12 +39,14 @@ type EmailNormalizer struct {
 	Config *config.LoginIDEmailConfig
 }
 
+var _ internalinterface.LoginIDNormalizer = &EmailNormalizer{}
+
 func (n *EmailNormalizer) Normalize(loginID string) (string, error) {
 	// refs from stdlib
 	// https://golang.org/src/net/mail/message.go?s=5217:5250#L172
 	at := strings.LastIndex(loginID, "@")
 	if at < 0 {
-		panic("loginid: malformed address, should be rejected by the email format checker")
+		return "", fmt.Errorf("loginid: expected email address to contain @")
 	}
 	local, domain := loginID[:at], loginID[at+1:]
 
@@ -77,7 +78,7 @@ func (n *EmailNormalizer) Normalize(loginID string) (string, error) {
 func (n *EmailNormalizer) ComputeUniqueKey(normalizeLoginID string) (string, error) {
 	at := strings.LastIndex(normalizeLoginID, "@")
 	if at < 0 {
-		panic("loginid: malformed address, should be rejected by the email format checker")
+		return "", fmt.Errorf("loginid: expected email address to contain @")
 	}
 	local, domain := normalizeLoginID[:at], normalizeLoginID[at+1:]
 	punycode, err := idna.ToASCII(domain)
@@ -91,6 +92,8 @@ func (n *EmailNormalizer) ComputeUniqueKey(normalizeLoginID string) (string, err
 type UsernameNormalizer struct {
 	Config *config.LoginIDUsernameConfig
 }
+
+var _ internalinterface.LoginIDNormalizer = &UsernameNormalizer{}
 
 func (n *UsernameNormalizer) Normalize(loginID string) (string, error) {
 	loginID = norm.NFKC.String(loginID)
@@ -111,7 +114,27 @@ func (n *UsernameNormalizer) ComputeUniqueKey(normalizeLoginID string) (string, 
 	return normalizeLoginID, nil
 }
 
+type PhoneNumberNormalizer struct {
+}
+
+var _ internalinterface.LoginIDNormalizer = &PhoneNumberNormalizer{}
+
+func (n *PhoneNumberNormalizer) Normalize(loginID string) (string, error) {
+	e164, err := phone.Parse_IsPossibleNumber_ReturnE164(loginID)
+	if err != nil {
+		return "", err
+	}
+
+	return e164, nil
+}
+
+func (n *PhoneNumberNormalizer) ComputeUniqueKey(normalizeLoginID string) (string, error) {
+	return normalizeLoginID, nil
+}
+
 type NullNormalizer struct{}
+
+var _ internalinterface.LoginIDNormalizer = &NullNormalizer{}
 
 func (n *NullNormalizer) Normalize(loginID string) (string, error) {
 	return loginID, nil

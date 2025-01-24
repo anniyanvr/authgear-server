@@ -1,12 +1,15 @@
 package latte
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
 	"github.com/authgear/authgear-server/pkg/lib/authn/otp"
 	"github.com/authgear/authgear-server/pkg/lib/feature"
 	"github.com/authgear/authgear-server/pkg/lib/ratelimit"
+	"github.com/authgear/authgear-server/pkg/lib/translation"
 	"github.com/authgear/authgear-server/pkg/lib/workflow"
 )
 
@@ -20,20 +23,20 @@ type SendOOBCode struct {
 	IsResend          bool
 }
 
-func (p *SendOOBCode) Do() error {
-	var messageType otp.MessageType
+func (p *SendOOBCode) Do(ctx context.Context) error {
+	var messageType translation.MessageType
 	switch p.Stage {
 	case authn.AuthenticationStagePrimary:
 		if p.IsAuthenticating {
-			messageType = otp.MessageTypeAuthenticatePrimaryOOB
+			messageType = translation.MessageTypeAuthenticatePrimaryOOB
 		} else {
-			messageType = otp.MessageTypeSetupPrimaryOOB
+			messageType = translation.MessageTypeSetupPrimaryOOB
 		}
 	case authn.AuthenticationStageSecondary:
 		if p.IsAuthenticating {
-			messageType = otp.MessageTypeAuthenticateSecondaryOOB
+			messageType = translation.MessageTypeAuthenticateSecondaryOOB
 		} else {
-			messageType = otp.MessageTypeSetupSecondaryOOB
+			messageType = translation.MessageTypeSetupSecondaryOOB
 		}
 	default:
 		panic("interaction: unknown authentication stage: " + p.Stage)
@@ -67,14 +70,10 @@ func (p *SendOOBCode) Do() error {
 		}
 	}
 
-	msg, err := p.Deps.OTPSender.Prepare(channel, target, p.OTPForm, messageType)
-	if err != nil {
-		return err
-	}
-	defer msg.Close()
+	kind := otp.KindOOBOTPCode(p.Deps.Config, channel)
 
-	kind := otp.KindOOBOTP(p.Deps.Config, channel)
 	code, err := p.Deps.OTPCodes.GenerateOTP(
+		ctx,
 		kind,
 		target,
 		p.OTPForm,
@@ -89,7 +88,16 @@ func (p *SendOOBCode) Do() error {
 		return err
 	}
 
-	err = p.Deps.OTPSender.Send(msg, otp.SendOptions{OTP: code})
+	err = p.Deps.OTPSender.Send(
+		ctx,
+		otp.SendOptions{
+			Channel: channel,
+			Target:  target,
+			Form:    p.OTPForm,
+			Type:    messageType,
+			OTP:     code,
+		},
+	)
 	if err != nil {
 		return err
 	}

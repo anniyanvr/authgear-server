@@ -1,23 +1,57 @@
 package webapp
 
-import "github.com/authgear/authgear-server/pkg/lib/config"
+import (
+	"net/http"
+
+	"github.com/authgear/authgear-server/pkg/util/duration"
+	"github.com/authgear/authgear-server/pkg/util/httputil"
+)
 
 // CSRFFieldName is the same as the default, but public.
 const CSRFFieldName = "gorilla.csrf.Token"
 
-type CSRFCookieDef struct {
-	Name   string
-	Domain string
+var CSRFCookieMaxAge = int(duration.UserInteraction.Seconds())
+
+var CSRFCookieDef = &httputil.CookieDef{
+	NameSuffix:        "csrf_token",
+	Path:              "/",
+	AllowScriptAccess: false,
+	SameSite:          http.SameSiteNoneMode,
+	MaxAge:            &CSRFCookieMaxAge,
 }
 
-func NewCSRFCookieDef(cfg *config.HTTPConfig) CSRFCookieDef {
-	def := CSRFCookieDef{
-		Name: cfg.CookiePrefix + "csrf_token",
-	}
+var CSRFDebugCookieSameSiteOmitDef = &httputil.CookieDef{
+	NameSuffix:        "debug_csrf_same_site_omit",
+	Path:              "/",
+	AllowScriptAccess: false,
+	SameSite:          http.SameSiteDefaultMode,
+	MaxAge:            &CSRFCookieMaxAge,
+}
 
-	if cfg.CookieDomain != nil {
-		def.Domain = *cfg.CookieDomain
-	}
+var CSRFDebugCookieSameSiteNoneDef = &httputil.CookieDef{
+	NameSuffix:        "debug_csrf_same_site_none",
+	Path:              "/",
+	AllowScriptAccess: false,
+	SameSite:          http.SameSiteNoneMode,
+	MaxAge:            &CSRFCookieMaxAge,
+}
 
-	return def
+var CSRFDebugCookieSameSiteLaxDef = &httputil.CookieDef{
+	NameSuffix:        "debug_csrf_same_site_lax",
+	Path:              "/",
+	AllowScriptAccess: false,
+	SameSite:          http.SameSiteLaxMode,
+	MaxAge:            &CSRFCookieMaxAge,
+}
+
+var CSRFDebugCookieSameSiteStrictDef = &httputil.CookieDef{
+	NameSuffix:        "debug_csrf_same_site_strict",
+	Path:              "/",
+	AllowScriptAccess: false,
+	SameSite:          http.SameSiteStrictMode,
+	MaxAge:            &CSRFCookieMaxAge,
+}
+
+type CSRFDebugMiddleware struct {
+	Cookies CookieManager
 }

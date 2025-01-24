@@ -1,0 +1,9 @@
+{{ define "authflowv2/__direct_access_disable_page_frame.html" }}
+{{ template "authflowv2/__base_page_frame.html" . }}
+{{ end }}
+
+{{ define "page-frame-content" }}
+  <div class="direct-access-layout">
+    {{ template "page-content" . }}
+  </div>
+{{ end }}

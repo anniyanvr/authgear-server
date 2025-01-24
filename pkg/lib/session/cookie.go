@@ -19,27 +19,23 @@ type CookieDef struct {
 
 func NewSessionCookieDef(sessionCfg *config.SessionConfig) CookieDef {
 	def := &httputil.CookieDef{
-		NameSuffix: "session",
-		Path:       "/",
-		SameSite:   http.SameSiteLaxMode,
+		NameSuffix:    "session",
+		Path:          "/",
+		SameSite:      http.SameSiteLaxMode,
+		IsNonHostOnly: true,
 	}
 
 	strictDef := &httputil.CookieDef{
-		NameSuffix: "same_site_strict",
-		Path:       "/",
-		SameSite:   http.SameSiteStrictMode,
+		NameSuffix:    "same_site_strict",
+		Path:          "/",
+		SameSite:      http.SameSiteStrictMode,
+		IsNonHostOnly: true,
 	}
 
-	if sessionCfg.CookieNonPersistent {
-		// HTTP session cookie: no MaxAge
-		def.MaxAge = nil
-		strictDef.MaxAge = nil
-	} else {
-		// HTTP permanent cookie: MaxAge = session lifetime
-		maxAge := int(sessionCfg.Lifetime)
-		def.MaxAge = &maxAge
-		strictDef.MaxAge = &maxAge
-	}
+	// HTTP permanent cookie: MaxAge = session lifetime
+	maxAge := int(sessionCfg.Lifetime)
+	def.MaxAge = &maxAge
+	strictDef.MaxAge = &maxAge
 
 	return CookieDef{
 		Def:               def,
@@ -48,7 +44,15 @@ func NewSessionCookieDef(sessionCfg *config.SessionConfig) CookieDef {
 }
 
 var AppSessionTokenCookieDef = &httputil.CookieDef{
-	NameSuffix: "app_session",
-	Path:       "/",
-	SameSite:   http.SameSiteLaxMode,
+	NameSuffix:    "app_session",
+	Path:          "/",
+	SameSite:      http.SameSiteLaxMode,
+	IsNonHostOnly: true,
+}
+
+var AppAccessTokenCookieDef = &httputil.CookieDef{
+	NameSuffix:    "app_access_token",
+	Path:          "/",
+	SameSite:      http.SameSiteLaxMode,
+	IsNonHostOnly: true,
 }

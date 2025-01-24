@@ -1,0 +1,28 @@
+{{ define "authflowv2/__alert_message.html" }}
+{{ $message := trimHTML .Message }}
+<div class="alert-message
+  {{ if eq $.Type "error" }}alert-message--error{{ end }}
+  {{ if eq $.Type "success" }}alert-message--success{{ end }}
+  {{ if eq $.Type "warning" }}alert-message--warning{{ end }}
+  {{ $.Classname }}"
+  data-controller="alert-message"
+  data-server-error-message="{{ include "v2.error.server" nil }}"
+  data-network-error-message="{{ include "v2.error.network" nil }}"
+  data-passkey-not-supported="{{ include "v2.error.passkey-not-supported" nil }}"
+  data-invalid-passkey-or-not-supported="{{ include "v2.error.invalid-passkey-or-not-supported" nil }}"
+  data-no-passkey="{{ include "v2.error.no-passkey" nil }}"
+  data-passkey-duplicate="{{ include "v2.error.passkey-duplicate" nil }}"
+  data-bot-protection-cloudflare="{{ include "v2.error.bot-protection-cloudflare" nil }}"
+  data-bot-protection-recaptcha-v2="{{ include "v2.error.bot-protection-recaptcha-v2" nil }}"
+  {{ if $message }}
+    data-error-message={{ $message }}
+  {{ end }}
+>
+  <span class="alert-message__icon material-icons material-icons--filled">
+    {{ if eq $.Type "error" }}error{{ end }}
+  </span>
+  <span class="alert-message__text" data-alert-message-target="message">
+    {{ $message }}
+  </span>
+</div>
+{{ end }}

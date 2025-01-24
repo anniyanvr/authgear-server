@@ -8,12 +8,14 @@ import React, {
 import {
   DetailsList,
   DetailsRow,
+  Dialog,
+  DialogFooter,
   IButtonStyles,
   IColumn,
-  ICommandBarItemProps,
   IconButton,
   IDetailsRowProps,
   IDetailsRowStyleProps,
+  IDialogContentProps,
   MessageBar,
   SelectionMode,
   Text,
@@ -22,7 +24,7 @@ import { concatStyleSetsWithProps } from "@fluentui/merge-styles";
 import cn from "classnames";
 import { Context, FormattedMessage } from "@oursky/react-messageformat";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import produce from "immer";
+import { produce } from "immer";
 
 import ShowError from "../../ShowError";
 import ShowLoading from "../../ShowLoading";
@@ -39,16 +41,26 @@ import ScreenTitle from "../../ScreenTitle";
 import { useAppFeatureConfigQuery } from "./query/appFeatureConfigQuery";
 import ScreenDescription from "../../ScreenDescription";
 import { getApplicationTypeMessageID } from "./EditOAuthClientForm";
-import CommandBarContainer from "../../CommandBarContainer";
 import FeatureDisabledMessageBar from "./FeatureDisabledMessageBar";
-import { onRenderCommandBarPrimaryButton } from "../../CommandBarPrimaryButton";
 import { useSystemConfig } from "../../context/SystemConfigContext";
 import Widget from "../../Widget";
+import FormContainer from "../../FormContainer";
+import PrimaryButton from "../../PrimaryButton";
+import ActionButton from "../../ActionButton";
+import ButtonWithLoading from "../../ButtonWithLoading";
+import DefaultButton from "../../DefaultButton";
+import { useOAuthClientForm } from "../../hook/useOAuthClientForm";
+import { getNextPlan } from "../../util/plan";
 
 const COPY_ICON_STLYES: IButtonStyles = {
   root: { margin: "0 4px" },
   rootHovered: { backgroundColor: "#d8d6d3" },
   rootPressed: { backgroundColor: "#c2c0be" },
+};
+
+const cellActionButtonStyles: IButtonStyles = {
+  root: { padding: 0 },
+  label: { margin: 0 },
 };
 
 interface FormState {
@@ -63,14 +75,18 @@ function constructFormState(config: PortalAPIAppConfig): FormState {
 
 function constructConfig(
   config: PortalAPIAppConfig,
-  _: FormState,
+  _initialState: FormState,
   currentState: FormState
 ): PortalAPIAppConfig {
-  return produce(config, (config) => {
-    config.oauth ??= {};
-    config.oauth.clients = currentState.clients;
-    clearEmptyObject(config);
-  });
+  const [newConfig, _] = produce(
+    [config, currentState],
+    ([config, currentState]) => {
+      config.oauth ??= {};
+      config.oauth.clients = currentState.clients;
+      clearEmptyObject(config);
+    }
+  );
+  return newConfig;
 }
 
 function makeOAuthClientListColumns(
@@ -102,6 +118,15 @@ function makeOAuthClientListColumns(
       minWidth: 250,
       className: styles.columnHeader,
     },
+    {
+      key: "action",
+      fieldName: "action",
+      name: renderToString(
+        "ApplicationsConfigurationScreen.client-list.action"
+      ),
+      minWidth: 100,
+      className: styles.columnHeader,
+    },
   ];
 }
 
@@ -112,6 +137,7 @@ interface OAuthClientIdCopyButtonProps {
 const OAuthClientIdCopyButton: React.VFC<OAuthClientIdCopyButtonProps> =
   function OAuthClientIdCopyButton(props) {
     const { clientId } = props;
+    // eslint-disable-next-line no-useless-assignment
     const { copyButtonProps, Feedback } = useCopyFeedback({
       textToCopy: clientId,
     });
@@ -207,22 +233,90 @@ const ClientCardList: React.VFC<ClientCardListProps> = (props) => {
 
 interface OAuthClientConfigurationContentProps {
   form: AppConfigFormModel<FormState>;
-  oauthClientsMaximum: number;
+  planName: string | null;
+  oauthClientsSoftMaximum: number | undefined;
+  oauthClientsHardMaximum: number | undefined;
   showNotification: (msg: string) => void;
 }
 
 const OAuthClientConfigurationContent: React.VFC<OAuthClientConfigurationContentProps> =
   function OAuthClientConfigurationContent(props) {
     const {
-      form: { state },
-      oauthClientsMaximum,
+      form: { state, reload },
+      planName,
+      oauthClientsHardMaximum,
+      oauthClientsSoftMaximum,
     } = props;
+    const navigate = useNavigate();
+    const { themes } = useSystemConfig();
     const { renderToString } = useContext(Context);
     const { appID } = useParams() as { appID: string };
+
+    const deleteForm = useOAuthClientForm(appID, null);
+
+    const [isRemoveDialogVisible, setIsRemoveDialogVisible] = useState(false);
+
+    const dialogContentProps: IDialogContentProps = useMemo(() => {
+      return {
+        title: renderToString(
+          "ApplicationsConfigurationScreen.delete-client-dialog.title"
+        ),
+        subText: renderToString(
+          "ApplicationsConfigurationScreen.delete-client-dialog.description"
+        ),
+      };
+    }, [renderToString]);
+
+    const hardLimitReached = useMemo(() => {
+      if (oauthClientsHardMaximum == null) {
+        return false;
+      }
+      return state.clients.length >= oauthClientsHardMaximum;
+    }, [oauthClientsHardMaximum, state.clients.length]);
+
+    const displayedClientMaximum = useMemo<number | undefined>(() => {
+      return oauthClientsSoftMaximum ?? oauthClientsHardMaximum;
+    }, [oauthClientsHardMaximum, oauthClientsSoftMaximum]);
 
     const oauthClientListColumns = useMemo(() => {
       return makeOAuthClientListColumns(renderToString);
     }, [renderToString]);
+
+    const onAddClientButtonClick = useCallback(
+      () => navigate("./add"),
+      [navigate]
+    );
+
+    const showDialogAndSetRemoveClientByID = useCallback(
+      (clientID) => {
+        deleteForm.setState((state) => ({
+          ...state,
+          removeClientByID: clientID,
+        }));
+        setIsRemoveDialogVisible(true);
+      },
+      [deleteForm, setIsRemoveDialogVisible]
+    );
+
+    const dismissDialogAndResetRemoveClientByID = useCallback(() => {
+      setIsRemoveDialogVisible(false);
+      deleteForm.setState((state) => ({
+        ...state,
+        removeClientByID: undefined,
+      }));
+    }, [deleteForm, setIsRemoveDialogVisible]);
+
+    const onConfirmRemove = useCallback(() => {
+      deleteForm.save().then(
+        () => {
+          dismissDialogAndResetRemoveClientByID();
+          reload();
+        },
+        () => {
+          dismissDialogAndResetRemoveClientByID();
+        }
+      );
+    }, [deleteForm, reload, dismissDialogAndResetRemoveClientByID]);
 
     const onRenderOAuthClientRow = useCallback(
       (props?: IDetailsRowProps) => {
@@ -280,26 +374,68 @@ const OAuthClientConfigurationContent: React.VFC<OAuthClientConfigurationContent
                 />
               </span>
             );
+          case "action":
+            return (
+              <span className={styles.cellContent}>
+                <ActionButton
+                  id={getApplicationTypeMessageID(item.x_application_type)}
+                  text={renderToString(
+                    "ApplicationsConfigurationScreen.delete-client.label"
+                  )}
+                  theme={themes.destructive}
+                  styles={cellActionButtonStyles}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    showDialogAndSetRemoveClientByID(item.client_id);
+                  }}
+                />
+              </span>
+            );
           default:
             return null;
         }
       },
-      []
+      [renderToString, showDialogAndSetRemoveClientByID, themes.destructive]
     );
 
+    const canUpgradePlan = useMemo(() => {
+      return getNextPlan(planName ?? "") != null;
+    }, [planName]);
+
+    const displayMaximumWarning = useMemo(() => {
+      if (displayedClientMaximum == null) {
+        return false;
+      }
+      return state.clients.length >= displayedClientMaximum;
+    }, [state, displayedClientMaximum]);
+
     return (
-      <ScreenContent>
-        <ScreenTitle className={styles.widget}>
-          <FormattedMessage id="ApplicationsConfigurationScreen.title" />
-        </ScreenTitle>
+      <ScreenContent layout="list">
+        <div className={styles.screenTitle}>
+          <ScreenTitle className={styles.widget}>
+            <FormattedMessage id="ApplicationsConfigurationScreen.title" />
+          </ScreenTitle>
+          <PrimaryButton
+            text={renderToString(
+              "ApplicationsConfigurationScreen.add-client-button"
+            )}
+            iconProps={{ iconName: "Add" }}
+            onClick={onAddClientButtonClick}
+            disabled={hardLimitReached}
+          />
+        </div>
         <ScreenDescription className={styles.widget}>
           <FormattedMessage id="ApplicationsConfigurationScreen.description" />
         </ScreenDescription>
         <div className={styles.widget}>
-          {oauthClientsMaximum < 99 ? (
+          {displayMaximumWarning ? (
             <FeatureDisabledMessageBar
-              messageID="FeatureConfig.oauth-clients.maximum"
-              messageValues={{ maximum: oauthClientsMaximum }}
+              messageID={
+                canUpgradePlan
+                  ? "FeatureConfig.oauth-clients.maximum.upgrade"
+                  : "FeatureConfig.oauth-clients.maximum.contact-us"
+              }
+              messageValues={{ maximum: displayedClientMaximum! }}
             />
           ) : null}
           <div className={styles.desktopView}>
@@ -319,6 +455,27 @@ const OAuthClientConfigurationContent: React.VFC<OAuthClientConfigurationContent
             />
           </div>
         </div>
+        <Dialog
+          hidden={!isRemoveDialogVisible}
+          dialogContentProps={dialogContentProps}
+          modalProps={{ isBlocking: deleteForm.isUpdating }}
+          onDismiss={dismissDialogAndResetRemoveClientByID}
+        >
+          <DialogFooter>
+            <ButtonWithLoading
+              theme={themes.actionButton}
+              loading={deleteForm.isUpdating}
+              onClick={onConfirmRemove}
+              disabled={!isRemoveDialogVisible}
+              labelId="confirm"
+            />
+            <DefaultButton
+              onClick={dismissDialogAndResetRemoveClientByID}
+              disabled={deleteForm.isUpdating || !isRemoveDialogVisible}
+              text={<FormattedMessage id="cancel" />}
+            />
+          </DialogFooter>
+        </Dialog>
       </ScreenContent>
     );
   };
@@ -326,7 +483,6 @@ const OAuthClientConfigurationContent: React.VFC<OAuthClientConfigurationContent
 const ApplicationsConfigurationScreen: React.VFC =
   function ApplicationsConfigurationScreen() {
     const { appID } = useParams() as { appID: string };
-    const { renderToString } = useContext(Context);
     const navigate = useNavigate();
 
     const form = useAppConfigForm({
@@ -345,29 +501,13 @@ const ApplicationsConfigurationScreen: React.VFC =
       );
     }, []);
 
-    const oauthClientsMaximum = useMemo(() => {
-      return featureConfig.effectiveFeatureConfig?.oauth?.client?.maximum ?? 99;
-    }, [featureConfig.effectiveFeatureConfig?.oauth?.client?.maximum]);
+    const oauthClientsHardMaximum = useMemo<number | undefined>(() => {
+      return featureConfig.effectiveFeatureConfig?.oauth?.client?.maximum;
+    }, [featureConfig]);
 
-    const limitReached = useMemo(() => {
-      return form.state.clients.length >= oauthClientsMaximum;
-    }, [oauthClientsMaximum, form.state.clients.length]);
-
-    const primaryItems: ICommandBarItemProps[] = useMemo(
-      () => [
-        {
-          key: "add",
-          text: renderToString(
-            "ApplicationsConfigurationScreen.add-client-button"
-          ),
-          iconProps: { iconName: "CirclePlus" },
-          onClick: () => navigate("./add"),
-          disabled: limitReached,
-          onRender: onRenderCommandBarPrimaryButton,
-        },
-      ],
-      [navigate, renderToString, limitReached]
-    );
+    const oauthClientsSoftMaximum = useMemo(() => {
+      return featureConfig.effectiveFeatureConfig?.oauth?.client?.soft_maximum;
+    }, [featureConfig]);
 
     const isLoading = useMemo(
       () => form.isLoading || featureConfig.loading,
@@ -404,13 +544,19 @@ const ApplicationsConfigurationScreen: React.VFC =
     }
 
     return (
-      <CommandBarContainer messageBar={messageBar} primaryItems={primaryItems}>
+      <FormContainer
+        form={form}
+        messageBar={messageBar}
+        hideFooterComponent={true}
+      >
         <OAuthClientConfigurationContent
           form={form}
-          oauthClientsMaximum={oauthClientsMaximum}
+          planName={featureConfig.planName}
+          oauthClientsHardMaximum={oauthClientsHardMaximum}
+          oauthClientsSoftMaximum={oauthClientsSoftMaximum}
           showNotification={showNotification}
         />
-      </CommandBarContainer>
+      </FormContainer>
     );
   };
 

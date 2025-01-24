@@ -3,30 +3,32 @@ export type InputMaybe<T> = Maybe<T>;
 export type Exact<T extends { [key: string]: unknown }> = { [K in keyof T]: T[K] };
 export type MakeOptional<T, K extends keyof T> = Omit<T, K> & { [SubKey in K]?: Maybe<T[SubKey]> };
 export type MakeMaybe<T, K extends keyof T> = Omit<T, K> & { [SubKey in K]: Maybe<T[SubKey]> };
+export type MakeEmpty<T extends { [key: string]: unknown }, K extends keyof T> = { [_ in K]?: never };
+export type Incremental<T> = T | { [P in keyof T]?: P extends ' $fragmentName' | '__typename' ? T[P] : never };
 /** All built-in and custom scalars, mapped to their actual values */
 export type Scalars = {
-  ID: string;
-  String: string;
-  Boolean: boolean;
-  Int: number;
-  Float: number;
+  ID: { input: string; output: string; }
+  String: { input: string; output: string; }
+  Boolean: { input: boolean; output: boolean; }
+  Int: { input: number; output: number; }
+  Float: { input: number; output: number; }
   /** The `AppConfig` scalar type represents an app config JSON object */
-  AppConfig: GQL_AppConfig;
+  AppConfig: { input: GQL_AppConfig; output: GQL_AppConfig; }
   /** The `Date` scalar type represents a Date. The Date is serialized in ISO 8601 format */
-  Date: GQL_Date;
+  Date: { input: GQL_Date; output: GQL_Date; }
   /** The `DateTime` scalar type represents a DateTime. The DateTime is serialized as an RFC 3339 quoted string */
-  DateTime: GQL_DateTime;
+  DateTime: { input: GQL_DateTime; output: GQL_DateTime; }
   /** The `FeatureConfig` scalar type represents an feature config JSON object */
-  FeatureConfig: GQL_FeatureConfig;
+  FeatureConfig: { input: GQL_FeatureConfig; output: GQL_FeatureConfig; }
   /** The `StripeError` scalar type represents Stripe error */
-  StripeError: GQL_StripeError;
+  StripeError: { input: GQL_StripeError; output: GQL_StripeError; }
   /** The `TutorialStatusData` scalar type represents tutorial status data */
-  TutorialStatusData: GQL_TutorialStatusData;
+  TutorialStatusData: { input: GQL_TutorialStatusData; output: GQL_TutorialStatusData; }
 };
 
 export type AcceptCollaboratorInvitationInput = {
   /** Invitation code. */
-  code: Scalars['String'];
+  code: Scalars['String']['input'];
 };
 
 export type AcceptCollaboratorInvitationPayload = {
@@ -35,21 +37,21 @@ export type AcceptCollaboratorInvitationPayload = {
 };
 
 export type AdminApiAuthKeyDeleteDataInput = {
-  keyID: Scalars['String'];
+  keyID: Scalars['String']['input'];
 };
 
 export type AdminApiAuthKeyUpdateInstructionInput = {
-  action: Scalars['String'];
+  action: Scalars['String']['input'];
   deleteData?: InputMaybe<AdminApiAuthKeyDeleteDataInput>;
 };
 
 /** Admin API secret */
 export type AdminApiSecret = {
   __typename?: 'AdminAPISecret';
-  createdAt?: Maybe<Scalars['DateTime']>;
-  keyID: Scalars['String'];
-  privateKeyPEM?: Maybe<Scalars['String']>;
-  publicKeyPEM: Scalars['String'];
+  createdAt?: Maybe<Scalars['DateTime']['output']>;
+  keyID: Scalars['String']['output'];
+  privateKeyPEM?: Maybe<Scalars['String']['output']>;
+  publicKeyPEM: Scalars['String']['output'];
 };
 
 /** Authgear app */
@@ -58,71 +60,104 @@ export type App = Node & {
   collaboratorInvitations: Array<CollaboratorInvitation>;
   collaborators: Array<Collaborator>;
   domains: Array<Domain>;
-  effectiveAppConfig: Scalars['AppConfig'];
-  effectiveFeatureConfig: Scalars['FeatureConfig'];
+  effectiveAppConfig: Scalars['AppConfig']['output'];
+  effectiveFeatureConfig: Scalars['FeatureConfig']['output'];
   /** The ID of an object */
-  id: Scalars['ID'];
-  isProcessingSubscription: Scalars['Boolean'];
-  lastStripeError?: Maybe<Scalars['StripeError']>;
-  nftCollections: Array<NftCollection>;
-  planName: Scalars['String'];
-  rawAppConfig: Scalars['AppConfig'];
+  id: Scalars['ID']['output'];
+  isProcessingSubscription: Scalars['Boolean']['output'];
+  lastStripeError?: Maybe<Scalars['StripeError']['output']>;
+  planName: Scalars['String']['output'];
+  rawAppConfig: Scalars['AppConfig']['output'];
+  rawAppConfigChecksum: Scalars['AppConfig']['output'];
   resources: Array<AppResource>;
+  samlIdpEntityID: Scalars['String']['output'];
   secretConfig: SecretConfig;
+  secretConfigChecksum: Scalars['AppConfig']['output'];
   subscription?: Maybe<Subscription>;
   subscriptionUsage?: Maybe<SubscriptionUsage>;
   tutorialStatus: TutorialStatus;
+  usage?: Maybe<Usage>;
   viewer: Collaborator;
 };
 
 
 /** Authgear app */
 export type AppResourcesArgs = {
-  paths?: InputMaybe<Array<Scalars['String']>>;
+  paths?: InputMaybe<Array<Scalars['String']['input']>>;
 };
 
 
 /** Authgear app */
 export type AppSecretConfigArgs = {
-  token?: InputMaybe<Scalars['String']>;
+  token?: InputMaybe<Scalars['String']['input']>;
 };
 
 
 /** Authgear app */
 export type AppSubscriptionUsageArgs = {
-  date: Scalars['DateTime'];
+  date: Scalars['DateTime']['input'];
+};
+
+
+/** Authgear app */
+export type AppUsageArgs = {
+  date: Scalars['DateTime']['input'];
 };
 
 export type AppListItem = {
   __typename?: 'AppListItem';
-  appID: Scalars['String'];
-  publicOrigin: Scalars['String'];
+  appID: Scalars['String']['output'];
+  publicOrigin: Scalars['String']['output'];
 };
 
 /** Resource file for an app */
 export type AppResource = {
   __typename?: 'AppResource';
-  data?: Maybe<Scalars['String']>;
-  effectiveData?: Maybe<Scalars['String']>;
-  languageTag?: Maybe<Scalars['String']>;
-  path: Scalars['String'];
+  /** The checksum of the resource file. It is an opaque string that will be used to detect conflict. */
+  checksum?: Maybe<Scalars['String']['output']>;
+  data?: Maybe<Scalars['String']['output']>;
+  effectiveData?: Maybe<Scalars['String']['output']>;
+  languageTag?: Maybe<Scalars['String']['output']>;
+  path: Scalars['String']['output'];
 };
 
 /** Update to resource file. */
 export type AppResourceUpdate = {
+  /** The checksum of the original resource file. If provided, it will be used to detect conflict. */
+  checksum?: InputMaybe<Scalars['String']['input']>;
   /** New data of the resource file. Set to null to remove it. */
-  data?: InputMaybe<Scalars['String']>;
+  data?: InputMaybe<Scalars['String']['input']>;
   /** Path of the resource file to update. */
-  path: Scalars['String'];
+  path: Scalars['String']['input'];
 };
 
 export enum AppSecretKey {
   AdminApiSecrets = 'ADMIN_API_SECRETS',
+  BotProtectionProviderSecret = 'BOT_PROTECTION_PROVIDER_SECRET',
   OauthClientSecrets = 'OAUTH_CLIENT_SECRETS',
   OauthSsoProviderClientSecrets = 'OAUTH_SSO_PROVIDER_CLIENT_SECRETS',
+  SamlIdpSigningSecrets = 'SAML_IDP_SIGNING_SECRETS',
+  SamlSpSigningSecrets = 'SAML_SP_SIGNING_SECRETS',
   SmtpSecret = 'SMTP_SECRET',
   WebhookSecret = 'WEBHOOK_SECRET'
 }
+
+/** Bot protection provider secret */
+export type BotProtectionProviderSecret = {
+  __typename?: 'BotProtectionProviderSecret';
+  secretKey?: Maybe<Scalars['String']['output']>;
+  type: Scalars['String']['output'];
+};
+
+export type BotProtectionProviderSecretInput = {
+  secretKey?: InputMaybe<Scalars['String']['input']>;
+  type: Scalars['String']['input'];
+};
+
+export type BotProtectionProviderSecretUpdateInstructionsInput = {
+  action: Scalars['String']['input'];
+  data?: InputMaybe<BotProtectionProviderSecretInput>;
+};
 
 export type CancelFailedSubscriptionPayload = {
   __typename?: 'CancelFailedSubscriptionPayload';
@@ -136,15 +171,15 @@ export type Chart = {
 
 export type CheckCollaboratorInvitationPayload = {
   __typename?: 'CheckCollaboratorInvitationPayload';
-  appID: Scalars['String'];
-  isInvitee: Scalars['Boolean'];
+  appID: Scalars['String']['output'];
+  isInvitee: Scalars['Boolean']['output'];
 };
 
 /** Collaborator of an app */
 export type Collaborator = {
   __typename?: 'Collaborator';
-  createdAt: Scalars['DateTime'];
-  id: Scalars['String'];
+  createdAt: Scalars['DateTime']['output'];
+  id: Scalars['String']['output'];
   role: CollaboratorRole;
   user: User;
 };
@@ -152,11 +187,11 @@ export type Collaborator = {
 /** Collaborator invitation of an app */
 export type CollaboratorInvitation = {
   __typename?: 'CollaboratorInvitation';
-  createdAt: Scalars['DateTime'];
-  expireAt: Scalars['DateTime'];
-  id: Scalars['String'];
+  createdAt: Scalars['DateTime']['output'];
+  expireAt: Scalars['DateTime']['output'];
+  id: Scalars['String']['output'];
   invitedBy: User;
-  inviteeEmail: Scalars['String'];
+  inviteeEmail: Scalars['String']['output'];
 };
 
 export enum CollaboratorRole {
@@ -166,7 +201,7 @@ export enum CollaboratorRole {
 
 export type CreateAppInput = {
   /** ID of the new app. */
-  id: Scalars['String'];
+  id: Scalars['String']['input'];
 };
 
 export type CreateAppPayload = {
@@ -176,21 +211,21 @@ export type CreateAppPayload = {
 
 export type CreateCheckoutSessionInput = {
   /** App ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Plan name. */
-  planName: Scalars['String'];
+  planName: Scalars['String']['input'];
 };
 
 export type CreateCheckoutSessionPayload = {
   __typename?: 'CreateCheckoutSessionPayload';
-  url: Scalars['String'];
+  url: Scalars['String']['output'];
 };
 
 export type CreateCollaboratorInvitationInput = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Invitee email address. */
-  inviteeEmail: Scalars['String'];
+  inviteeEmail: Scalars['String']['input'];
 };
 
 export type CreateCollaboratorInvitationPayload = {
@@ -201,9 +236,9 @@ export type CreateCollaboratorInvitationPayload = {
 
 export type CreateDomainInput = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Domain name. */
-  domain: Scalars['String'];
+  domain: Scalars['String']['input'];
 };
 
 export type CreateDomainPayload = {
@@ -214,18 +249,18 @@ export type CreateDomainPayload = {
 
 export type DataPoint = {
   __typename?: 'DataPoint';
-  data: Scalars['Float'];
-  label: Scalars['String'];
+  data: Scalars['Float']['output'];
+  label: Scalars['String']['output'];
 };
 
 export type DeleteCollaboratorInput = {
   /** Collaborator ID. */
-  collaboratorID: Scalars['String'];
+  collaboratorID: Scalars['String']['input'];
 };
 
 export type DeleteCollaboratorInvitationInput = {
   /** Collaborator invitation ID. */
-  collaboratorInvitationID: Scalars['String'];
+  collaboratorInvitationID: Scalars['String']['input'];
 };
 
 export type DeleteCollaboratorInvitationPayload = {
@@ -240,9 +275,9 @@ export type DeleteCollaboratorPayload = {
 
 export type DeleteDomainInput = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Domain ID. */
-  domainID: Scalars['String'];
+  domainID: Scalars['String']['input'];
 };
 
 export type DeleteDomainPayload = {
@@ -253,19 +288,19 @@ export type DeleteDomainPayload = {
 /** DNS domain of an app */
 export type Domain = {
   __typename?: 'Domain';
-  apexDomain: Scalars['String'];
-  cookieDomain: Scalars['String'];
-  createdAt: Scalars['DateTime'];
-  domain: Scalars['String'];
-  id: Scalars['String'];
-  isCustom: Scalars['Boolean'];
-  isVerified: Scalars['Boolean'];
-  verificationDNSRecord: Scalars['String'];
+  apexDomain: Scalars['String']['output'];
+  cookieDomain: Scalars['String']['output'];
+  createdAt: Scalars['DateTime']['output'];
+  domain: Scalars['String']['output'];
+  id: Scalars['String']['output'];
+  isCustom: Scalars['Boolean']['output'];
+  isVerified: Scalars['Boolean']['output'];
+  verificationDNSRecord: Scalars['String']['output'];
 };
 
 export type GenerateAppSecretVisitTokenInput = {
   /** ID of the app. */
-  id: Scalars['ID'];
+  id: Scalars['ID']['input'];
   /** Secrets to visit. */
   secrets: Array<AppSecretKey>;
 };
@@ -273,30 +308,30 @@ export type GenerateAppSecretVisitTokenInput = {
 export type GenerateAppSecretVisitTokenPayloadPayload = {
   __typename?: 'GenerateAppSecretVisitTokenPayloadPayload';
   /** The generated token */
-  token: Scalars['String'];
+  token: Scalars['String']['output'];
 };
 
 export type GenerateStripeCustomerPortalSessionInput = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
 };
 
 export type GenerateStripeCustomerPortalSessionPayload = {
   __typename?: 'GenerateStripeCustomerPortalSessionPayload';
-  url: Scalars['String'];
+  url: Scalars['String']['output'];
 };
 
 export type GenerateTestTokenInput = {
   /** ID of the app. */
-  id: Scalars['ID'];
+  id: Scalars['ID']['input'];
   /** URI to return to in the tester page */
-  returnUri: Scalars['String'];
+  returnUri: Scalars['String']['input'];
 };
 
 export type GenerateTestTokenPayload = {
   __typename?: 'GenerateTestTokenPayload';
   /** The generated token */
-  token: Scalars['String'];
+  token: Scalars['String']['output'];
 };
 
 export type Mutation = {
@@ -306,7 +341,7 @@ export type Mutation = {
   /** Cancel failed subscription */
   cancelFailedSubscription: CancelFailedSubscriptionPayload;
   /** Check Deno Hook */
-  checkDenoHook?: Maybe<Scalars['Boolean']>;
+  checkDenoHook?: Maybe<Scalars['Boolean']['output']>;
   /** Create new app */
   createApp: CreateAppPayload;
   /** Create stripe checkout session */
@@ -329,12 +364,12 @@ export type Mutation = {
   generateTesterToken: GenerateTestTokenPayload;
   /** Preview update subscription */
   previewUpdateSubscription: PreviewUpdateSubscriptionPayload;
-  /** Probes a NFT Collection to see whether it is a large collection */
-  probeNFTCollection: ProbeNftCollectionsPayload;
   /** Reconcile the completed checkout session */
   reconcileCheckoutSession: ReconcileCheckoutSessionPayload;
+  /** Updates the current user's custom attribute with 'survey' key */
+  saveOnboardingSurvey?: Maybe<Scalars['Boolean']['output']>;
   /** Send test STMP configuration email */
-  sendTestSMTPConfigurationEmail?: Maybe<Scalars['Boolean']>;
+  sendTestSMTPConfigurationEmail?: Maybe<Scalars['Boolean']['output']>;
   /** Set app subscription cancellation status */
   setSubscriptionCancelledStatus: SetSubscriptionCancelledStatusPayload;
   /** Skip the tutorial of the app */
@@ -420,13 +455,13 @@ export type MutationPreviewUpdateSubscriptionArgs = {
 };
 
 
-export type MutationProbeNftCollectionArgs = {
-  input: ProbeNftCollectionInput;
+export type MutationReconcileCheckoutSessionArgs = {
+  input: ReconcileCheckoutSession;
 };
 
 
-export type MutationReconcileCheckoutSessionArgs = {
-  input: ReconcileCheckoutSession;
+export type MutationSaveOnboardingSurveyArgs = {
+  input: SaveOnboardingSurveyInput;
 };
 
 
@@ -464,34 +499,22 @@ export type MutationVerifyDomainArgs = {
   input: VerifyDomainInput;
 };
 
-/** Web3 NFT Collection */
-export type NftCollection = {
-  __typename?: 'NFTCollection';
-  blockchain: Scalars['String'];
-  contractAddress: Scalars['String'];
-  createdAt: Scalars['DateTime'];
-  name: Scalars['String'];
-  network: Scalars['String'];
-  tokenType: Scalars['String'];
-  totalSupply?: Maybe<Scalars['String']>;
-};
-
 /** An object with an ID */
 export type Node = {
   /** The id of the object */
-  id: Scalars['ID'];
+  id: Scalars['ID']['output'];
 };
 
 export type OAuthClientSecretsCleanupDataInput = {
-  keepClientIDs: Array<Scalars['String']>;
+  keepClientIDs: Array<Scalars['String']['input']>;
 };
 
 export type OAuthClientSecretsGenerateDataInput = {
-  clientID: Scalars['String'];
+  clientID: Scalars['String']['input'];
 };
 
 export type OAuthClientSecretsUpdateInstructionsInput = {
-  action: Scalars['String'];
+  action: Scalars['String']['input'];
   cleanupData?: InputMaybe<OAuthClientSecretsCleanupDataInput>;
   generateData?: InputMaybe<OAuthClientSecretsGenerateDataInput>;
 };
@@ -499,18 +522,18 @@ export type OAuthClientSecretsUpdateInstructionsInput = {
 /** OAuth client secret */
 export type OAuthSsoProviderClientSecret = {
   __typename?: 'OAuthSSOProviderClientSecret';
-  alias: Scalars['String'];
-  clientSecret?: Maybe<Scalars['String']>;
+  alias: Scalars['String']['output'];
+  clientSecret?: Maybe<Scalars['String']['output']>;
 };
 
 export type OAuthSsoProviderClientSecretInput = {
-  newAlias: Scalars['String'];
-  newClientSecret?: InputMaybe<Scalars['String']>;
-  originalAlias?: InputMaybe<Scalars['String']>;
+  newAlias: Scalars['String']['input'];
+  newClientSecret?: InputMaybe<Scalars['String']['input']>;
+  originalAlias?: InputMaybe<Scalars['String']['input']>;
 };
 
 export type OAuthSsoProviderClientSecretsUpdateInstructionsInput = {
-  action: Scalars['String'];
+  action: Scalars['String']['input'];
   data?: InputMaybe<Array<OAuthSsoProviderClientSecretInput>>;
 };
 
@@ -521,24 +544,15 @@ export enum Periodical {
 
 export type PreviewUpdateSubscriptionInput = {
   /** App ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Plan name. */
-  planName: Scalars['String'];
+  planName: Scalars['String']['input'];
 };
 
 export type PreviewUpdateSubscriptionPayload = {
   __typename?: 'PreviewUpdateSubscriptionPayload';
-  amountDue: Scalars['Int'];
-  currency: Scalars['String'];
-};
-
-export type ProbeNftCollectionInput = {
-  contractID: Scalars['String'];
-};
-
-export type ProbeNftCollectionsPayload = {
-  __typename?: 'ProbeNFTCollectionsPayload';
-  isLargeCollection: Scalars['Boolean'];
+  amountDue: Scalars['Int']['output'];
+  currency: Scalars['String']['output'];
 };
 
 export type Query = {
@@ -549,8 +563,6 @@ export type Query = {
   appList?: Maybe<Array<AppListItem>>;
   /** Check whether the viewer can accept the collaboration invitation */
   checkCollaboratorInvitation?: Maybe<CheckCollaboratorInvitationPayload>;
-  /** Fetch NFT Contract Metadata */
-  nftContractMetadata?: Maybe<NftCollection>;
   /** Fetches an object given its ID */
   node?: Maybe<Node>;
   /** Lookup nodes by a list of IDs. */
@@ -569,91 +581,141 @@ export type Query = {
 
 
 export type QueryActiveUserChartArgs = {
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   periodical: Periodical;
-  rangeFrom: Scalars['Date'];
-  rangeTo: Scalars['Date'];
+  rangeFrom: Scalars['Date']['input'];
+  rangeTo: Scalars['Date']['input'];
 };
 
 
 export type QueryCheckCollaboratorInvitationArgs = {
-  code: Scalars['String'];
-};
-
-
-export type QueryNftContractMetadataArgs = {
-  contractID: Scalars['String'];
+  code: Scalars['String']['input'];
 };
 
 
 export type QueryNodeArgs = {
-  id: Scalars['ID'];
+  id: Scalars['ID']['input'];
 };
 
 
 export type QueryNodesArgs = {
-  ids: Array<Scalars['ID']>;
+  ids: Array<Scalars['ID']['input']>;
 };
 
 
 export type QuerySignupByMethodsChartArgs = {
-  appID: Scalars['ID'];
-  rangeFrom: Scalars['Date'];
-  rangeTo: Scalars['Date'];
+  appID: Scalars['ID']['input'];
+  rangeFrom: Scalars['Date']['input'];
+  rangeTo: Scalars['Date']['input'];
 };
 
 
 export type QuerySignupConversionRateArgs = {
-  appID: Scalars['ID'];
-  rangeFrom: Scalars['Date'];
-  rangeTo: Scalars['Date'];
+  appID: Scalars['ID']['input'];
+  rangeFrom: Scalars['Date']['input'];
+  rangeTo: Scalars['Date']['input'];
 };
 
 
 export type QueryTotalUserCountChartArgs = {
-  appID: Scalars['ID'];
-  rangeFrom: Scalars['Date'];
-  rangeTo: Scalars['Date'];
+  appID: Scalars['ID']['input'];
+  rangeFrom: Scalars['Date']['input'];
+  rangeTo: Scalars['Date']['input'];
+};
+
+/** SAML Identity Provider signing certificate */
+export type SamlIdpSigningCertificate = {
+  __typename?: 'SAMLIdpSigningCertificate';
+  certificateFingerprint: Scalars['String']['output'];
+  certificatePEM: Scalars['String']['output'];
+  keyID: Scalars['String']['output'];
+};
+
+/** SAML Identity Provider signing secrets */
+export type SamlIdpSigningSecrets = {
+  __typename?: 'SAMLIdpSigningSecrets';
+  certificates: Array<SamlIdpSigningCertificate>;
+};
+
+export type SamlIdpSigningSecretsDeleteDataInput = {
+  keyIDs: Array<Scalars['String']['input']>;
+};
+
+export type SamlIdpSigningSecretsUpdateInstructionsInput = {
+  action: Scalars['String']['input'];
+  deleteData?: InputMaybe<SamlIdpSigningSecretsDeleteDataInput>;
+};
+
+/** SAML Service Provider signing secrets */
+export type SamlSpSigningSecrets = {
+  __typename?: 'SAMLSpSigningSecrets';
+  certificates: Array<SamlSpSigningCertificate>;
+  clientID: Scalars['String']['output'];
+};
+
+export type SamlSpSigningSecretsSetDataInput = {
+  items: Array<SamlSpSigningSecretsSetDataInputItem>;
+};
+
+export type SamlSpSigningSecretsSetDataInputItem = {
+  certificates: Array<Scalars['String']['input']>;
+  clientID: Scalars['String']['input'];
+};
+
+export type SamlSpSigningSecretsUpdateInstructionsInput = {
+  action: Scalars['String']['input'];
+  setData?: InputMaybe<SamlSpSigningSecretsSetDataInput>;
 };
 
 /** SMTP secret */
 export type SmtpSecret = {
   __typename?: 'SMTPSecret';
-  host: Scalars['String'];
-  password?: Maybe<Scalars['String']>;
-  port: Scalars['Int'];
-  username: Scalars['String'];
+  host: Scalars['String']['output'];
+  password?: Maybe<Scalars['String']['output']>;
+  port: Scalars['Int']['output'];
+  username: Scalars['String']['output'];
 };
 
 export type SmtpSecretInput = {
-  host: Scalars['String'];
-  password?: InputMaybe<Scalars['String']>;
-  port: Scalars['Int'];
-  username: Scalars['String'];
+  host: Scalars['String']['input'];
+  password?: InputMaybe<Scalars['String']['input']>;
+  port: Scalars['Int']['input'];
+  username: Scalars['String']['input'];
+};
+
+export type SaveOnboardingSurveyInput = {
+  /** Onboarding survey result JSON. */
+  surveyJSON: Scalars['String']['input'];
 };
 
 /** The content of authgear.secrets.yaml */
 export type SecretConfig = {
   __typename?: 'SecretConfig';
   adminAPISecrets?: Maybe<Array<AdminApiSecret>>;
+  botProtectionProviderSecret?: Maybe<BotProtectionProviderSecret>;
   oauthClientSecrets?: Maybe<Array<OauthClientSecretItem>>;
   oauthSSOProviderClientSecrets?: Maybe<Array<OAuthSsoProviderClientSecret>>;
+  samlIdpSigningSecrets?: Maybe<SamlIdpSigningSecrets>;
+  samlSpSigningSecrets?: Maybe<Array<SamlSpSigningSecrets>>;
   smtpSecret?: Maybe<SmtpSecret>;
   webhookSecret?: Maybe<WebhookSecret>;
 };
 
 export type SecretConfigUpdateInstructionsInput = {
   adminAPIAuthKey?: InputMaybe<AdminApiAuthKeyUpdateInstructionInput>;
+  botProtectionProviderSecret?: InputMaybe<BotProtectionProviderSecretUpdateInstructionsInput>;
   oauthClientSecrets?: InputMaybe<OAuthClientSecretsUpdateInstructionsInput>;
   oauthSSOProviderClientSecrets?: InputMaybe<OAuthSsoProviderClientSecretsUpdateInstructionsInput>;
+  samlIdpSigningSecrets?: InputMaybe<SamlIdpSigningSecretsUpdateInstructionsInput>;
+  samlSpSigningSecrets?: InputMaybe<SamlSpSigningSecretsUpdateInstructionsInput>;
   smtpSecret?: InputMaybe<SmtpSecretUpdateInstructionsInput>;
 };
 
 export type SetSubscriptionCancelledStatusInput = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Target app subscription cancellation status. */
-  cancelled: Scalars['Boolean'];
+  cancelled: Scalars['Boolean']['input'];
 };
 
 export type SetSubscriptionCancelledStatusPayload = {
@@ -664,14 +726,14 @@ export type SetSubscriptionCancelledStatusPayload = {
 /** Signup conversion rate dashboard data */
 export type SignupConversionRate = {
   __typename?: 'SignupConversionRate';
-  conversionRate: Scalars['Float'];
-  totalSignup: Scalars['Int'];
-  totalSignupUniquePageView: Scalars['Int'];
+  conversionRate: Scalars['Float']['output'];
+  totalSignup: Scalars['Int']['output'];
+  totalSignupUniquePageView: Scalars['Int']['output'];
 };
 
 export type SkipAppTutorialInput = {
   /** ID of the app. */
-  id: Scalars['String'];
+  id: Scalars['String']['input'];
 };
 
 export type SkipAppTutorialPayload = {
@@ -681,9 +743,9 @@ export type SkipAppTutorialPayload = {
 
 export type SkipAppTutorialProgressInput = {
   /** ID of the app. */
-  id: Scalars['String'];
+  id: Scalars['String']['input'];
   /** The progress to skip. */
-  progress: Scalars['String'];
+  progress: Scalars['String']['input'];
 };
 
 export type SkipAppTutorialProgressPayload = {
@@ -692,81 +754,62 @@ export type SkipAppTutorialProgressPayload = {
 };
 
 export type SmtpSecretUpdateInstructionsInput = {
-  action: Scalars['String'];
+  action: Scalars['String']['input'];
   data?: InputMaybe<SmtpSecretInput>;
 };
 
 export type Subscription = {
   __typename?: 'Subscription';
-  cancelledAt?: Maybe<Scalars['DateTime']>;
-  createdAt: Scalars['DateTime'];
-  endedAt?: Maybe<Scalars['DateTime']>;
-  id: Scalars['String'];
-  updatedAt: Scalars['DateTime'];
+  cancelledAt?: Maybe<Scalars['DateTime']['output']>;
+  createdAt: Scalars['DateTime']['output'];
+  endedAt?: Maybe<Scalars['DateTime']['output']>;
+  id: Scalars['String']['output'];
+  updatedAt: Scalars['DateTime']['output'];
 };
 
 export type SubscriptionItemPrice = {
   __typename?: 'SubscriptionItemPrice';
-  currency: Scalars['String'];
-  freeQuantity?: Maybe<Scalars['Int']>;
-  smsRegion: SubscriptionItemPriceSmsRegion;
-  transformQuantityDivideBy?: Maybe<Scalars['Int']>;
+  currency: Scalars['String']['output'];
+  freeQuantity?: Maybe<Scalars['Int']['output']>;
+  smsRegion: UsageSmsRegion;
+  transformQuantityDivideBy?: Maybe<Scalars['Int']['output']>;
   transformQuantityRound: TransformQuantityRound;
   type: SubscriptionItemPriceType;
-  unitAmount: Scalars['Int'];
-  usageType: SubscriptionItemPriceUsageType;
-  whatsappRegion: SubscriptionItemPriceWhatsappRegion;
+  unitAmount: Scalars['Int']['output'];
+  usageType: UsageType;
+  whatsappRegion: UsageWhatsappRegion;
 };
-
-export enum SubscriptionItemPriceSmsRegion {
-  None = 'NONE',
-  NorthAmerica = 'NORTH_AMERICA',
-  OtherRegions = 'OTHER_REGIONS'
-}
 
 export enum SubscriptionItemPriceType {
   Fixed = 'FIXED',
   Usage = 'USAGE'
 }
 
-export enum SubscriptionItemPriceUsageType {
-  Mau = 'MAU',
-  None = 'NONE',
-  Sms = 'SMS',
-  Whatsapp = 'WHATSAPP'
-}
-
-export enum SubscriptionItemPriceWhatsappRegion {
-  None = 'NONE',
-  NorthAmerica = 'NORTH_AMERICA',
-  OtherRegions = 'OTHER_REGIONS'
-}
-
 export type SubscriptionPlan = {
   __typename?: 'SubscriptionPlan';
-  name: Scalars['String'];
+  name: Scalars['String']['output'];
   prices: Array<SubscriptionItemPrice>;
 };
 
 export type SubscriptionUsage = {
   __typename?: 'SubscriptionUsage';
   items: Array<SubscriptionUsageItem>;
-  nextBillingDate: Scalars['DateTime'];
+  nextBillingDate: Scalars['DateTime']['output'];
 };
 
 export type SubscriptionUsageItem = {
   __typename?: 'SubscriptionUsageItem';
-  currency?: Maybe<Scalars['String']>;
-  freeQuantity?: Maybe<Scalars['Int']>;
-  quantity: Scalars['Int'];
-  smsRegion: SubscriptionItemPriceSmsRegion;
-  totalAmount?: Maybe<Scalars['Int']>;
-  transformQuantityDivideBy?: Maybe<Scalars['Int']>;
+  currency?: Maybe<Scalars['String']['output']>;
+  freeQuantity?: Maybe<Scalars['Int']['output']>;
+  quantity: Scalars['Int']['output'];
+  smsRegion: UsageSmsRegion;
+  totalAmount?: Maybe<Scalars['Int']['output']>;
+  transformQuantityDivideBy?: Maybe<Scalars['Int']['output']>;
   transformQuantityRound: TransformQuantityRound;
   type: SubscriptionItemPriceType;
-  unitAmount?: Maybe<Scalars['Int']>;
-  usageType: SubscriptionItemPriceUsageType;
-  whatsappRegion: SubscriptionItemPriceWhatsappRegion;
+  unitAmount?: Maybe<Scalars['Int']['output']>;
+  usageType: UsageType;
+  whatsappRegion: UsageWhatsappRegion;
 };
 
 export enum TransformQuantityRound {
@@ -778,17 +821,21 @@ export enum TransformQuantityRound {
 /** Tutorial status of an app */
 export type TutorialStatus = {
   __typename?: 'TutorialStatus';
-  appID: Scalars['String'];
-  data: Scalars['TutorialStatusData'];
+  appID: Scalars['String']['output'];
+  data: Scalars['TutorialStatusData']['output'];
 };
 
 export type UpdateAppInput = {
   /** authgear.yaml in JSON. */
-  appConfig?: InputMaybe<Scalars['AppConfig']>;
+  appConfig?: InputMaybe<Scalars['AppConfig']['input']>;
+  /** The checksum of appConfig. If provided, it will be used to detect conflict. */
+  appConfigChecksum?: InputMaybe<Scalars['String']['input']>;
   /** App ID to update. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** update secret config instructions. */
   secretConfigUpdateInstructions?: InputMaybe<SecretConfigUpdateInstructionsInput>;
+  /** The checksum of secretConfig. If provided, it will be used to detect conflict. */
+  secretConfigUpdateInstructionsChecksum?: InputMaybe<Scalars['String']['input']>;
   /** Resource file updates. */
   updates?: InputMaybe<Array<AppResourceUpdate>>;
 };
@@ -800,9 +847,9 @@ export type UpdateAppPayload = {
 
 export type UpdateSubscriptionInput = {
   /** App ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Plan name. */
-  planName: Scalars['String'];
+  planName: Scalars['String']['input'];
 };
 
 export type UpdateSubscriptionPayload = {
@@ -810,19 +857,51 @@ export type UpdateSubscriptionPayload = {
   app: App;
 };
 
+export type Usage = {
+  __typename?: 'Usage';
+  items: Array<UsageItem>;
+};
+
+export type UsageItem = {
+  __typename?: 'UsageItem';
+  quantity: Scalars['Int']['output'];
+  smsRegion: UsageSmsRegion;
+  usageType: UsageType;
+  whatsappRegion: UsageWhatsappRegion;
+};
+
+export enum UsageSmsRegion {
+  None = 'NONE',
+  NorthAmerica = 'NORTH_AMERICA',
+  OtherRegions = 'OTHER_REGIONS'
+}
+
+export enum UsageType {
+  Mau = 'MAU',
+  None = 'NONE',
+  Sms = 'SMS',
+  Whatsapp = 'WHATSAPP'
+}
+
+export enum UsageWhatsappRegion {
+  None = 'NONE',
+  NorthAmerica = 'NORTH_AMERICA',
+  OtherRegions = 'OTHER_REGIONS'
+}
+
 /** Portal User */
 export type User = Node & {
   __typename?: 'User';
-  email?: Maybe<Scalars['String']>;
+  email?: Maybe<Scalars['String']['output']>;
   /** The ID of an object */
-  id: Scalars['ID'];
+  id: Scalars['ID']['output'];
 };
 
 export type VerifyDomainInput = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Domain ID. */
-  domainID: Scalars['String'];
+  domainID: Scalars['String']['input'];
 };
 
 export type VerifyDomainPayload = {
@@ -834,44 +913,47 @@ export type VerifyDomainPayload = {
 /** The viewer */
 export type Viewer = Node & {
   __typename?: 'Viewer';
-  email?: Maybe<Scalars['String']>;
+  email?: Maybe<Scalars['String']['output']>;
+  formattedName?: Maybe<Scalars['String']['output']>;
+  geoIPCountryCode?: Maybe<Scalars['String']['output']>;
   /** The ID of an object */
-  id: Scalars['ID'];
-  projectOwnerCount: Scalars['Int'];
-  projectQuota?: Maybe<Scalars['Int']>;
+  id: Scalars['ID']['output'];
+  isOnboardingSurveyCompleted?: Maybe<Scalars['Boolean']['output']>;
+  projectOwnerCount: Scalars['Int']['output'];
+  projectQuota?: Maybe<Scalars['Int']['output']>;
 };
 
 /** Webhook secret */
 export type WebhookSecret = {
   __typename?: 'WebhookSecret';
-  secret?: Maybe<Scalars['String']>;
+  secret?: Maybe<Scalars['String']['output']>;
 };
 
 export type CancelFailedSubscriptionInput = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
 };
 
 /** OAuth client secret item */
 export type OauthClientSecretItem = {
   __typename?: 'oauthClientSecretItem';
-  clientID: Scalars['String'];
+  clientID: Scalars['String']['output'];
   keys?: Maybe<Array<OauthClientSecretKey>>;
 };
 
 /** OAuth client secret key */
 export type OauthClientSecretKey = {
   __typename?: 'oauthClientSecretKey';
-  createdAt?: Maybe<Scalars['DateTime']>;
-  key: Scalars['String'];
-  keyID: Scalars['String'];
+  createdAt?: Maybe<Scalars['DateTime']['output']>;
+  key: Scalars['String']['output'];
+  keyID: Scalars['String']['output'];
 };
 
 export type ReconcileCheckoutSession = {
   /** Target app ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** Checkout session ID. */
-  checkoutSessionID: Scalars['String'];
+  checkoutSessionID: Scalars['String']['input'];
 };
 
 export type ReconcileCheckoutSessionPayload = {
@@ -879,24 +961,31 @@ export type ReconcileCheckoutSessionPayload = {
   app: App;
 };
 
+/** SAML Identity Provider signing certificate */
+export type SamlSpSigningCertificate = {
+  __typename?: 'samlSpSigningCertificate';
+  certificateFingerprint: Scalars['String']['output'];
+  certificatePEM: Scalars['String']['output'];
+};
+
 export type SendDenoHookInput = {
   /** App ID. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** The content of the hook. */
-  content: Scalars['String'];
+  content: Scalars['String']['input'];
 };
 
 export type SendTestSmtpConfigurationEmailInput = {
   /** App ID to test. */
-  appID: Scalars['ID'];
+  appID: Scalars['ID']['input'];
   /** SMTP Host. */
-  smtpHost: Scalars['String'];
+  smtpHost: Scalars['String']['input'];
   /** SMTP Password. */
-  smtpPassword: Scalars['String'];
+  smtpPassword: Scalars['String']['input'];
   /** SMTP Port. */
-  smtpPort: Scalars['Int'];
+  smtpPort: Scalars['Int']['input'];
   /** SMTP Username. */
-  smtpUsername: Scalars['String'];
+  smtpUsername: Scalars['String']['input'];
   /** The recipient email address. */
-  to: Scalars['String'];
+  to: Scalars['String']['input'];
 };

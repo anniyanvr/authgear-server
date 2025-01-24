@@ -1,23 +1,35 @@
 package viewmodels
 
 import (
+	"context"
+
 	"github.com/authgear/authgear-server/pkg/api/model"
 	"github.com/authgear/authgear-server/pkg/lib/authn/authenticator"
 	"github.com/authgear/authgear-server/pkg/lib/authn/identity"
+	"github.com/authgear/authgear-server/pkg/lib/authn/mfa"
+	"github.com/authgear/authgear-server/pkg/lib/authn/stdattrs"
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	"github.com/authgear/authgear-server/pkg/util/accesscontrol"
+	"github.com/authgear/authgear-server/pkg/util/clock"
 )
 
 type SettingsViewModel struct {
+	Zoneinfo string
+
 	Authenticators           []*authenticator.Info
+	NumberOfDeviceTokens     int
 	HasDeviceTokens          bool
 	ListRecoveryCodesAllowed bool
+	HasRecoveryCodes         bool
 	ShowBiometric            bool
 
 	HasSecondaryTOTP        bool
 	HasSecondaryOOBOTPEmail bool
 	HasSecondaryOOBOTPSMS   bool
+	OOBOTPSMSDefaultChannel string
 	SecondaryPassword       *authenticator.Info
 	HasMFA                  bool
+	PhoneOTPMode            string
 
 	ShowSecondaryTOTP        bool
 	ShowSecondaryOOBOTPEmail bool
@@ -29,28 +41,54 @@ type SettingsViewModel struct {
 	ShowPrimaryPasskey   bool
 }
 
+type SettingsUserService interface {
+	Get(ctx context.Context, userID string, role accesscontrol.Role) (*model.User, error)
+}
+
 type SettingsIdentityService interface {
-	ListByUser(userID string) ([]*identity.Info, error)
+	ListByUser(ctx context.Context, userID string) ([]*identity.Info, error)
 }
 
 type SettingsAuthenticatorService interface {
-	List(userID string, filters ...authenticator.Filter) ([]*authenticator.Info, error)
+	List(ctx context.Context, userID string, filters ...authenticator.Filter) ([]*authenticator.Info, error)
 }
 
 type SettingsMFAService interface {
-	HasDeviceTokens(userID string) (bool, error)
+	CountDeviceTokens(ctx context.Context, userID string) (int, error)
+	ListRecoveryCodes(ctx context.Context, userID string) ([]*mfa.RecoveryCode, error)
 }
 
 type SettingsViewModeler struct {
-	Authenticators SettingsAuthenticatorService
-	MFA            SettingsMFAService
-	Authentication *config.AuthenticationConfig
-	Biometric      *config.BiometricConfig
+	Clock               clock.Clock
+	Users               SettingsUserService
+	Authenticators      SettingsAuthenticatorService
+	MFA                 SettingsMFAService
+	AuthenticatorConfig *config.AuthenticatorConfig
+	Authentication      *config.AuthenticationConfig
+	Biometric           *config.BiometricConfig
 }
 
-// nolint: gocyclo
-func (m *SettingsViewModeler) ViewModel(userID string) (*SettingsViewModel, error) {
-	authenticators, err := m.Authenticators.List(userID)
+// nolint: gocognit
+func (m *SettingsViewModeler) ViewModel(ctx context.Context, userID string) (*SettingsViewModel, error) {
+	user, err := m.Users.Get(ctx, userID, config.RoleEndUser)
+	if err != nil {
+		return nil, err
+	}
+
+	stdAttrs := user.StandardAttributes
+	str := func(key string) string {
+		value, _ := stdAttrs[key].(string)
+		return value
+	}
+
+	zoneinfo := str(stdattrs.Zoneinfo)
+
+	recoveryCodes, err := m.MFA.ListRecoveryCodes(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	authenticators, err := m.Authenticators.List(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -60,15 +98,22 @@ func (m *SettingsViewModeler) ViewModel(userID string) (*SettingsViewModel, erro
 		authenticator.KeepPrimaryAuthenticatorCanHaveMFA,
 	)) > 0
 
-	hasDeviceTokens, err := m.MFA.HasDeviceTokens(userID)
+	numberOfDeviceTokens, err := m.MFA.CountDeviceTokens(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	hasDeviceTokens := numberOfDeviceTokens > 0
+
+	listRecoveryCodesAllowed := !*m.Authentication.RecoveryCode.Disabled && m.Authentication.RecoveryCode.ListEnabled
+	hasRecoveryCodes := len(recoveryCodes) > 0
 
 	hasSecondaryTOTP := false
 	hasSecondaryOOBOTPEmail := false
 	hasSecondaryOOBOTPSMS := false
 	var secondaryPassword *authenticator.Info
+
+	oobotpSMSDefaultChannel := m.AuthenticatorConfig.OOB.SMS.PhoneOTPMode.GetDefaultChannel()
+	phoneOTPMode := string(m.AuthenticatorConfig.OOB.SMS.PhoneOTPMode)
 
 	totpAllowed := false
 	oobotpEmailAllowed := false
@@ -147,16 +192,22 @@ func (m *SettingsViewModeler) ViewModel(userID string) (*SettingsViewModel, erro
 			showSecondaryPassword)
 
 	viewModel := &SettingsViewModel{
+		Zoneinfo: zoneinfo,
+
 		Authenticators:           authenticators,
+		NumberOfDeviceTokens:     numberOfDeviceTokens,
 		HasDeviceTokens:          hasDeviceTokens,
-		ListRecoveryCodesAllowed: !*m.Authentication.RecoveryCode.Disabled && m.Authentication.RecoveryCode.ListEnabled,
+		ListRecoveryCodesAllowed: listRecoveryCodesAllowed,
+		HasRecoveryCodes:         hasRecoveryCodes,
 		ShowBiometric:            showBiometric,
 
 		HasSecondaryTOTP:        hasSecondaryTOTP,
 		HasSecondaryOOBOTPEmail: hasSecondaryOOBOTPEmail,
 		HasSecondaryOOBOTPSMS:   hasSecondaryOOBOTPSMS,
+		OOBOTPSMSDefaultChannel: string(oobotpSMSDefaultChannel),
 		SecondaryPassword:       secondaryPassword,
 		HasMFA:                  hasMFA,
+		PhoneOTPMode:            phoneOTPMode,
 
 		ShowSecondaryTOTP:        showSecondaryTOTP,
 		ShowSecondaryOOBOTPEmail: showSecondaryOOBOTPEmail,

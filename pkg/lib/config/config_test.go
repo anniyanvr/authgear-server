@@ -3,7 +3,6 @@ package config_test
 import (
 	"errors"
 	"io"
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -12,6 +11,14 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/adfs"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/apple"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/azureadb2c"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/azureadv2"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/facebook"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/google"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/linkedin"
+	_ "github.com/authgear/authgear-server/pkg/lib/oauthrelyingparty/wechat"
 )
 
 func TestAppConfig(t *testing.T) {
@@ -60,7 +67,7 @@ identity:
 			cfg, err := config.Parse([]byte(fixture))
 			So(err, ShouldBeNil)
 
-			data, err := ioutil.ReadFile("testdata/default_config.yaml")
+			data, err := os.ReadFile("testdata/default_config.yaml")
 			if err != nil {
 				panic(err)
 			}

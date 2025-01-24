@@ -3,8 +3,8 @@ package stdattrs
 import (
 	"golang.org/x/text/language"
 
+	"github.com/authgear/authgear-server/pkg/api/internalinterface"
 	"github.com/authgear/authgear-server/pkg/api/model"
-	"github.com/authgear/authgear-server/pkg/lib/authn/identity/loginid"
 	"github.com/authgear/authgear-server/pkg/util/phone"
 	"github.com/authgear/authgear-server/pkg/util/validation"
 )
@@ -12,7 +12,7 @@ import (
 //go:generate mockgen -source=normalizer.go -destination=normalizer_mock_test.go -package stdattrs
 
 type LoginIDNormalizerFactory interface {
-	NormalizerWithLoginIDType(loginIDKeyType model.LoginIDKeyType) loginid.Normalizer
+	NormalizerWithLoginIDType(loginIDKeyType model.LoginIDKeyType) internalinterface.LoginIDNormalizer
 }
 
 type Normalizer struct {
@@ -51,12 +51,14 @@ func (n *Normalizer) normalizeEmail(t T) error {
 	return nil
 }
 
-func normalizePhoneNumber(t T) error {
+func (n *Normalizer) normalizePhoneNumber(t T) error {
 	if phoneNumber, ok := t[PhoneNumber].(string); ok && phoneNumber != "" {
-		err := phone.EnsureE164(phoneNumber)
+		e164, err := phone.Parse_IsPossibleNumber_ReturnE164(phoneNumber)
 		if err != nil {
 			return err
 		}
+
+		t[PhoneNumber] = e164
 	} else {
 		delete(t, PhoneNumber)
 	}
@@ -133,7 +135,7 @@ func (n *Normalizer) Normalize(t T) error {
 		return err
 	}
 
-	err = normalizePhoneNumber(t)
+	err = n.normalizePhoneNumber(t)
 	if err != nil {
 		return err
 	}

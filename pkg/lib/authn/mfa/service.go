@@ -1,6 +1,7 @@
 package mfa
 
 import (
+	"context"
 	"errors"
 
 	"github.com/authgear/authgear-server/pkg/lib/config"
@@ -19,23 +20,24 @@ const (
 )
 
 type StoreDeviceToken interface {
-	Get(userID string, token string) (*DeviceToken, error)
-	Create(token *DeviceToken) error
-	DeleteAll(userID string) error
-	HasTokens(userID string) (bool, error)
+	Get(ctx context.Context, userID string, token string) (*DeviceToken, error)
+	Create(ctx context.Context, token *DeviceToken) error
+	DeleteAll(ctx context.Context, userID string) error
+	HasTokens(ctx context.Context, userID string) (bool, error)
+	Count(ctx context.Context, userID string) (int, error)
 }
 
 type StoreRecoveryCode interface {
-	List(userID string) ([]*RecoveryCode, error)
-	Get(userID string, code string) (*RecoveryCode, error)
-	DeleteAll(userID string) error
-	CreateAll(codes []*RecoveryCode) error
-	UpdateConsumed(code *RecoveryCode) error
+	List(ctx context.Context, userID string) ([]*RecoveryCode, error)
+	Get(ctx context.Context, userID string, code string) (*RecoveryCode, error)
+	DeleteAll(ctx context.Context, userID string) error
+	CreateAll(ctx context.Context, codes []*RecoveryCode) error
+	UpdateConsumed(ctx context.Context, code *RecoveryCode) error
 }
 
 type RateLimiter interface {
-	Reserve(spec ratelimit.BucketSpec) *ratelimit.Reservation
-	Cancel(r *ratelimit.Reservation)
+	Reserve(ctx context.Context, spec ratelimit.BucketSpec) (*ratelimit.Reservation, *ratelimit.FailedReservation, error)
+	Cancel(ctx context.Context, r *ratelimit.Reservation)
 }
 
 type Service struct {
@@ -48,11 +50,12 @@ type Service struct {
 	Lockout       Lockout
 }
 
-func (s *Service) GenerateDeviceToken() string {
+func (s *Service) GenerateDeviceToken(ctx context.Context) string {
 	return GenerateDeviceToken()
 }
 
 func (s *Service) reserveRateLimit(
+	ctx context.Context,
 	namePerUserPerIP ratelimit.BucketName,
 	perUserPerIP *config.RateLimitConfig,
 	namePerIP ratelimit.BucketName,
@@ -66,26 +69,34 @@ func (s *Service) reserveRateLimit(
 		perIP = s.Config.RateLimits.General.PerIP
 	}
 
-	rPerUserPerIP = s.RateLimiter.Reserve(ratelimit.NewBucketSpec(
+	rPerUserPerIP, failedPerUserPerIP, err := s.RateLimiter.Reserve(ctx, ratelimit.NewBucketSpec(
 		perUserPerIP, namePerUserPerIP,
 		userID, string(s.IP),
 	))
-	if err = rPerUserPerIP.Error(); err != nil {
+	if err != nil {
+		return
+	}
+	if ratelimitErr := failedPerUserPerIP.Error(); ratelimitErr != nil {
+		err = ratelimitErr
 		return
 	}
 
-	rPerIP = s.RateLimiter.Reserve(ratelimit.NewBucketSpec(
+	rPerIP, failedPerIP, err := s.RateLimiter.Reserve(ctx, ratelimit.NewBucketSpec(
 		perIP, namePerIP,
 		string(s.IP),
 	))
-	if err = rPerIP.Error(); err != nil {
+	if err != nil {
+		return
+	}
+	if ratelimitErr := failedPerIP.Error(); ratelimitErr != nil {
+		err = ratelimitErr
 		return
 	}
 
 	return
 }
 
-func (s *Service) CreateDeviceToken(userID string, token string) (*DeviceToken, error) {
+func (s *Service) CreateDeviceToken(ctx context.Context, userID string, token string) (*DeviceToken, error) {
 	t := &DeviceToken{
 		UserID:    userID,
 		Token:     token,
@@ -93,45 +104,50 @@ func (s *Service) CreateDeviceToken(userID string, token string) (*DeviceToken, 
 		ExpireAt:  s.Clock.NowUTC().Add(s.Config.DeviceToken.ExpireIn.Duration()),
 	}
 
-	if err := s.DeviceTokens.Create(t); err != nil {
+	if err := s.DeviceTokens.Create(ctx, t); err != nil {
 		return nil, err
 	}
 
 	return t, nil
 }
 
-func (s *Service) VerifyDeviceToken(userID string, token string) error {
+func (s *Service) VerifyDeviceToken(ctx context.Context, userID string, token string) error {
 	perUserPerIP, perIP, err := s.reserveRateLimit(
+		ctx,
 		VerifyDeviceTokenPerUserPerIP,
 		s.Config.RateLimits.DeviceToken.PerUserPerIP,
 		VerifyDeviceTokenPerIP,
 		s.Config.RateLimits.DeviceToken.PerIP,
 		userID,
 	)
-	defer s.RateLimiter.Cancel(perUserPerIP)
-	defer s.RateLimiter.Cancel(perIP)
-
 	if err != nil {
 		return err
 	}
 
-	_, err = s.DeviceTokens.Get(userID, token)
+	defer s.RateLimiter.Cancel(ctx, perUserPerIP)
+	defer s.RateLimiter.Cancel(ctx, perIP)
+
+	_, err = s.DeviceTokens.Get(ctx, userID, token)
 	if errors.Is(err, ErrDeviceTokenNotFound) {
-		perUserPerIP.Consume()
-		perIP.Consume()
+		perUserPerIP.PreventCancel()
+		perIP.PreventCancel()
 	}
 	return err
 }
 
-func (s *Service) InvalidateAllDeviceTokens(userID string) error {
-	return s.DeviceTokens.DeleteAll(userID)
+func (s *Service) InvalidateAllDeviceTokens(ctx context.Context, userID string) error {
+	return s.DeviceTokens.DeleteAll(ctx, userID)
 }
 
-func (s *Service) HasDeviceTokens(userID string) (bool, error) {
-	return s.DeviceTokens.HasTokens(userID)
+func (s *Service) HasDeviceTokens(ctx context.Context, userID string) (bool, error) {
+	return s.DeviceTokens.HasTokens(ctx, userID)
 }
 
-func (s *Service) GenerateRecoveryCodes() []string {
+func (s *Service) CountDeviceTokens(ctx context.Context, userID string) (int, error) {
+	return s.DeviceTokens.Count(ctx, userID)
+}
+
+func (s *Service) GenerateRecoveryCodes(ctx context.Context) []string {
 	codes := make([]string, s.Config.RecoveryCode.Count)
 	for i := range codes {
 		codes[i] = secretcode.RecoveryCode.Generate()
@@ -139,11 +155,11 @@ func (s *Service) GenerateRecoveryCodes() []string {
 	return codes
 }
 
-func (s *Service) InvalidateAllRecoveryCode(userID string) error {
-	return s.RecoveryCodes.DeleteAll(userID)
+func (s *Service) InvalidateAllRecoveryCode(ctx context.Context, userID string) error {
+	return s.RecoveryCodes.DeleteAll(ctx, userID)
 }
 
-func (s *Service) ReplaceRecoveryCodes(userID string, codes []string) ([]*RecoveryCode, error) {
+func (s *Service) ReplaceRecoveryCodes(ctx context.Context, userID string, codes []string) ([]*RecoveryCode, error) {
 	codeModels := make([]*RecoveryCode, len(codes))
 	now := s.Clock.NowUTC()
 	for i, code := range codes {
@@ -157,32 +173,33 @@ func (s *Service) ReplaceRecoveryCodes(userID string, codes []string) ([]*Recove
 		}
 	}
 
-	if err := s.RecoveryCodes.DeleteAll(userID); err != nil {
+	if err := s.RecoveryCodes.DeleteAll(ctx, userID); err != nil {
 		return nil, err
 	}
-	if err := s.RecoveryCodes.CreateAll(codeModels); err != nil {
+	if err := s.RecoveryCodes.CreateAll(ctx, codeModels); err != nil {
 		return nil, err
 	}
 
 	return codeModels, nil
 }
 
-func (s *Service) VerifyRecoveryCode(userID string, code string) (*RecoveryCode, error) {
+func (s *Service) VerifyRecoveryCode(ctx context.Context, userID string, code string) (*RecoveryCode, error) {
 	perUserPerIP, perIP, err := s.reserveRateLimit(
+		ctx,
 		VerifyRecoveryCodePerUserPerIP,
 		s.Config.RateLimits.RecoveryCode.PerUserPerIP,
 		VerifyRecoveryCodePerIP,
 		s.Config.RateLimits.RecoveryCode.PerIP,
 		userID,
 	)
-	defer s.RateLimiter.Cancel(perUserPerIP)
-	defer s.RateLimiter.Cancel(perIP)
-
 	if err != nil {
 		return nil, err
 	}
 
-	err = s.Lockout.Check(userID)
+	defer s.RateLimiter.Cancel(ctx, perUserPerIP)
+	defer s.RateLimiter.Cancel(ctx, perIP)
+
+	err = s.Lockout.Check(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,11 +209,11 @@ func (s *Service) VerifyRecoveryCode(userID string, code string) (*RecoveryCode,
 		return nil, ErrRecoveryCodeNotFound
 	}
 
-	rc, err := s.RecoveryCodes.Get(userID, code)
+	rc, err := s.RecoveryCodes.Get(ctx, userID, code)
 	if errors.Is(err, ErrRecoveryCodeNotFound) {
-		perUserPerIP.Consume()
-		perIP.Consume()
-		aerr := s.Lockout.MakeRecoveryCodeAttempt(userID, 1)
+		perUserPerIP.PreventCancel()
+		perIP.PreventCancel()
+		aerr := s.Lockout.MakeRecoveryCodeAttempt(ctx, userID, 1)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -214,17 +231,17 @@ func (s *Service) VerifyRecoveryCode(userID string, code string) (*RecoveryCode,
 	return rc, nil
 }
 
-func (s *Service) ConsumeRecoveryCode(rc *RecoveryCode) error {
+func (s *Service) ConsumeRecoveryCode(ctx context.Context, rc *RecoveryCode) error {
 	rc.Consumed = true
 	rc.UpdatedAt = s.Clock.NowUTC()
 
-	if err := s.RecoveryCodes.UpdateConsumed(rc); err != nil {
+	if err := s.RecoveryCodes.UpdateConsumed(ctx, rc); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *Service) ListRecoveryCodes(userID string) ([]*RecoveryCode, error) {
-	return s.RecoveryCodes.List(userID)
+func (s *Service) ListRecoveryCodes(ctx context.Context, userID string) ([]*RecoveryCode, error) {
+	return s.RecoveryCodes.List(ctx, userID)
 }

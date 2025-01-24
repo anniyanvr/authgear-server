@@ -133,8 +133,20 @@ func (b SelectBuilder) Join(from string, alias string, pred string, args ...inte
 	return b
 }
 
+func (b SelectBuilder) LeftJoin(from string, alias string, pred string, args ...interface{}) SelectBuilder {
+	join := fmt.Sprintf("%s AS %s ON %s", from, alias, pred)
+	b.builder = b.builder.LeftJoin(join, args...)
+	b.builder = b.builder.Where(alias+".app_id = ?", b.appID)
+	return b
+}
+
 func (b SelectBuilder) Where(pred interface{}, args ...interface{}) SelectBuilder {
 	b.builder = b.builder.Where(pred, args...)
+	return b
+}
+
+func (b SelectBuilder) PrefixExpr(expr sq.Sqlizer) SelectBuilder {
+	b.builder = b.builder.PrefixExpr(expr)
 	return b
 }
 
@@ -145,5 +157,10 @@ func (b SelectBuilder) OrderBy(orderBy ...string) SelectBuilder {
 
 func (b SelectBuilder) Limit(limit uint64) SelectBuilder {
 	b.builder = b.builder.Limit(limit)
+	return b
+}
+
+func (b SelectBuilder) Offset(offset uint64) SelectBuilder {
+	b.builder = b.builder.Offset(offset)
 	return b
 }

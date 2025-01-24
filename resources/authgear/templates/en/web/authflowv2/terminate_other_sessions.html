@@ -1,0 +1,48 @@
+{{ template "authflowv2/__page_frame.html" . }}
+
+{{ define "page-content" }}
+  {{/* Form with disabled turbo drive */}}
+  <form
+    class="screen-icon-layout flex-1-0-auto"
+    method="post"
+    novalidate
+    data-turbo="false"
+  >
+    {{ $.CSRFField }}
+    <i class="material-icons screen-icon">phone_iphone</i>
+    <header class="screen-title-description">
+      <h1 class="screen-title">{{ include "v2.page.terminate-other-sessions.default.title" nil }}</h1>
+      <p class="screen-description">{{ include "v2.page.terminate-other-sessions.default.description" nil }}</p>
+      {{ template "authflowv2/__alert_message.html"
+        (dict
+          "Type" "error"
+          "Classname" "mt-4"
+          "Message" (include "authflowv2/__error.html" .)
+        )
+      }}
+    </header>
+    <div></div>
+
+    <footer class="flex flex-col gap-4">
+      <button
+        class="primary-btn w-full"
+        type="submit"
+        name="x_action"
+        value="confirm"
+        data-authgear-event="authgear.button.confirm_terminate_other_sessions"
+      >
+        {{ include "v2.component.button.default.label-continue" nil }}
+      </button>
+      <button
+        class="label-btn w-full"
+        type="submit"
+        name="x_action"
+        value="cancel"
+        data-authgear-event="authgear.button.cancel_terminate_other_sessions"
+      >
+        {{ include "v2.page.terminate-other-sessions.default.cancel-button-label" nil }}
+      </button>
+    </footer>
+  </form>
+
+{{ end }}

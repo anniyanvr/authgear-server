@@ -1,0 +1,3 @@
+{{ .Code }} è la tua password monouso per {{ template "app.name" }}.
+
+Non condividerla con nessuno.

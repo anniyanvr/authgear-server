@@ -1,7 +1,6 @@
 package deps
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/google/wire"
@@ -22,22 +21,38 @@ import (
 	"github.com/authgear/authgear-server/pkg/util/template"
 )
 
-var envConfigDeps = wire.NewSet(
+var EnvConfigDeps = wire.NewSet(
 	wire.FieldsOf(new(*config.EnvironmentConfig),
 		"TrustProxy",
 		"DevMode",
 		"SentryDSN",
 		"AuthUISentryDSN",
+		"AuthUIWindowMessageAllowedOrigins",
 		"GlobalDatabase",
 		"DatabaseConfig",
 		"ImagesCDNHost",
 		"WebAppCDNHost",
 		"CORSAllowedOrigins",
+		"AllowedFrameAncestors",
 		"RedisConfig",
-		"NFTIndexerAPIEndpoint",
 		"DenoEndpoint",
 		"RateLimits",
+		"SAML",
 		"AppHostSuffixes",
+		"UIImplementation",
+		"UISettingsImplementation",
+		"UserExportObjectStore",
+		"SMSGatewayConfig",
+	),
+	wire.FieldsOf(new(*config.SMSGatewayEnvironmentConfig),
+		"Default",
+		"Twilio",
+		"Custom",
+		"Nexmo",
+	),
+	wire.FieldsOf(new(*config.SMSGatewayEnvironmentDefaultConfig),
+		"UseConfigFrom",
+		"Provider",
 	),
 )
 
@@ -49,28 +64,25 @@ var rootDeps = wire.NewSet(
 		"EmbeddedResources",
 	),
 
-	envConfigDeps,
-
-	ProvideCaptureTaskContext,
-	ProvideRestoreTaskContext,
+	EnvConfigDeps,
 
 	clock.DependencySet,
 	globaldb.DependencySet,
 	configsource.DependencySet,
 )
 
-var appRootDeps = wire.NewSet(
+var AppRootDeps = wire.NewSet(
 	rootDeps,
 	wire.FieldsOf(new(*AppProvider),
 		"RootProvider",
 		"LoggerFactory",
 		"AppDatabase",
+		"SearchDatabase",
 		"AuditReadDatabase",
 		"AuditWriteDatabase",
 		"Redis",
 		"GlobalRedis",
 		"AnalyticRedis",
-		"TaskQueue",
 		"AppContext",
 	),
 	wire.FieldsOf(new(*config.AppContext),
@@ -98,8 +110,6 @@ var RootDependencySet = wire.NewSet(
 	),
 )
 
-func ProvideRequestContext(r *http.Request) context.Context { return r.Context() }
-
 func ProvideRemoteIP(r *http.Request, trustProxy config.TrustProxy) httputil.RemoteIP {
 	return httputil.RemoteIP(httputil.GetIP(r, bool(trustProxy)))
 }
@@ -116,26 +126,48 @@ func ProvideUserAgentString(r *http.Request) httputil.UserAgentString {
 	return httputil.UserAgentString(r.UserAgent())
 }
 
+func ProvideRedisQueueHTTPRequest() *http.Request {
+	ctx := contextForRedisQueue
+	r, _ := http.NewRequestWithContext(ctx, "GET", "", nil)
+	return r
+}
+
+func ProvideRedisQueueRemoteIP() httputil.RemoteIP {
+	return httputil.RemoteIP("127.0.0.1")
+}
+
+func ProvideRedisQueueUserAgentString() httputil.UserAgentString {
+	return httputil.UserAgentString("redis-queue")
+}
+
+func ProvideRedisQueueHTTPHost() httputil.HTTPHost {
+	return httputil.HTTPHost("127.0.0.1")
+}
+
+func ProvideRedisQueueHTTPProto() httputil.HTTPProto {
+	return httputil.HTTPProto("https")
+}
+
 var RequestDependencySet = wire.NewSet(
-	appRootDeps,
+	AppRootDeps,
 	wire.FieldsOf(new(*RequestProvider),
 		"AppProvider",
 		"Request",
 		"ResponseWriter",
 	),
-	ProvideRequestContext,
 	ProvideRemoteIP,
 	ProvideUserAgentString,
 	ProvideHTTPHost,
 	ProvideHTTPProto,
 )
 
-var TaskDependencySet = wire.NewSet(
-	appRootDeps,
-	wire.FieldsOf(new(*TaskProvider),
-		"AppProvider",
-		"Context",
-	),
+var RedisQueueDependencySet = wire.NewSet(
+	AppRootDeps,
+	ProvideRedisQueueHTTPRequest,
+	ProvideRedisQueueRemoteIP,
+	ProvideRedisQueueUserAgentString,
+	ProvideRedisQueueHTTPHost,
+	ProvideRedisQueueHTTPProto,
 )
 
 var BackgroundDependencySet = wire.NewSet(
@@ -151,7 +183,7 @@ var BackgroundDependencySet = wire.NewSet(
 		"EmbeddedResources",
 	),
 
-	envConfigDeps,
+	EnvConfigDeps,
 
 	clock.DependencySet,
 	globaldb.DependencySet,

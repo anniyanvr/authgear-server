@@ -10,13 +10,21 @@
   * [Retrieve a state again](#retrieve-a-state-again)
   * [Listen for change with Websocket](#listen-for-change-with-websocket)
 - [Reference on input and output](#reference-on-input-and-output)
-  * [type: signup; step.type: identification](#type-signup-steptype-identification)
+  * [type: signup; action.type: identify](#type-signup-actiontype-identify)
+    + [Bot protection](#bot-protection)
+      - [Bot protection input](#bot-protection-input)
+      - [Bot protection input; type: cloudflare](#bot-protection-input-type-cloudflare)
+      - [Bot protection input; type: recaptchav2](#bot-protection-input-type-recaptchav2)
+      - [Bot protection error](#bot-protection-error)
     + [identification: email](#identification-email)
     + [identification: phone](#identification-phone)
     + [identification: username](#identification-username)
     + [identification: oauth](#identification-oauth)
-  * [type: signup; step.type: verify](#type-signup-steptype-verify)
-  * [type: signup; step.type: create_authenticator](#type-signup-steptype-create_authenticator)
+    + [identification: ldap](#identification-ldap)
+    + [type: signup; action.type: identify; data.type: account_linking_identification_data](#type-signup-actiontype-identify-datatype-account_linking_identification_data)
+  * [type: signup; action.type: verify](#type-signup-actiontype-verify)
+  * [type: signup; action.type: create_authenticator](#type-signup-actiontype-create_authenticator)
+    + [Bot protection](#bot-protection-1)
     + [authentication: primary_password](#authentication-primary_password)
     + [authentication: primary_oob_otp_email](#authentication-primary_oob_otp_email)
     + [authentication: primary_oob_otp_sms](#authentication-primary_oob_otp_sms)
@@ -24,10 +32,11 @@
     + [authentication: secondary_oob_otp_email](#authentication-secondary_oob_otp_email)
     + [authentication: secondary_oob_otp_sms](#authentication-secondary_oob_otp_sms)
     + [authentication: secondary_totp](#authentication-secondary_totp)
-  * [type: signup; step.type: view_recovery_code](#type-signup-steptype-view_recovery_code)
-  * [type: signup; step.type: prompt_create_passkey](#type-signup-steptype-prompt_create_passkey)
-  * [type: login; step.type: identify](#type-login-steptype-identify)
-  * [type: login; step.type: authenticate](#type-login-steptype-authenticate)
+  * [type: signup; action.type: view_recovery_code](#type-signup-actiontype-view_recovery_code)
+  * [type: signup; action.type: prompt_create_passkey](#type-signup-actiontype-prompt_create_passkey)
+  * [type: login; action.type: identify](#type-login-actiontype-identify)
+  * [type: login; action.type: authenticate](#type-login-actiontype-authenticate)
+    + [Bot protection](#bot-protection-2)
     + [authentication: primary_password](#authentication-primary_password-1)
     + [authentication: primary_oob_otp_email](#authentication-primary_oob_otp_email-1)
     + [authentication: primary_oob_otp_sms](#authentication-primary_oob_otp_sms-1)
@@ -36,17 +45,34 @@
     + [authentication: secondary_oob_otp_email](#authentication-secondary_oob_otp_email-1)
     + [authentication: secondary_oob_otp_sms](#authentication-secondary_oob_otp_sms-1)
     + [authentication: secondary_totp](#authentication-secondary_totp-1)
-  * [type: login; step.type: change_password](#type-login-steptype-change_password)
-  * [type: login; step.type: prompt_create_passkey](#type-login-steptype-prompt_create_passkey)
-  * [type: signup_login; step.type: identify](#type-signup_login-steptype-identify)
-  * [type: account_recovery; step.type: identify](#type-account_recovery-steptype-identify)
-  * [type: account_recovery; step.type: select_destination](#type-account_recovery-steptype-select_destination)
-  * [type: account_recovery; step.type: verify_account_recovery_code](#type-account_recovery-steptype-verify_account_recovery_code)
-  * [type: account_recovery; step.type: reset_password](#type-account_recovery-steptype-reset_password)
+  * [type: login; action.type: change_password](#type-login-actiontype-change_password)
+  * [type: login; action.type: prompt_create_passkey](#type-login-actiontype-prompt_create_passkey)
+  * [type: signup_login; action.type: identify](#type-signup_login-actiontype-identify)
+  * [type: account_recovery; action.type: identify](#type-account_recovery-actiontype-identify)
+    + [Bot protection](#bot-protection-3)
+    + [identification: email](#identification-email-1)
+    + [identification: phone](#identification-phone-1)
+  * [type: account_recovery; action.type: select_destination](#type-account_recovery-actiontype-select_destination)
+  * [type: account_recovery; action.type: verify_account_recovery_code](#type-account_recovery-actiontype-verify_account_recovery_code)
+  * [type: account_recovery; action.type: reset_password](#type-account_recovery-actiontype-reset_password)
+- [Reference on action data](#reference-on-action-data)
+  * [identification_data](#identification_data)
+  * [authentication_data](#authentication_data)
+  * [oauth_data](#oauth_data)
+  * [create_authenticator_data](#create_authenticator_data)
+  * [view_recovery_code_data](#view_recovery_code_data)
+  * [select_oob_otp_channels_data](#select_oob_otp_channels_data)
+  * [verify_oob_otp_data](#verify_oob_otp_data)
+  * [create_passkey_data](#create_passkey_data)
+  * [create_totp_data](#create_totp_data)
+  * [new_password_data](#new_password_data)
+  * [account_recovery_identification_data](#account_recovery_identification_data)
+  * [account_recovery_select_destination_data](#account_recovery_select_destination_data)
+  * [account_recovery_verify_code_data](#account_recovery_verify_code_data)
 
 # Authentication Flow API
 
-Authentication Flow API is a HTTP API to create and run an authentication flow. It is the same API that powers that the default UI of Authgear. With Authentication Flow API, you can build your own UI while preserving the capability of running complicated authentication flow as the default UI does.
+Authentication Flow API is a HTTP API to create and run an authentication flow. It is the same API that powers that Auth UI of Authgear. With Authentication Flow API, you can build your own UI while preserving the capability of running complicated authentication flow as Auth UI does.
 
 # State and Branching
 
@@ -147,7 +173,7 @@ Content-Type: application/json
 }
 ```
 
-Create an authentication flow by specifying the `type` and the `name`. Use the name `default` to refer to the generated flow according to your project configuration. This is the same flow that the default UI runs.
+Create an authentication flow by specifying the `type` and the `name`. Use the name `default` to use Builtin flows. Auth UI runs Builtin flows by default.
 
 ## Pass an input to a state of an authentication flow
 
@@ -199,7 +225,7 @@ Connect to the websocket by specifying `flow_id`. The only message you will rece
 
 # Reference on input and output
 
-## type: signup; step.type: identification
+## type: signup; action.type: identify
 
 When you are in this step of this flow, you will see a response like the following.
 
@@ -212,12 +238,19 @@ When you are in this step of this flow, you will see a response like the followi
     "action": {
       "type": "identify",
       "data": {
+        "type": "identification_data",
         "options": [
           {
             "identification": "email"
           },
           {
-            "identification": "phone"
+            "identification": "phone",
+            "bot_protection": {
+              "enabled": true,
+              "provider": {
+                "type": "cloudflare"
+              }
+            }
           },
           {
             "identification": "oauth",
@@ -233,6 +266,65 @@ When you are in this step of this flow, you will see a response like the followi
         ]
       }
     }
+  }
+}
+```
+
+### Bot protection
+
+Each option may contain the key `bot_protection`.
+
+The shape of `bot_protection`:
+
+```json
+{
+  "enabled": true,
+  "provider": {
+    "type": "recaptchav3"
+  }
+}
+```
+
+- `enabled`: If it is true, then selecting this option requires performing Captcha challenge first.
+- `provider.type`: You use this to determine which client side library and which client side credentials to use.
+
+#### Bot protection input
+
+To pass a bot protection input, pass an input of the following shape:
+
+```json
+{
+  "bot_protection": {
+    "type": "cloudflare",
+    "response": { ... }
+  }
+}
+```
+
+- `bot_protection.type`: The type of the bot protection provider.
+
+Other fields are provider-specific.
+
+#### Bot protection input; type: cloudflare
+
+- `bot_protection.response`: The response provided by the Turnstile client-side library.
+
+#### Bot protection input; type: recaptchav2
+
+- `bot_protection.response`: The response provided by the reCAPTCHA v2 client-side library.
+
+#### Bot protection error
+
+When you submit an input without performing Captcha challenge, you will receive the following error.
+
+```json
+{
+  "error": {
+    "name": "Forbidden",
+    "reason": "BotProtectionRequired",
+    "message': "bot protection required",
+    "code": 403,
+    "info": {}
   }
 }
 ```
@@ -345,6 +437,7 @@ After passing this input, you will see a response like this
       "type": "identify",
       "identification": "oauth",
       "data": {
+        "type": "oauth_data",
         "alias": "google",
         "oauth_provider_type": "google",
         "oauth_authorization_url": "<https://google.com/oauth2>"
@@ -356,32 +449,114 @@ After passing this input, you will see a response like this
 
 You must redirect the end user to `oauth_authorization_url`. This is typically done by `window.location.href = {{ oauth_authorization_url }}`. Before you perform redirection, you typically need to add the query parameter `state` to `oauth_authorization_url`, so that you can resume the authentication flow.
 
-The OAuth provider will authenticate the end-user. There will be 2 cases:
+The OAuth provider will authenticate the end-user, and then redirect back to the `redirect_uri` you provided.
+You parse the callback URI and extract the `state` parameter in the query to resume your authentication flow.
+You pass the URL encoded query as the next input.
 
-- The OAuth provider authenticated the end-user successfully. `code` and `state` will be present in the query string.
-- The OAuth provider encountered an error. `error` and `state` will be present in the query string. Additionally, `error_description` and `error_uri` may be present as well.
-
-In either case, use `state` to resume your authentication flow. After that pass the following input
-
-```json
-{
-  "code": "{{ code }}"
-}
-```
-
-for the successful case. Or this input
+Here are some examples:
 
 ```json
 {
-  "error": "{{ error }}",
-  "error_description": "{{ error_description }}",
-  "error_uri": "{{ error_uri }}"
+  "query": "state=mystate&code=some_authorization_code"
 }
 ```
 
-for the failure case. `error_description` and `error_uri` are optional.
+```json
+{
+  "query": "state=mystate&error=some_error&error_description=this+is+url+encoded+spaces+become+plus+sign"
+}
+```
 
-## type: signup; step.type: verify
+### identification: ldap
+
+The presence of this means you can sign up with a username.
+
+```json
+{
+  "identification": "ldap",
+  "server_name": "ldap-server-1",
+}
+```
+
+The corresponding input is
+
+```json
+{
+  "identification": "ldap",
+  "server_name": "ldap-server-1",
+  "username": "johndoe",
+  "password": "password"
+}
+```
+
+### type: signup; action.type: identify; data.type: account_linking_identification_data
+
+During identification steps in signup flow, an account linking could be triggered. In this case, you will see a response like the following:
+
+```json
+{
+  "result": {
+    "state_token": "authflowstate_9A2FKQJ9YWBM85255632SFQT6RQ41P5V",
+    "type": "signup",
+    "name": "default",
+    "action": {
+      "type": "identify",
+      "identification": "oauth",
+      "data": {
+        "type": "account_linking_identification_data",
+        "options": [
+          {
+            "identification": "email",
+            "action": "login_and_link",
+            "masked_display_name": "exam****@gmail.com"
+          },
+          {
+            "identification": "oauth",
+            "action": "login_and_link",
+            "masked_display_name": "exam****@gmail.com",
+            "provider_type": "github",
+            "alias": "github"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+This means account linking was triggered by the previously identified identity. You can find the followings in `action.data`:
+
+- `options`: Contains options that you can use to continue the account linking flow. The items contains the following fields:
+  - `identification`: See [type: signup; action.type: identify](#type-signup-actiontype-identify). They are having the same meaning.
+  - `action`: This field specify what is going to happen when this option is selected. The only possible value in current version is `login_and_link`.
+      - `login_and_link`: You need to login to one of the account in `options`. After that, the identity you have just created in previous steps will be linked to the logged in account.
+  - `masked_display_name`: The display name of the identity to use. Different from signup flow, during account linking, you must use an existing identity to start account linking. The display name here is the display name of the referred identity of this option. If it is an `email`, a masked email will be displayed. If it is a `phone`, a masked phone number will be displayed. If it is a `username`, the username will be displayed without masking. If it is a `oauth` identity, the display name will be a name which you should be able to recongize the account in that provider.
+
+  - `provider_type`: Only exist if `identification` is `oauth`. It is the type of the oauth provider. Read [identification: oauth](#identification-oauth) for details.
+  - `alias`: Only exist if `identification` is `oauth`. It is the alias of the oauth provider. Read [identification: oauth](#identification-oauth) for details.
+
+You should pass an input to choose an option to continue for the account linking, here is an example of the corresponding input:
+
+```json
+{
+  "index": 0
+}
+```
+
+- `index`: The index of the option you choose.
+
+In case the option you are choosing is `"identification": "oauth"`, `redirect_uri` must be included in the input as well:
+
+```json
+{
+  "index": 0,
+  "redirect_uri": "http://localhost:3000/sso/oauth2/callback/github"
+}
+```
+
+- `redirect_uri`: The redirect URI after the provider has finished authenticating the end-user. Read [identification: oauth](#identification-oauth) for details.
+
+## type: signup; action.type: verify
 
 When you are in this step, you **MAY** see a response like the following
 
@@ -394,6 +569,7 @@ When you are in this step, you **MAY** see a response like the following
     "action": {
       "type": "verify",
       "data": {
+        "type": "select_oob_otp_channels_data",
         "channels": [
           "sms",
           "whatsapp"
@@ -423,6 +599,7 @@ When you are in this step, you WILL see a response like the following if the otp
     "action": {
       "type": "verify",
       "data": {
+        "type": "verify_oob_otp_data",
         "channel": "email",
         "otp_form": "code",
         "masked_claim_value": "john******@example.com",
@@ -465,6 +642,7 @@ Or you WILL see a response like the following if the otp is a link.
     "action": {
       "type": "verify",
       "data": {
+        "type": "verify_oob_otp_data",
         "channel": "email",
         "otp_form": "link",
         "websocket_url": "wss://...",
@@ -482,7 +660,7 @@ Or you WILL see a response like the following if the otp is a link.
 if `otp_form` is `link`, `can_check` initially is `false` and `websocket_url` will be present in `data`.
 You can connect to a websocket with this URL to listen for the event of the link being approved.
 
-The link will be sent to the end-user at `masked_claim_value`. Clicking the link will open an approval page in the default UI.
+The link will be sent to the end-user at `masked_claim_value`. Clicking the link will open an approval page in Auth UI.
 When the user has approved the link, a websocket message of a JSON object `{"type": "refresh"}` is sent.
 Upon receiving the message, you can [retrieve a state again](#retrieve-a-state-again).
 The retrieved state should have `can_check=true`.
@@ -508,7 +686,7 @@ To request a resend, pass this input
 
 `code_length` tells you the length of the OTP. It is typically relevant when `otp_form` is `code`, because it gives an hint to the end-user how long the OTP is. When `otp_form` is `link`, the OTP is included in the link, the length is not an important information to the end-user.
 
-## type: signup; step.type: create_authenticator
+## type: signup; action.type: create_authenticator
 
 When you are in this step, you will see the following response if you are setting up a primary authenticator.
 
@@ -521,13 +699,18 @@ When you are in this step, you will see the following response if you are settin
     "action": {
       "type": "create_authenticator",
       "data": {
+        "type": "create_authenticator_data",
         "options": [
           {
             "authentication": "primary_oob_otp_email",
             "otp_form": "code",
             "channels": [
               "email"
-            ]
+            ],
+            "target": {
+              "masked_display_name": "+852*****123",
+              "verification_required": false
+            }
           },
           {
             "authentication": "primary_password",
@@ -558,6 +741,7 @@ Or this response if you are setting up 2FA.
     "action": {
       "type": "create_authenticator",
       "data": {
+        "type": "create_authenticator_data",
         "options": [
           {
             "authentication": "secondary_totp"
@@ -571,10 +755,18 @@ Or this response if you are setting up 2FA.
             }
           },
           {
-            "authentication": "secondary_oob_otp_email"
+            "authentication": "secondary_oob_otp_email",
+            "otp_form": "code",
+            "channels": [
+              "email"
+            ]
           },
           {
-            "authentication": "secondary_oob_otp_sms"
+            "authentication": "secondary_oob_otp_sms",
+            "otp_form": "code",
+            "channels": [
+              "sms"
+            ]
           }
         ]
       }
@@ -582,6 +774,14 @@ Or this response if you are setting up 2FA.
   }
 }
 ```
+
+### Bot protection
+
+Each option may contain the key `bot_protection`.
+
+If this key is present, then bot protection is enabled.
+
+See [Bot protection](#bot-protection) for details.
 
 ### authentication: primary_password
 
@@ -635,7 +835,11 @@ The presence of this means you can create a primary Out-of-band (OOB) One-time-p
 
 ```json
 {
-  "authentication": "primary_oob_otp_email"
+  "authentication": "primary_oob_otp_email",
+  "otp_form": "code",
+  "channels": [
+    "email"
+  ]
 }
 ```
 
@@ -643,11 +847,12 @@ The corresponding input is
 
 ```json
 {
-  "authentication": "primary_oob_otp_email"
+  "authentication": "primary_oob_otp_email",
+  "channel": "email"
 }
 ```
 
-After passing the input, you **MAY** enter a state where you need to verify the email address.
+In case `target` is present and `target.verification_required` is false, you do not need to verify the email address. Otherwise, you **MAY** enter a state where you need to verify the email address.
 
 ### authentication: primary_oob_otp_sms
 
@@ -655,7 +860,11 @@ The presence of this means you can create a primary OOB OTP authenticator using 
 
 ```json
 {
-  "authentication": "primary_oob_otp_sms"
+  "authentication": "primary_oob_otp_sms",
+  "otp_form": "code",
+  "channels": [
+    "sms"
+  ]
 }
 ```
 
@@ -663,11 +872,12 @@ The corresponding input is
 
 ```json
 {
-  "authentication": "primary_oob_otp_sms"
+  "authentication": "primary_oob_otp_sms",
+  "channel": "sms"
 }
 ```
 
-After passing the input, you **MAY** enter a state where you need to verify the phone number.
+In case `target` is present and `target.verification_required` is false, you do not need to verify the phone number. Otherwise, you **MAY** enter a state where you need to verify the phone number.
 
 ### authentication: secondary_password
 
@@ -697,7 +907,11 @@ The presence of this means you can create a secondary Out-of-band (OOB) One-time
 
 ```json
 {
-  "authentication": "secondary_oob_otp_email"
+  "authentication": "secondary_oob_otp_email",
+  "otp_form": "code",
+  "channels": [
+    "email"
+  ]
 }
 ```
 
@@ -706,6 +920,7 @@ The corresponding input is
 ```json
 {
   "authentication": "secondary_oob_otp_email",
+  "channel": "email",
   "target": "johndoe@example.com"
 }
 ```
@@ -720,7 +935,11 @@ The presence of this means you can create a secondary OOB OTP authenticator usin
 
 ```json
 {
-  "authentication": "secondary_oob_otp_sms"
+  "authentication": "secondary_oob_otp_sms",
+  "otp_form": "code",
+  "channels": [
+    "sms"
+  ]
 }
 ```
 
@@ -729,6 +948,7 @@ The corresponding input is
 ```json
 {
   "authentication": "secondary_oob_otp_sms",
+  "channel": "sms",
   "target": "+85298765432"
 }
 ```
@@ -767,6 +987,7 @@ After passing the above input, you will see a response like this
       "type": "authenticate",
       "authentication": "secondary_totp",
       "data": {
+        "type": "create_totp_data",
         "secret": "SEURUM6364TM7TRL5SSGDVURZRHZY34O",
         "otpauth_uri": "otpauth://totp/johndoe@example.com?algorithm=SHA1&digits=6&issuer=http%3A%2F%2Flocalhost%3A3100&period=30&secret=SEURUM6364TM7TRL5SSGDVURZRHZY34O"
       }
@@ -786,7 +1007,7 @@ After the end-user has set up the TOTP, they have to verify once to prove that t
 }
 ```
 
-## type: signup; step.type: view_recovery_code
+## type: signup; action.type: view_recovery_code
 
 When you are in this step of this flow, you will see a response like the following.
 
@@ -799,6 +1020,7 @@ When you are in this step of this flow, you will see a response like the followi
     "action": {
       "type": "view_recovery_code",
       "data": {
+        "type": "view_recovery_code_data",
         "recovery_codes": [
           "94X5NST2VM",
           "ZTC1BQJSMX",
@@ -831,7 +1053,7 @@ You need to present `recovery_codes` to the end-user, preferably allow them to d
 }
 ```
 
-## type: signup; step.type: prompt_create_passkey
+## type: signup; action.type: prompt_create_passkey
 
 When you are in this step of this flow, you will see a response like the following
 
@@ -844,6 +1066,7 @@ When you are in this step of this flow, you will see a response like the followi
     "action": {
       "type": "prompt_create_passkey",
       "data": {
+        "type": "create_passkey_data",
         "creation_options": {
           "publicKey": {
             "challenge": "muG_Yk_VyupxTyF6A9v1RO3fwBLfYxZ4N1JtVZ6OtlU",
@@ -1061,11 +1284,11 @@ Pass `creation_options` to `main` and then pass this input
 }
 ```
 
-## type: login; step.type: identify
+## type: login; action.type: identify
 
-See [type: signup; step.type: identification](#type-signup-steptype-identification). They are the same except that `type` is `login`.
+See [type: signup; action.type: identify](#type-signup-actiontype-identify). They are the same except that `type` is `login`.
 
-## type: login; step.type: authenticate
+## type: login; action.type: authenticate
 
 When you are in this step, you will see a response like the following if you are performing primary authentication.
 
@@ -1078,6 +1301,7 @@ When you are in this step, you will see a response like the following if you are
     "action": {
       "type": "authenticate",
       "data": {
+        "type": "authentication_data",
         "options": [
           {
             "authentication": "primary_passkey",
@@ -1106,7 +1330,7 @@ When you are in this step, you will see a response like the following if you are
             "authentication": "primary_password"
           }
         ],
-        "device_token_enable": false
+        "device_token_enabled": false
       }
     }
   }
@@ -1124,6 +1348,7 @@ Or this response if you are performing secondary authentication.
     "action": {
       "type": "authenticate",
       "data": {
+        "type": "authentication_data",
         "options": [
           {
             "authentication": "secondary_totp"
@@ -1135,12 +1360,20 @@ Or this response if you are performing secondary authentication.
             "authentication": "recovery_code"
           }
         ],
-        "device_token_enable": true
+        "device_token_enabled": true
       }
     }
   }
 }
 ```
+
+### Bot protection
+
+Each option may contain the key `bot_protection`.
+
+If this key is present, then bot protection is enabled.
+
+See [Bot protection](#bot-protection) for details.
 
 ### authentication: primary_password
 
@@ -1187,7 +1420,7 @@ The corresponding input is
 }
 ```
 
-After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; step.type: verify](#type-signup-steptype-verify)
+After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; action.type: verify](#type-signup-actiontype-verify)
 
 ### authentication: primary_oob_otp_sms
 
@@ -1215,7 +1448,7 @@ The corresponding input is
 }
 ```
 
-After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; step.type: verify](#type-signup-steptype-verify)
+After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; action.type: verify](#type-signup-actiontype-verify)
 
 ### authentication: primary_passkey
 
@@ -1451,7 +1684,7 @@ The corresponding input is
 }
 ```
 
-After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; step.type: verify](#type-signup-steptype-verify)
+After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; action.type: verify](#type-signup-actiontype-verify)
 
 ### authentication: secondary_oob_otp_sms
 
@@ -1478,7 +1711,7 @@ The corresponding input is
 }
 ```
 
-After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; step.type: verify](#type-signup-steptype-verify)
+After passing the input, you **WILL** enter a state where you need to verify the OTP. [type: signup; action.type: verify](#type-signup-actiontype-verify)
 
 ### authentication: secondary_totp
 
@@ -1499,7 +1732,7 @@ The corresponding input is
 }
 ```
 
-## type: login; step.type: change_password
+## type: login; action.type: change_password
 
 When you are in this step, you will see a response like the following
 
@@ -1512,6 +1745,7 @@ When you are in this step, you will see a response like the following
     "action": {
       "type": "change_password",
       "data": {
+        "type": "new_password_data",
         "password_policy": {
           "minimum_length": 8,
           "alphabet_required": true,
@@ -1533,15 +1767,15 @@ The corresponding input is
 }
 ```
 
-## type: login; step.type: prompt_create_passkey
+## type: login; action.type: prompt_create_passkey
 
-See [type: signup; step.type: prompt_create_passkey](#type-signup-steptype-prompt_create_passkey). They are the same except that `type` is `login`.
+See [type: signup; action.type: prompt_create_passkey](#type-signup-actiontype-prompt_create_passkey). They are the same except that `type` is `login`.
 
-## type: signup_login; step.type: identify
+## type: signup_login; action.type: identify
 
-See [type: signup; step.type: identification](#type-signup-steptype-identification). They are the same except that `type` is `signup_login`.
+See [type: signup; action.type: identify](#type-signup-actiontype-identify). They are the same except that `type` is `signup_login`.
 
-## type: account_recovery; step.type: identify
+## type: account_recovery; action.type: identify
 
 When you are in this step of this flow, you will see a response like the following.
 
@@ -1554,6 +1788,7 @@ When you are in this step of this flow, you will see a response like the followi
     "action": {
       "type": "identify",
       "data": {
+        "type": "account_recovery_identification_data",
         "options": [
           {
             "identification": "email"
@@ -1567,6 +1802,14 @@ When you are in this step of this flow, you will see a response like the followi
   }
 }
 ```
+
+### Bot protection
+
+Each option may contain the key `bot_protection`.
+
+If this key is present, then bot protection is enabled.
+
+See [Bot protection](#bot-protection) for details.
 
 ### identification: email
 
@@ -1608,7 +1851,7 @@ The corresponding input is
 
 Note that the phone number **MUST BE** in **E.164** format without any separators nor spaces.
 
-## type: account_recovery; step.type: select_destination
+## type: account_recovery; action.type: select_destination
 
 When you are in this step of this flow, you will see a response like the following.
 
@@ -1621,6 +1864,7 @@ When you are in this step of this flow, you will see a response like the followi
     "action": {
       "type": "select_destination",
       "data": {
+        "type": "account_recovery_select_destination_data",
         "options": [
           {
             "masked_display_name": "+8529876****",
@@ -1660,7 +1904,7 @@ You pass the following input to indicate your choice:
 
 `index` is the index of the option in `options` array. For `0`, it sends an sms with a 6-digit account recovery code to `+8529876****`.
 
-## type: account_recovery; step.type: verify_account_recovery_code
+## type: account_recovery; action.type: verify_account_recovery_code
 
 When you are in this step of this flow, you will see a response like the following.
 
@@ -1672,7 +1916,15 @@ When you are in this step of this flow, you will see a response like the followi
     "name": "default",
     "action": {
       "type": "verify_account_recovery_code",
-      "data": {}
+      "data": {
+        "type": "account_recovery_verify_code_data",
+        "masked_display_name": "+8529876****",
+        "channel": "sms",
+        "otp_form": "code",
+        "code_length": 6,
+        "can_resend_at": "1970-01-01T08:00:00+08:00",
+        "failed_attempt_rate_limit_exceeded": false
+      }
     }
   }
 }
@@ -1704,7 +1956,7 @@ Note that `state_token` can be omitted in this step, if and only if your selecte
 }
 ```
 
-## type: account_recovery; step.type: reset_password
+## type: account_recovery; action.type: reset_password
 
 When you are in this step of this flow, you will see a response like the following.
 
@@ -1717,6 +1969,7 @@ When you are in this step of this flow, you will see a response like the followi
     "action": {
       "type": "reset_password",
       "data": {
+        "type": "reset_password_data",
         "password_policy": {
           "minimum_length": 8,
           "digit_required": true,
@@ -1739,3 +1992,104 @@ The corresponding input is
   "new_password": "a.new.password.that.meet.the.password.policy"
 }
 ```
+
+# Reference on action data
+
+This section lists all possible types of data of `result.action.data`.
+
+Developer could identify the data type by checking the type key in `result.action.data.type`. All possible values are listed below:
+
+## identification_data
+
+The data contains identification options.
+
+- `options`: The list of usable identification options.
+
+## authentication_data
+
+The data contains authentication options.
+
+- `options`: The list of usable authentication options.
+
+## oauth_data
+
+The data contains information for initiating an oauth authentication.
+
+- `alias`: The configured alias of the selected oauth provider.
+- `oauth_provider_type`: The type of the oauth provider, such as `google`.
+- `oauth_authorization_url`: The authorization url of the oauth provider.
+- `wechat_app_type`: The wechat app type. Only used when provider is `wechat`.
+
+## create_authenticator_data
+
+The data contains options for creating new authenticator.
+
+- `options`: The list of creatable authenticators.
+
+## view_recovery_code_data
+
+The data contains recovery codes of the user.
+
+- `recovery_codes`: The recovery codes of the user.
+
+## select_oob_otp_channels_data
+
+The data contains usable channels of the oob authenticator, with information of the selected oob authenticator.
+
+- `channels`: The list of usable channels for receiving the OTP.
+- `masked_claim_value`: The masked phone number or email address that is going to recieve the OTP.
+
+## verify_oob_otp_data
+
+The data contains information about the otp verification step.
+
+- `channel`: The selected channel.
+- `otp_form`: The otp form. `code` for a 6-digit otp code, or `link` for a long otp embedded in a link.
+- `websocket_url`: The websocket url for listening to the change of the otp verification status.
+- `masked_claim_value`: The masked phone number or email address that is going to recieve the OTP.
+- `code_length`: The length of the sent code.
+- `can_resend_at`: A timestamp. Resend can be triggered after this timestamp.
+- `can_check`: Used when otp_form is `link` only. If `true`, you can check the latest verification state.
+- `failed_attempt_rate_limit_exceeded`: If `true`, the maximum number of fail attempt has been exceeded, therefore the OTP becomes invalid. You should request for a new OTP.
+
+## create_passkey_data
+
+The data contains information used for creating passkey.
+
+- `creation_options`: The options used to create the passkey in the browser.
+
+## create_totp_data
+
+The data contains information of the totp.
+
+- `secret`: The totp secret.
+- `otpauth_uri`: The uri for constructing a QR code image, which can be read by authenticator apps.
+
+## new_password_data
+
+The data contains requirements of the new password.
+
+- `password_policy`: The password policy requirements.
+
+## account_recovery_identification_data
+
+The data contains identification options for triggering account recovery flow.
+
+- `options`: The list of usable identification options.
+
+## account_recovery_select_destination_data
+
+The data contains options of destinations for receiving the account recovery code.
+
+- `options`: The list of destinations, such as phone number and emails, with the corresponding channel.
+
+## account_recovery_verify_code_data
+
+The data contains information about the account recovery code verification step.
+
+- `channel`: The selected channel.
+- `otp_form`: The otp form. `code` for a 6-digit otp code, or `link` for a long otp embedded in a link.
+- `masked_display_name`: The masked phone number or email address that is going to recieve the code.
+- `code_length`: The length of the sent code.
+- `can_resend_at`: A timestamp. Resend can be triggered after this timestamp.
+- `failed_attempt_rate_limit_exceeded`: If `true`, the maximum number of fail attempt has been exceeded, therefore the code becomes invalid. You should request for a new code.
